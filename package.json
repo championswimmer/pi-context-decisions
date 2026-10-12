@@ -19,7 +19,8 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./extension": "./src/extension.ts"
+    "./extension": "./src/extension.ts",
+    "./pi-credentials": "./src/host/pi-credentials.ts"
   },
   "types": "./src/index.ts",
   "pi": {
