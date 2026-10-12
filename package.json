@@ -1,0 +1,37 @@
+{
+  "name": "pi-context-decisions",
+  "version": "0.1.0",
+  "description": "Decision-model driven context selection for Pi",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "decisions",
+    "classifiers"
+  ],
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "files": [
+    "src/"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.3"
+  }
+}
