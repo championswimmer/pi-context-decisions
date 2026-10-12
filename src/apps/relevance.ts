@@ -13,6 +13,8 @@ export interface RelevanceItem {
   confidence?: number;
 }
 export interface RelevanceClient {
+  /** Optional declared backend question cap; absence is not a fabricated provider limit. */
+  readonly maxQuestions?: number;
   decide(request: DecisionRequest, options?: DecisionOptions): Promise<DecisionResponse>;
 }
 export interface RelevanceOptions extends DecisionOptions {
@@ -28,13 +30,14 @@ export interface RelevanceOptions extends DecisionOptions {
   chunkSize?: number;
   /** Inject the selected provider's question limit, when lower than chunkSize. */
   maxQuestions?: number;
-  concurrency?: number;
+  /** 0 (default) or "all" starts every batch together; a positive integer bounds the pool. */
+  concurrency?: number | "all";
 }
 export const DEFAULT_RELEVANCE_OPTIONS = Object.freeze({
   mode: "score" as const, relatedThreshold: 0.75, directThreshold: 1.5,
   maxPromptChars: 4000, maxDescriptionChars: 400, maxNameChars: 64,
-  maxStateChars: 65536, maxCandidates: 1000, chunkSize: 24,
-  maxQuestions: 24, concurrency: 2, timeoutMs: 8000,
+  maxStateChars: 65536, maxCandidates: 1000, chunkSize: 50,
+  maxQuestions: 50, concurrency: 0, timeoutMs: 8000,
 });
 export const RELEVANCE_CRITERIA = Object.freeze([
   "Irrelevant: no useful connection to the task",
@@ -53,8 +56,11 @@ export class RelevanceError extends Error {
 function resolveOptions(options: RelevanceOptions) {
   const o = { ...DEFAULT_RELEVANCE_OPTIONS, ...options };
   if (o.mode !== "score" && o.mode !== "choice") throw new RelevanceError("config", "Invalid relevance mode");
-  for (const key of ["maxPromptChars", "maxDescriptionChars", "maxNameChars", "maxStateChars", "maxCandidates", "chunkSize", "maxQuestions", "concurrency", "timeoutMs"] as const) {
+  for (const key of ["maxPromptChars", "maxDescriptionChars", "maxNameChars", "maxStateChars", "maxCandidates", "chunkSize", "maxQuestions", "timeoutMs"] as const) {
     if (!Number.isSafeInteger(o[key]) || o[key] <= 0) throw new RelevanceError("config", "Relevance limits must be positive safe integers");
+  }
+  if (o.concurrency !== "all" && (!Number.isSafeInteger(o.concurrency) || o.concurrency < 0 || o.concurrency > 1000)) {
+    throw new RelevanceError("config", "Relevance concurrency must be all or an integer in [0, 1000]");
   }
   if (!Number.isFinite(o.relatedThreshold) || !Number.isFinite(o.directThreshold)
     || o.relatedThreshold < 0 || o.relatedThreshold > o.directThreshold || o.directThreshold > 2) {
@@ -155,9 +161,13 @@ export function interpretRelevance(responses: readonly DecisionResponse[], batch
   }
   return items;
 }
-/** Bounded concurrent calls with a whole-operation deadline, even if a client ignores cancellation. */
+/** Parallel batches with one operation deadline; a numeric concurrency opts into a bounded pool. */
 export async function rankSkills(prompt: string, skills: readonly SkillCandidate[], client: RelevanceClient, options: RelevanceOptions = {}): Promise<RelevanceItem[]> {
-  const o = resolveOptions(options);
+  const configured = resolveOptions(options);
+  if (client.maxQuestions !== undefined && (!Number.isSafeInteger(client.maxQuestions) || client.maxQuestions < 1 || client.maxQuestions > 1000)) {
+    throw new RelevanceError("config", "Backend question limit must be an integer in [1, 1000]");
+  }
+  const o = { ...configured, maxQuestions: Math.min(configured.maxQuestions, client.maxQuestions ?? configured.maxQuestions) };
   if (o.signal?.aborted) throw new RelevanceError("aborted", "Relevance ranking was cancelled");
   const batches = buildRelevanceRequests(prompt, skills, o);
   if (!batches.length) return [];
@@ -174,16 +184,32 @@ export async function rankSkills(prompt: string, skills: readonly SkillCandidate
     timer = setTimeout(() => interrupt("timeout"), o.timeoutMs);
   });
   const responses: DecisionResponse[] = new Array(batches.length);
+  const expiresAt = Date.now() + o.timeoutMs;
   let next = 0;
+  let failed = false;
+  let failure: unknown;
   const worker = async () => {
     while (!controller.signal.aborted) {
       const index = next++;
       if (index >= batches.length) return;
-      responses[index] = await client.decide(batches[index].request, { signal: controller.signal, timeoutMs: o.timeoutMs });
+      try {
+        const response = await client.decide(batches[index].request, { signal: controller.signal, timeoutMs: Math.max(1, expiresAt - Date.now()) });
+        // Reject malformed batches immediately, rather than waiting for unrelated calls.
+        try { validateResponse(batches[index].request, response); }
+        catch { throw new RelevanceError("invalid_response", "Invalid relevance decision response"); }
+        responses[index] = response;
+      } catch (error) {
+        // Preserve the initiating error even when sibling cancellation rejects synchronously.
+        if (!failed) { failed = true; failure = error; }
+        // Synchronously stop queued work and cancel every sibling on the first failure.
+        controller.abort();
+        throw failure;
+      }
     }
   };
+  const workers = o.concurrency === "all" || o.concurrency === 0 ? batches.length : Math.min(o.concurrency, batches.length);
   try {
-    await Promise.race([Promise.all(Array.from({ length: Math.min(o.concurrency, batches.length) }, worker)), interrupted]);
+    await Promise.race([Promise.all(Array.from({ length: workers }, worker)), interrupted]);
     return interpretRelevance(responses, batches, o);
   } finally {
     controller.abort();

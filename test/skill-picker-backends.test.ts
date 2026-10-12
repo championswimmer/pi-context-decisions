@@ -17,7 +17,7 @@ function metadata(state: Record<string, JsonValue>) {
   for (const entry of Object.values(entries)) assert.deepEqual(Object.keys(entry).sort(), ["description", "name"]);
   return entries;
 }
-function fixture(selection: BackendSelection) {
+function fixture(selection: BackendSelection, wait?: () => Promise<void>) {
   const batches: number[] = [];
   const observed: string[] = [];
   const capture = (state: Record<string, JsonValue>) => {
@@ -29,6 +29,7 @@ function fixture(selection: BackendSelection) {
     getApiKeyForProvider: async () => "FIXTURE_KEY",
     async classify(_model, request) {
       const entries = capture(request.state);
+      await wait?.();
       assert.ok(Object.values(request.questions).every((q) => q.type === "score" && q.criteria.length === 3));
       return { stopReason: "stop", answers: Object.fromEntries(Object.entries(entries).map(([id, entry]) => [id, { type: "score", score: value(entry.name) }])) };
     },
@@ -38,6 +39,7 @@ function fixture(selection: BackendSelection) {
     assert.doesNotMatch(init!.body as string, /PRIVATE/);
     if (selection.backend === "openai") {
       const entries = capture(JSON.parse(wire.input));
+      await wait?.();
       assert.equal(wire.questions.length, Object.keys(entries).length);
       return Response.json({ answers: wire.questions.map((q: { name: string; type: string; levels: unknown[] }) => {
         assert.equal(q.type, "score"); assert.equal(q.levels.length, 3);
@@ -45,6 +47,7 @@ function fixture(selection: BackendSelection) {
       }) });
     }
     const entries = capture(wire.state);
+    await wait?.();
     assert.deepEqual(Object.keys(wire.questions), Object.keys(entries));
     return Response.json({ answers: Object.fromEntries(Object.entries(entries).map(([id, entry]) => {
       const score = value(entry.name);
@@ -84,4 +87,23 @@ test("picker failures stay closed and malformed options never imply fail-open", 
   assert.equal(invalid.reason, "fail-closed"); assert.deepEqual(invalid.kept, []); assert.equal(invalid.errorCode, "config");
   const absent = await pickSkills(prompt, skills, null); assert.equal(absent.skipReason, "unconfigured");
   assert.deepEqual(absent.kept, skills);
+});
+for (const selection of selections) test(`${selection.backend} transport dispatches eight actual 50-question requests for 400 skills in parallel`, async () => {
+  const largeSkills = Array.from({ length: 400 }, (_, index) => ({
+    name: `demo-skill-${index}`, description: `Specialized task guidance ${index}`,
+    filePath: `/PRIVATE/${index}/SKILL.md`, body: "PRIVATE_BODY", extra: "PRIVATE_EXTRA",
+  }));
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const { client, batches, observed } = fixture(selection, () => pending);
+  const picking = pickSkills(prompt, largeSkills, client, { maxSkills: 400, relatedThreshold: 1.25 });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  // The real adapter/codec sees all eight full endpoint requests before any succeeds.
+  assert.deepEqual(batches, Array(8).fill(50));
+  assert.deepEqual(observed, largeSkills.map((skill) => skill.name));
+  release();
+  const result = await picking;
+  assert.equal(result.reason, "filtered"); assert.equal(result.items?.length, 400);
+  assert.deepEqual(result.batchSizes, Array(8).fill(50));
+  assert.deepEqual(result.kept, largeSkills.filter((skill) => value(skill.name) >= 1.25));
 });

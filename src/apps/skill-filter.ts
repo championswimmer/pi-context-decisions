@@ -80,6 +80,8 @@ export interface SkillAdvertisementResult<T> extends SkillFilterResult<T> {
   /** Safe code only: raw provider errors/prompt/skill text are never returned in diagnostics. */
   errorCode?: string;
   latencyMs: number;
+  /** Actual dispatched question counts, including provider/payload subdivisions; no metadata. */
+  batchSizes?: number[];
 }
 function safeCode(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && typeof error.code === "string"
@@ -127,16 +129,25 @@ export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   const minCandidates = options.minCandidates ?? 8;
   let items: RelevanceItem[] | null = null;
   let errorCode: string | undefined;
+  const batchSizes: number[] = [];
   if (!Number.isSafeInteger(minCandidates) || minCandidates < 0) errorCode = "config";
   else if (candidates.length < minCandidates) return skip("below-minimum");
   else {
-    try { items = await rankSkills(task, candidates, client, options); }
+    try {
+      items = await rankSkills(task, candidates, {
+        ...(client.maxQuestions === undefined ? {} : { maxQuestions: client.maxQuestions }),
+        decide(request, decisionOptions) {
+          batchSizes.push(Object.keys(request.questions).length);
+          return client.decide(request, decisionOptions);
+        },
+      }, options);
+    }
     catch (error) { errorCode = safeCode(error); }
   }
   const result = filterSkills(skills, items, options);
   event.systemPromptOptions.skills = result.kept;
   return {
-    ...result, candidates: candidates.length, ...(items === null ? {} : { items }),
+    ...result, candidates: candidates.length, batchSizes, ...(items === null ? {} : { items }),
     ...(errorCode === undefined ? {} : { errorCode }), latencyMs: Date.now() - started,
   };
 }
