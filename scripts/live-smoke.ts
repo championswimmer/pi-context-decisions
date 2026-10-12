@@ -3,6 +3,9 @@ import { createDecisionClient } from "../src/decision/api.ts";
 import { DecisionError } from "../src/decision/errors.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 import { createTypeSafeBackend } from "../src/core/backends/typesafe.ts";
+import { createOpenAIBackend } from "../src/core/backends/openai.ts";
+import type { AuthRegistryLike } from "../src/core/auth.ts";
+import { createPiCredentialRegistry } from "../src/host/pi-credentials.ts";
 import { createOpenRouterBackend } from "../src/core/backends/openrouter.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
 
@@ -18,21 +21,34 @@ const request: DecisionRequest = {
     relevance: { type: "score", instructions: "How relevant is the text to weather?", criteria: ["Irrelevant", "Related", "Directly relevant"] },
   },
 };
-const selected = process.argv.slice(2);
+const selected = process.argv.slice(2).map((id) => id === "openai" || id === "luna" ? "gpt-6-luna" : id);
 const targets = [
   { backend: "typesafe", model: "jev-latest", key: "TYPESAFE_API_KEY" },
+  { backend: "openai", model: "gpt-6-luna", key: "OPENAI_API_KEY" },
   ...OPENROUTER_DECISION_MODELS.map(({ id }) => ({ backend: "openrouter", model: id, key: "OPENROUTER_API_KEY" })),
-].filter(({ model }) => selected.length === 0 || selected.includes(model));
+].filter(({ backend, model }) => selected.length === 0 ? backend !== "openai" : selected.includes(model));
 if (!targets.length || selected.some((id) => !targets.some(({ model }) => model === id))) {
-  console.error("Unknown smoke-test model. Only the checked-in catalog and jev-latest are allowed.");
+  console.error("Unknown smoke-test model. Only the checked-in catalog, jev-latest, and explicit gpt-6-luna (openai/luna) are allowed.");
   process.exit(2);
 }
-console.log(JSON.stringify({ kind: "live-smoke", request: "public-weather-fact", primitiveCount: 3, targets: targets.length }));
+let piRegistry: AuthRegistryLike | undefined;
+try { piRegistry = await createPiCredentialRegistry(); }
+catch { /* Direct credential resolvers still provide the explicit env fallback. */ }
+console.log(JSON.stringify({ kind: "live-smoke", request: "public-weather-fact", primitiveCount: 3, targets: targets.length, piRuntimeAvailable: !!piRegistry }));
+let failures = 0;
 for (const target of targets) {
-  if (!process.env[target.key]) {
-    console.log(JSON.stringify({ backend: target.backend, model: target.model, outcome: "missing_key", calls: 0 }));
-    continue;
-  }
+  const envKeyPresent = !!process.env[target.key]?.trim();
+  let piKeyPresent = false;
+  let sourceKind: "api_key" | "oauth" | "none" = "none";
+  const registry: AuthRegistryLike | undefined = piRegistry ? {
+    async getProviderAuth(provider, options) {
+      const resolved = await piRegistry!.getProviderAuth!(provider, options);
+      sourceKind = resolved?.source === "OAuth" ? "oauth" : resolved?.auth.apiKey?.trim() ? "api_key" : "none";
+      piKeyPresent = !!resolved?.auth.apiKey?.trim();
+      return resolved;
+    },
+    getApiKeyForProvider: (provider) => piRegistry!.getApiKeyForProvider(provider),
+  } : undefined;
   let calls = 0;
   const http: { status: number; guardrail: boolean; unavailable: boolean; schema?: Record<string, string[]> }[] = [];
   const monitoredFetch: typeof fetch = async (input, init) => {
@@ -57,14 +73,17 @@ for (const target of targets) {
     http.push(entry);
     return response;
   };
-  const deps = { http: { fetch: monitoredFetch }, env: process.env };
-  const backend = target.backend === "typesafe" ? createTypeSafeBackend(target.model, deps) : createOpenRouterBackend(target.model, deps);
+  const deps = { http: { fetch: monitoredFetch }, registry, env: process.env };
+  const backend = target.backend === "typesafe" ? createTypeSafeBackend(target.model, deps)
+    : target.backend === "openai" ? createOpenAIBackend(target.model, deps) : createOpenRouterBackend(target.model, deps);
   const start = Date.now();
   try {
     const result = await createDecisionClient(backend).decide(request, { timeoutMs: 15000 });
     const scalars = Object.fromEntries(Object.entries(result.answers).map(([id, answer]) => [id, answer.type === "bool" ? answer.probability : answer.type === "choice" ? answer.choice : answer.score]));
-    console.log(JSON.stringify({ backend: target.backend, model: target.model, outcome: "ok", calls, latencyMs: Date.now() - start, answers: scalars, usage: result.usage ?? null, http }));
+    console.log(JSON.stringify({ backend: target.backend, model: target.model, responseModel: result.model ?? null, outcome: "ok", calls, latencyMs: Date.now() - start, envKeyPresent, piKeyPresent, sourceKind, answers: scalars, usage: result.usage ?? null, http }));
   } catch (error) {
-    console.log(JSON.stringify({ backend: target.backend, model: target.model, outcome: "error", code: error instanceof DecisionError ? error.code : "unexpected", status: error instanceof DecisionError ? error.status : undefined, calls, latencyMs: Date.now() - start, http }));
+    failures++;
+    console.log(JSON.stringify({ backend: target.backend, model: target.model, outcome: "error", code: error instanceof DecisionError ? error.code : "unexpected", status: error instanceof DecisionError ? error.status : undefined, calls, latencyMs: Date.now() - start, envKeyPresent, piKeyPresent, sourceKind, http }));
   }
 }
+if (failures) process.exitCode = 1;
