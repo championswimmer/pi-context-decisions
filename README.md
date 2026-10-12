@@ -51,7 +51,7 @@ Verified **2026-10-12 UTC**, ranked by prompt + completion tokens during **2026-
 
 The original top ten was trimmed after live validation: `openai/gpt-6-luna-decisions` and `inception/mercury-decide:free` each returned HTTP 404 with guardrail restrictions twice for this account. They are excluded from both native and direct picker/settings choices; no lower-ranked models were added. These are account-specific routing observations, not claims of global model unavailability. See the [live validation report](.agents/plans/live-provider-validation-2026-10-12.md).
 
-Source: [OpenRouter rankings](https://openrouter.ai/rankings), catalog joined with an **unofficial frontend ranking endpoint**, CC BY 4.0. Exact counts and provenance are in `src/catalog/openrouter-models.ts`. This is a dated popularity snapshot of public routed traffic, not model quality or a live availability guarantee. **No runtime ranking, discovery, or cache requests occur.** Update the list via a reviewed code change; persisted models outside the current list produce an explicit settings error.
+Source: [OpenRouter rankings](https://openrouter.ai/rankings), catalog joined with an **unofficial frontend ranking endpoint**, CC BY 4.0. Exact counts and provenance are in `src/catalog/openrouter-models.ts`. This is a dated popularity snapshot of public routed traffic, not model quality or a live availability guarantee. **No runtime popularity-ranking, model-discovery, or catalog-cache requests occur.** Update the list via a reviewed code change; persisted models outside the current list produce an explicit settings error.
 
 ## Credentials and backends
 
@@ -95,12 +95,36 @@ Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically
 
 - Relevance enabled, `score` mode; skips fewer than **8 unique automatic skills** and empty prompts.
 - Score rubric: **irrelevant → related → directly relevant** (indices 0–2). Fractional scores are expected rubric indices, not class probabilities. Default policy labels: score ≥1.5 directly relevant, ≥0.75 related, otherwise irrelevant; normalized score = score/2. Persisted `relatedThreshold` and `directThreshold` accept decimals in [0, 2], ordered lowest first. `minLabel` chooses which inclusive threshold selects skills. Choice mode instead uses the model's categorical label; the numeric thresholds apply only to score mode.
-- Keep related or better, cap **12 unpinned** selections; pinned names bypass cap/threshold. Original skill order and object references are preserved. Manual-only skills are not sent for classification.
+- Keep related or better, cap **12 unpinned** selections; pinned and scoped always-allowed names bypass scoring/cap/threshold. Original skill order and object references are preserved. Manual-only skills are not sent for classification.
 - **Fail closed**: decision failures hide unverified automatic advertisements, retaining pinned/manual-only entries. `failMode open` explicitly retains the full inventory on failure; status labels that fallback.
 - Whole filtering deadline **8000ms**, requested batches of **50 skills**. Concurrency **0** means every batch starts in parallel: 300 skills use six batches; 400 use eight. Set concurrency 1–32 to limit simultaneous batches. A lower declared provider/client question limit reduces effective batch size, without omitting candidates.
 - Configurable prompt ≤4000 characters and each description ≤400; names ≤64, JSON state ≤65536 characters per batch, inventory ≤1000 unique candidates. These are local safety bounds, not provider token-limit guarantees.
 
 Invalid persisted settings are reported explicitly and advertisements fail closed until repaired with commands or a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
+
+### Global and project skill allowlists
+
+From `/decisions`, select **Allow list (Global)** or **Allow list (Project)**. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the selection cap, and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
+
+- **Global** names are stored as `globalAllowlist` in the user settings file.
+- **Project** names are stored in `<cwd>/.pi/pi-context-decisions.json` as `{ "alwaysAllowed": ["skill-name"] }`. It can be shared in the repository; this is scoped to Pi's working directory, so starting in different subdirectories uses different lists. A malformed project list is warned about and treated as empty, not a full-inventory fallback.
+- Lists store names only, sorted and deduplicated. Saved names for unloaded skills appear as **(not loaded)** and survive saves unless explicitly removed.
+
+The terminal overlay starts in **A-Z**, with immediate local fuzzy search across names and descriptions. **Typing and changing tabs never make decision calls.** Press **Ctrl+R** (or Enter from the search box) for **Relevance** ranking of all loaded skills in the chosen scope against the search term. This explicitly uses the same selected decision backend and 50-skill parallel batches, and may incur charges—even when automatic filtering is disabled. Only search text and skill names/descriptions are sent. Empty searches and missing models/credentials make no call; inline guidance leaves local fuzzy search usable. Query changes mark old results stale; restarting/closing cancels in-flight work.
+
+Keys: **↓** enter list, **↑/↓** navigate, **Space** toggle, **Enter** expand description, **Tab** switch A-Z/Relevance, **Ctrl+K** clear search, **Ctrl+S** save in place. **Esc** returns to search; Esc again closes and discards unsaved changes. Selection changes do not save automatically, and ranking never changes selections. The picker uses Pi's terminal UI; RPC/headless clients can use text commands:
+
+```text
+/decisions allowlist global                    # terminal editor
+/decisions allowlist project
+/decisions allow global list
+/decisions allow global add typescript
+/decisions allow global remove typescript
+/decisions allow project add database-migrations
+/decisions allow project clear
+```
+
+Before the first prompt the editor uses Pi's loaded skill commands. Afterward it uses an in-memory, metadata-only pre-filter inventory snapshot; after `/reload`, a fresh prompt updates it. Project skills still follow Pi project trust. These lists change advertisements only; explicit skill invocation, tools, and MCP access are unchanged.
 
 ### Privacy and scope
 
@@ -155,7 +179,7 @@ const picked = await pickSkills(prompt, thirtySkills, client, {
   relatedThreshold: 1.25, directThreshold: 1.75, // raw rubric indices in [0, 2]
   minLabel: "related", maxSkills: 6, timeoutMs: 8000,
 });
-// picked.items: all candidate scores; picked.kept: selected original objects.
+// picked.items: scored (non-pinned) candidate scores; picked.kept: selected original objects.
 // An explicit picker has minCandidates: 0 by default; the automatic hook defaults to 8.
 // Inside an early before_agent_start handler:
 // event.systemPromptOptions.skills = picked.kept;
@@ -181,6 +205,6 @@ PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/live-smoke.t
 PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/live-smoke.ts jev-latest
 ```
 
-The smoke script resolves Pi credentials first, then env; it never substitutes `openai-codex`. `openai` and `luna` are aliases for the explicit Luna target. With no model arguments it checks TypeSafe plus the retained router list, **not Luna**. Without the opt-in it exits before SDK initialization or network activity. It prints safe source-kind/presence booleans/status/scalars/usage, never credentials or raw provider error bodies. The UI uses Pi's built-in dialogs/status APIs, including RPC support.
+The smoke script resolves Pi credentials first, then env; it never substitutes `openai-codex`. `openai` and `luna` are aliases for the explicit Luna target. With no model arguments it checks TypeSafe plus the retained router list, **not Luna**. Without the opt-in it exits before SDK initialization or network activity. It prints safe source-kind/presence booleans/status/scalars/usage, never credentials or raw provider error bodies. Settings use Pi's built-in dialogs/status APIs, including RPC support; the custom allowlist overlay is terminal-only.
 
 See [AGENTS.md](AGENTS.md) and `.agents/plans/` for contributor handoffs. `../pi-skill-picker-jev` was a pattern reference, not a dependency. Research plans retain historical proposals; the implemented static snapshot and fail-closed defaults above supersede earlier dynamic/fail-open recommendations.

@@ -5,7 +5,9 @@
 ## Layout and status
 
 - `src/extension.ts`: Pi package entry; `src/extension/`: lifecycle, `/decisions` user settings command, host contracts. Register only `decisions`; no compatibility alias.
-- `src/settings.ts`: validated, atomic, credential-free user settings.
+- `src/settings.ts`: validated, atomic, credential-free user settings plus global always-allowed skill names.
+- `src/project-allowlist.ts`: names-only `<cwd>/.pi/pi-context-decisions.json`; `src/apps/allowlist.ts`: pure scope policy.
+- `src/extension/allowlist-picker.ts`: terminal-only A-Z/fuzzy and explicit relevance-ranked scoped editor.
 - `src/index.ts`: portable application/core exports.
 - `src/decision/`: canonical primitives, validation, client, typed errors.
 - `src/core/`: Pi classifier and direct TypeSafe/OpenAI/OpenRouter transports/codecs/auth.
@@ -30,6 +32,9 @@ Earlier research plans proposed dynamic discovery and fail-open defaults. Latest
 - **Fail closed** on active decision/configuration errors. Full-inventory fallback requires explicit `failMode: "open"`; disabled/unconfigured/below-minimum behavior intentionally makes no calls and preserves advertisements.
 - Score thresholds are raw 0–2 rubric indices, inclusive and ordered (`relatedThreshold <= directThreshold`); persisted decimal settings are supported. Scoring defaults to `chunkSize: 50`, `concurrency: 0` (all batches parallel); positive concurrency 1–32 limits batch fan-out. Reduce batch size for a lower declared provider/client `maxQuestions`; evaluate every candidate, not just the first batch. Pins/manual-only policy and stable references survive selection.
 - `/decisions` opens settings: immediate enable toggle, provider/execution path, model, numeric policy. Provider/model availability uses public request-time Pi credential resolution, not chat-model inventory guesses; label missing keys and guide to the matching env variable or `/login <provider>`. Reject unusable selections before atomic persistence; never enable filtering as a side effect of selecting a provider/model. Headless arguments support the same behavior.
+- Scoped allowlists mean **always included**, not restrict-to-only: global matches user/temporary/missing scope, project matches project scope. Effective pins bypass scoring/threshold/cap and survive fail-closed. Persist names only; project files are bounded, regular-file-only reads and atomic writes. Malformed project lists warn and become empty, never full inventory.
+- `/decisions` settings expose both allowlist editors. A-Z search is local; typing/tabs make no calls. Only explicit Ctrl+R/search Enter ranks the query with configured decisions (`rubric: "topic"`, same 50/all-parallel batching); no model/key gives inline setup guidance. Cancel old/closed ranking, reject stale completions, show stale query state. Save only on explicit Ctrl+S; preserve unloaded names. RPC/headless use `/decisions allow <scope> list|add|remove|clear`; never call custom overlays outside `mode === "tui"`.
+- Keep terminal text sanitized and visible-width bounded; propagate focus to Input for IME. Mocked key/render tests are not a visual terminal pass.
 - Only mutate `before_agent_start.systemPromptOptions.skills`. Do not claim access control or silently implement MCP/tool filtering. Later extensions may overwrite selections.
 - Keep native OpenRouter entries constrained to the same static retained list; do not destructively override Pi's provider. Missing native registrations stay errors, not automatic direct-backend fallback.
 
