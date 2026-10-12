@@ -7,13 +7,15 @@ Requires Pi 1.1.0 APIs and Node 22.18+. Pre-alpha; TypeSafe, the eight retained 
 ## Load early
 
 ```bash
+pi install npm:pi-context-decisions
+# or, from a checkout
 npm install
 pi -e ./src/extension.ts -e ./other-extension.ts
 ```
 
 Keep this extension first or near the start of your configured extensions/packages. Pi awaits handlers in load order. We filter the skills Pi supplies in `before_agent_start`; later handlers see the filtered array, but can overwrite it. There is no extension-priority guarantee.
 
-For a local package install, `pi install /absolute/path/to/pi-context-decisions` is supported; ensure package ordering remains appropriate. This package is not published to npm yet.
+For a local package install, `pi install /absolute/path/to/pi-context-decisions` is supported; ensure package ordering remains appropriate. The package ships TypeScript sources that Pi loads directly; it requires Node >= 22.18 and the Pi peer packages (`@earendil-works/pi-coding-agent`, `pi-ai`, `pi-tui`).
 
 ## User settings: `/decisions`
 
@@ -206,5 +208,36 @@ PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/live-smoke.t
 ```
 
 The smoke script resolves Pi credentials first, then env; it never substitutes `openai-codex`. `openai` and `luna` are aliases for the explicit Luna target. With no model arguments it checks TypeSafe plus the retained router list, **not Luna**. Without the opt-in it exits before SDK initialization or network activity. It prints safe source-kind/presence booleans/status/scalars/usage, never credentials or raw provider error bodies. Settings use Pi's built-in dialogs/status APIs, including RPC support; the custom allowlist overlay is terminal-only.
+
+## Publishing
+
+The first version is `0.1.0` (already set in `package.json` and `package-lock.json`). npm trusted publishers are configured on an existing package, so publish `0.1.0` once by hand, then switch to tag-driven releases.
+
+```bash
+npm ci --ignore-scripts
+npm run typecheck && npm test
+npm pack --dry-run --ignore-scripts   # inspect the file list
+npm login
+npm publish                            # publishConfig.access is public; prepublishOnly re-runs typecheck and tests
+```
+
+Then on npmjs.com open the package, **Settings, Trusted publishing, Add trusted publisher, GitHub Actions**, and enter:
+
+| Field | Value |
+| --- | --- |
+| Organization or user | `championswimmer` |
+| Repository | `pi-context-decisions` |
+| Workflow filename | `release.yml` |
+| Environment | leave empty |
+| Allowed actions | tick **Allow npm publish** (see below); leave *npm dist-tag* off |
+
+Per the [npm trusted publishing docs](https://docs.npmjs.com/trusted-publishers/):
+
+- **Allow npm publish is required.** Trusted publisher configurations created after Sep 3, 2026 default to `npm stage publish` only. `release.yml` publishes directly with `npm publish`, so without that tick the release fails. (Alternatively, switch the workflow to `npm stage publish` and approve each release by hand with 2FA.)
+- **The first successful publish must happen within 2 days.** A new configuration that is not validated by a publish in that window expires and cannot be edited; delete it and create a new one. Since `0.1.0` is published by hand, create the trusted publisher only when you are ready to push the first tag release (`v0.1.1`) straight away.
+- `repository.url` in `package.json` must exactly match the GitHub repository (it does), the runner must be GitHub-hosted, and npm CLI must be >= 11.5.1 (the workflow installs it).
+- Trusted publishing works for private repositories, but **provenance is only generated for public repositories**. The repository is currently private, so releases publish without provenance until it is made public. No `--provenance` flag is needed or used.
+
+Later releases: bump, commit and tag with `npm version <major|minor|patch> -m "chore: release v%s"`, then `git push --atomic origin main vX.Y.Z`. [`.github/workflows/release.yml`](.github/workflows/release.yml) verifies the tag matches `package.json`, that the commit is on `main`, runs the tests and publishes with OIDC; no `NPM_TOKEN`. Stable versions go to the `latest` dist-tag; prerelease versions (for example `v1.0.0-rc.1`) go to `next`, because npm refuses to publish a prerelease to `latest` without `--tag`. The project-local `release` skill (`.agents/skills/release`) describes the procedure.
 
 See [AGENTS.md](AGENTS.md) and `.agents/plans/` for contributor handoffs. `../pi-skill-picker-jev` was a pattern reference, not a dependency. Research plans retain historical proposals; the implemented static snapshot and fail-closed defaults above supersede earlier dynamic/fail-open recommendations.

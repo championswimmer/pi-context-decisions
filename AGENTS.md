@@ -51,4 +51,6 @@ Every behavior change needs focused tests and the full offline suite. Local dev 
 
 Live smoke validation on 2026-10-12 retained eight OpenRouter models after two confirmed guardrail restrictions; do not replenish the static list automatically. Direct Luna also passed all three primitives using Pi's stored `openai` API key with the env key absent. `scripts/live-smoke.ts` requires explicit `PI_CONTEXT_DECISIONS_LIVE=1` and may incur charges; explicit `gpt-6-luna`/`openai`/`luna` selects only Luna, while the no-argument default excludes it. Smoke credentials are SDK Pi-first/env-second. Default checks remain offline.
 
+Releases: tag-driven via `.github/workflows/release.yml` (npm trusted publishing, no `NPM_TOKEN`); follow `.agents/skills/release/SKILL.md`. Never `npm publish`, tag, or push a tag without explicit user authorization for that release. `0.1.0` is published manually once by the user; keep `package.json` and `package-lock.json` versions in sync.
+
 Do not install, commit, push, or touch network unless authorized. The designated sole Git publisher handles tested milestones; inspect staged content for secrets, never force-push, and leave unrelated work untouched.
