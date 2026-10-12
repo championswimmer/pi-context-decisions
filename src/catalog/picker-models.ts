@@ -19,7 +19,7 @@ export interface PickerInputs {
   auth: Readonly<Record<string, AuthStatus>>;
 }
 
-/** Pure merge of registry metadata and the checked-in ten; never discovers models or keys. */
+/** Pure merge of registry metadata and the checked-in survivors of the top ten. */
 export function buildPickerEntries(input: PickerInputs): PickerEntry[] {
   const entries: PickerEntry[] = [];
   const registryIds = new Set<string>();
@@ -31,8 +31,8 @@ export function buildPickerEntries(input: PickerInputs): PickerEntry[] {
     if (model.provider === "openrouter") { piRouterIds.add(model.id); continue; }
     entries.push({ label: `${model.name || model.id} · ${model.provider} via Pi`, selection: { backend: "pi", provider: model.provider, id: model.id }, group: "pi-native", authStatus: input.auth[model.provider] ?? "unknown" });
   }
-  OPENROUTER_DECISION_MODELS.forEach((model, index) => {
-    const note = `#${index + 1} · ${model.weeklyTokens} tokens · week ${OPENROUTER_DECISION_SNAPSHOT.windowStart}–${OPENROUTER_DECISION_SNAPSHOT.usageThrough} · static snapshot ${OPENROUTER_DECISION_SNAPSHOT.snapshotDate} · unofficial OpenRouter rankings · CC BY 4.0`;
+  OPENROUTER_DECISION_MODELS.forEach((model) => {
+    const note = `#${model.popularityRank} · ${model.weeklyTokens} tokens · week ${OPENROUTER_DECISION_SNAPSHOT.windowStart}–${OPENROUTER_DECISION_SNAPSHOT.usageThrough} · static snapshot ${OPENROUTER_DECISION_SNAPSHOT.snapshotDate} · unofficial OpenRouter rankings · CC BY 4.0`;
     const status = input.auth.openrouter ?? "unknown";
     if (piRouterIds.has(model.id)) entries.push({ label: `${model.name} · OpenRouter via Pi`, selection: { backend: "pi", provider: "openrouter", id: model.id }, group: "openrouter-top10", authStatus: status, note: `${note}; Pi parser compatibility varies — use direct if needed` });
     entries.push({ label: `${model.name} · OpenRouter direct`, selection: { backend: "openrouter", model: model.id }, group: "openrouter-top10", authStatus: status, note });

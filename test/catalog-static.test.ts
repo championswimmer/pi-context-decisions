@@ -9,9 +9,7 @@ import { buildPickerEntries, type PickerSelection } from "../src/catalog/picker-
 const EXPECTED = [
   ["typesafe/jev-1.13", "3359670383787"],
   ["perplexity/pplx-decider-v1.1-27b", "71465391606"],
-  ["openai/gpt-6-luna-decisions", "48268091013"],
   ["cloudflare/clef-flash", "37269378167"],
-  ["inception/mercury-decide:free", "25472312027"],
   ["liquid/d1", "12526551021"],
   ["cloudflare/clef", "11067471867"],
   ["nace-ai/drex-v1.5", "10456871306"],
@@ -24,11 +22,12 @@ function selectionId(selection: PickerSelection): string | undefined {
   return undefined;
 }
 
-test("checked-in ranking is exactly the verified ten in descending weekly-token order", () => {
-  assert.equal(OPENROUTER_DECISION_MODELS.length, 10);
+test("checked-in ranking is the eight live-tested survivors in original weekly-token order", () => {
+  assert.equal(OPENROUTER_DECISION_MODELS.length, 8);
+  assert.deepEqual(OPENROUTER_DECISION_MODELS.map((m) => m.popularityRank), [1, 2, 4, 6, 7, 8, 9, 10]);
   assert.deepEqual(OPENROUTER_DECISION_MODELS.map((m) => [m.id, m.weeklyTokens]), EXPECTED);
-  assert.equal(new Set(OPENROUTER_DECISION_MODELS.map((m) => m.id)).size, 10);
-  for (let i = 0; i < 10; i++) {
+  assert.equal(new Set(OPENROUTER_DECISION_MODELS.map((m) => m.id)).size, 8);
+  for (let i = 0; i < OPENROUTER_DECISION_MODELS.length; i++) {
     const model = OPENROUTER_DECISION_MODELS[i];
     assert.ok(model.name && model.canonicalSlug);
     assert.match(model.weeklyTokens, /^[1-9]\d*$/);
@@ -48,9 +47,12 @@ test("snapshot records actual token window, date and unofficial primary-source p
   assert.match(OPENROUTER_DECISION_SNAPSHOT.attribution, /Static checked-in snapshot/);
 });
 
-test("exact ID lookup preserves free variant and excludes aliases and unknown models", () => {
-  assert.equal(getOpenRouterDecisionModel("inception/mercury-decide:free")?.canonicalSlug, "inception/mercury-decide-20260930");
-  for (const id of ["~typesafe/jev-latest", "inception/mercury-decide", "jaredpalmer/kev-4b", "respan/span-01", "OPENAI/gpt-6-luna-decisions", "typesafe/jev-1.13-20260917"]) {
+test("exact ID lookup excludes confirmed guardrail models, aliases and unknown models", () => {
+  assert.equal(OPENROUTER_DECISION_SNAPSHOT.originalCount, 10);
+  assert.equal(OPENROUTER_DECISION_SNAPSHOT.routingCheckedDate, "2026-10-12");
+  assert.deepEqual(OPENROUTER_DECISION_SNAPSHOT.excludedIds, ["openai/gpt-6-luna-decisions", "inception/mercury-decide:free"]);
+  assert.ok(Object.isFrozen(OPENROUTER_DECISION_SNAPSHOT.excludedIds));
+  for (const id of ["openai/gpt-6-luna-decisions", "inception/mercury-decide:free", "~typesafe/jev-latest", "inception/mercury-decide", "jaredpalmer/kev-4b", "respan/span-01", "OPENAI/gpt-6-luna-decisions", "typesafe/jev-1.13-20260917"]) {
     assert.equal(getOpenRouterDecisionModel(id), undefined);
     assert.equal(isAllowedOpenRouterModel(id), false);
   }
@@ -83,21 +85,23 @@ test("picker preserves all non-OpenRouter classifiers, identities, auth labels, 
   assert.deepEqual(native.map((e) => e.authStatus), ["missing", "unknown", "ok", "unknown"]);
 });
 
-test("router offers only ten static IDs, via Pi only when exact registry entry exists", () => {
+test("router offers only static surviving IDs, excludes guardrails even via Pi", () => {
   const entries = buildPickerEntries({ piClassifiers: [
     { provider: "openrouter", id: "typesafe/jev-1.13" },
     { provider: "openrouter", id: "typesafe/jev-1.13" },
     { provider: "openrouter", id: "inception/mercury-decide:free" },
+    { provider: "openrouter", id: "openai/gpt-6-luna-decisions" },
     { provider: "openrouter", id: "inception/mercury-decide" },
     { provider: "openrouter", id: "~typesafe/jev-latest" },
     { provider: "openrouter", id: "jaredpalmer/kev-4b" },
     { provider: "openrouter", id: "unknown/new-decision" },
   ], auth: { openrouter: "missing" } });
   const router = entries.filter((entry) => entry.group === "openrouter-top10");
-  assert.equal(router.length, 12);
+  assert.equal(router.length, 9);
   assert.deepEqual(router.filter((entry) => entry.selection.backend === "openrouter").map((entry) => selectionId(entry.selection)), EXPECTED.map(([id]) => id));
-  assert.deepEqual(router.filter((entry) => entry.selection.backend === "pi").map((entry) => selectionId(entry.selection)), ["typesafe/jev-1.13", "inception/mercury-decide:free"]);
-  assert.equal(new Set(router.map((entry) => selectionId(entry.selection))).size, 10);
+  assert.deepEqual(router.filter((entry) => entry.selection.backend === "pi").map((entry) => selectionId(entry.selection)), ["typesafe/jev-1.13"]);
+  assert.equal(new Set(router.map((entry) => selectionId(entry.selection))).size, 8);
+  assert.match(router.find((entry) => selectionId(entry.selection) === "cloudflare/clef-flash")?.note ?? "", /^#4 ·/);
   for (const entry of router) {
     assert.equal(entry.authStatus, "missing");
     assert.match(entry.note ?? "", /static snapshot 2026-10-12/);
@@ -117,7 +121,7 @@ test("direct TypeSafe/OpenAI remain selectable and caller arrays aren't mutated"
     { backend: "openai", model: "gpt-6-luna" },
   ]);
   assert.equal(classifiers.length, 1);
-  assert.equal(entries.filter((entry) => entry.group === "openrouter-top10").length, 10);
+  assert.equal(entries.filter((entry) => entry.group === "openrouter-top10").length, 8);
 });
 
 test("runtime picker/catalog do not call network or change checked-in ranking", () => {
@@ -125,7 +129,7 @@ test("runtime picker/catalog do not call network or change checked-in ranking", 
   let calls = 0;
   globalThis.fetch = async () => { calls++; throw new Error("Network forbidden"); };
   try {
-    assert.equal(buildPickerEntries({ piClassifiers: [], auth: {} }).filter((e) => e.group === "openrouter-top10").length, 10);
+    assert.equal(buildPickerEntries({ piClassifiers: [], auth: {} }).filter((e) => e.group === "openrouter-top10").length, 8);
     assert.equal(getOpenRouterDecisionModel("typesafe/jev-1.13")?.weeklyTokens, "3359670383787");
     assert.equal(calls, 0);
   } finally { globalThis.fetch = original; }
