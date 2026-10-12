@@ -86,6 +86,17 @@ function safeCode(error: unknown): string {
     && ["config", "auth", "invalid_request", "invalid_response", "refusal", "rate_limit", "http", "timeout", "aborted", "network"].includes(error.code)) return error.code;
   return "decision-failed";
 }
+/**
+ * Pi 1.1.0 expands /skill:name before this hook as <skill name="..." location="...">
+ * followed by body, </skill>, then optional task arguments. Keep only those arguments.
+ * Use the LAST closing tag: a skill body may itself contain a closing-tag example.
+ * Malformed skill envelopes are not task text and must never be sent to a provider.
+ */
+function taskWithoutExpandedSkill(prompt: string): string {
+  if (!/^\s*<skill\b/u.test(prompt)) return prompt;
+  const match = prompt.match(/^\s*<skill\b[^>]*>\r?\n[\s\S]*\r?\n<\/skill>(?:\r?\n\r?\n([\s\S]*))?$/u);
+  return match?.[1]?.trim() ?? "";
+}
 /** Call from the early before_agent_start hook. ONLY assigns systemPromptOptions.skills. */
 export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   event: SkillAdvertisementEvent<T>, client: RelevanceClient | null, options: SkillAdvertisementOptions = {},
@@ -98,14 +109,15 @@ export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   });
   if (options.enabled === false || options.relevanceEnabled === false) return skip("disabled");
   if (!client) return skip("unconfigured");
-  if (!event.prompt.trim()) return skip("empty-prompt");
+  const task = taskWithoutExpandedSkill(event.prompt);
+  if (!task.trim()) return skip("empty-prompt");
   const minCandidates = options.minCandidates ?? 8;
   let items: RelevanceItem[] | null = null;
   let errorCode: string | undefined;
   if (!Number.isSafeInteger(minCandidates) || minCandidates < 0) errorCode = "config";
   else if (candidates.length < minCandidates) return skip("below-minimum");
   else {
-    try { items = await rankSkills(event.prompt, candidates, client, options); }
+    try { items = await rankSkills(task, candidates, client, options); }
     catch (error) { errorCode = safeCode(error); }
   }
   const result = filterSkills(skills, items, options);

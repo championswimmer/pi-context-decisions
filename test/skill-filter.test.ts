@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { applySkillAdvertisementFilter, filterSkills } from "../src/apps/skill-filter.ts";
 import type { RelevanceClient, RelevanceItem } from "../src/apps/relevance.ts";
+import { decodeSystemOne } from "../src/core/codecs/system-one.ts";
 
 const skills = ["alpha", "beta", "gamma", "delta"].map((name) => ({ name, description: `${name} description`, filePath: `/${name}/SKILL.md` }));
 function item(name: string, score: number, label: RelevanceItem["label"] = "related"): RelevanceItem {
@@ -9,6 +10,45 @@ function item(name: string, score: number, label: RelevanceItem["label"] = "rela
 }
 const items = [item("alpha", 1), item("beta", 2, "directly_relevant"), item("gamma", 0, "irrelevant"), item("delta", 1.5, "directly_relevant")];
 const client: RelevanceClient = { decide: async (req) => ({ answers: Object.fromEntries(Object.keys(req.questions).map((id, index) => [id, { type: "score", score: index % 2 ? 2 : 0 }])) }) };
+
+// Exact wrapper emitted by Pi 1.1.0 agent-session._expandSkillCommand.
+const expandedSkill = `<skill name="private" location="/private/project/SKILL.md">\nReferences are relative to /private/project.\n\nFIXTURE_PRIVATE_SKILL_BODY\n</skill>`;
+test("expanded Pi skill commands send only task arguments, never bodies or paths", async () => {
+  const inventory = Array.from({ length: 8 }, (_, index) => ({ name: `skill${index}`, description: "Fixture metadata" }));
+  for (const block of [expandedSkill, expandedSkill.replace("FIXTURE_PRIVATE_SKILL_BODY", "An embedded closing tag:\n</skill>\n\nFIXTURE_PRIVATE_SKILL_BODY")]) {
+    let calls = 0;
+    const capturing: RelevanceClient = { decide: async (request) => {
+      calls++;
+      assert.equal(request.state.task, "Write unit tests");
+      assert.doesNotMatch(JSON.stringify(request), /FIXTURE_PRIVATE_SKILL_BODY|\/private\/project|References are relative|<skill/);
+      return client.decide(request);
+    } };
+    const event = { prompt: `${block}\n\nWrite unit tests`, systemPromptOptions: { skills: inventory } };
+    assert.equal((await applySkillAdvertisementFilter(event, capturing)).reason, "filtered");
+    assert.equal(calls, 1);
+    assert.equal(event.prompt, `${block}\n\nWrite unit tests`, "do not change the main agent's explicit skill access");
+  }
+});
+test("expanded skills without remaining task and malformed wrappers make no calls", async () => {
+  const never: RelevanceClient = { decide: async () => { assert.fail("private skill content must not be sent"); } };
+  for (const prompt of [expandedSkill, `${expandedSkill}\n\n  `, expandedSkill.replace("\n</skill>", ""), expandedSkill.replaceAll("\n", "\r\n")]) {
+    const event = { prompt, systemPromptOptions: { skills } };
+    const result = await applySkillAdvertisementFilter(event, never, { minCandidates: 1 });
+    assert.equal(result.reason, "skipped");
+    assert.equal(result.skipReason, "empty-prompt");
+    assert.equal(event.systemPromptOptions.skills, skills);
+  }
+});
+test("contradictory TypeSafe choice answers fail closed instead of advertising irrelevant skills", async () => {
+  const contradictory: RelevanceClient = { decide: async (request) => decodeSystemOne(request, { answers: Object.fromEntries(
+    Object.keys(request.questions).map((id) => [id, { type: "choice", choice: "directly_relevant", probabilities: { irrelevant: 1, related: 0, directly_relevant: 0 }, confidence: 1 }]),
+  ) }, { strictMetadata: true }) };
+  const event = { prompt: "Write tests", systemPromptOptions: { skills } };
+  const result = await applySkillAdvertisementFilter(event, contradictory, { mode: "choice", minCandidates: 1 });
+  assert.equal(result.reason, "fail-closed");
+  assert.equal(result.errorCode, "invalid_response");
+  assert.deepEqual(result.kept, []);
+});
 
 test("filter selects highest scores with cap and preserves original order/references", () => {
   const result = filterSkills(skills, items, { maxSkills: 2 });
