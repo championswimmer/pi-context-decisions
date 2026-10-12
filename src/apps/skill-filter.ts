@@ -19,9 +19,11 @@ function uniqueSkills<T extends { name: string }>(skills: readonly T[]): T[] {
     return true;
   });
 }
-function validItems(items: readonly RelevanceItem[], expected: Set<string>): boolean {
+function validItems(items: readonly RelevanceItem[], expected: Set<string>, pinned: Set<string>): boolean {
   const seen = new Set<string>();
   for (const item of items) {
+    // Earlier callers may still return decisions for pins; they never affect policy.
+    if (item && pinned.has(item.name)) continue;
     if (!item || !expected.has(item.name) || seen.has(item.name)
       || !Object.hasOwn(LABEL_RANK, item.label) || !Number.isFinite(item.score) || item.score < 0 || item.score > 2
       || !Number.isFinite(item.normalized) || Math.abs(item.normalized - item.score / 2) > 1e-9
@@ -42,7 +44,7 @@ export function filterSkills<T extends { name: string; disableModelInvocation?: 
     && (minLabel === "related" || minLabel === "directly_relevant")
     && (options.failMode === undefined || options.failMode === "closed" || options.failMode === "open");
   const candidates = inventory.filter((skill) => !skill.disableModelInvocation);
-  const failed = !validPolicy || items === null || !validItems(items, new Set(candidates.map((skill) => skill.name)));
+  const failed = !validPolicy || items === null || !validItems(items, new Set(candidates.filter((skill) => !pinned.has(skill.name)).map((skill) => skill.name)), pinned);
   let kept: T[];
   let reason: FilterReason;
   if (failed) {
@@ -134,7 +136,9 @@ export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   else if (candidates.length < minCandidates) return skip("below-minimum");
   else {
     try {
-      items = await rankSkills(task, candidates, {
+      const pinned = new Set(options.pinned ?? []);
+      const scored = candidates.filter((skill) => !pinned.has(skill.name));
+      items = scored.length === 0 ? [] : await rankSkills(task, scored, {
         ...(client.maxQuestions === undefined ? {} : { maxQuestions: client.maxQuestions }),
         decide(request, decisionOptions) {
           batchSizes.push(Object.keys(request.questions).length);

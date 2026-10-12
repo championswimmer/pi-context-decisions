@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { BackendSelection } from "./core/backends/factory.ts";
 import { isAllowedOpenRouterModel } from "./catalog/openrouter-models.ts";
+import { normalizeAllowlist } from "./apps/allowlist.ts";
 
 export interface RelevanceSettings {
   enabled: boolean;
@@ -25,10 +26,11 @@ export interface RelevanceSettings {
 export interface ContextDecisionsSettings {
   enabled: boolean;
   backend: BackendSelection | null;
+  globalAllowlist: string[];
   relevance: RelevanceSettings;
 }
 export function defaultSettings(): ContextDecisionsSettings {
-  return { enabled: true, backend: null, relevance: {
+  return { enabled: true, backend: null, globalAllowlist: [], relevance: {
     enabled: true, mode: "score", minLabel: "related", relatedThreshold: 0.75, directThreshold: 1.5,
     maxSkills: 12, minCandidates: 8,
     failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000, maxDescriptionChars: 400,
@@ -89,13 +91,18 @@ const NUMERIC_BOUNDS = {
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);
   if (!object(value)) throw new SettingsError("Settings must be a JSON object");
-  keys(value, ["enabled", "backend", "relevance"], warnings);
+  keys(value, ["enabled", "backend", "globalAllowlist", "relevance"], warnings);
   const result = defaultSettings();
   if (value.enabled !== undefined) {
     if (typeof value.enabled !== "boolean") throw new SettingsError("enabled must be a boolean");
     result.enabled = value.enabled;
   }
   if (value.backend !== undefined) result.backend = validateBackendSelection(value.backend);
+  if (value.globalAllowlist !== undefined) {
+    if (!Array.isArray(value.globalAllowlist)) throw new SettingsError("Global allowlist must be an array of skill names");
+    try { result.globalAllowlist = normalizeAllowlist(value.globalAllowlist); }
+    catch { throw new SettingsError("Global allowlist names must be bounded, nonempty identifiers"); }
+  }
   if (value.relevance === undefined) return result;
   if (!object(value.relevance)) throw new SettingsError("relevance must be an object");
   const input = value.relevance;
@@ -162,6 +169,7 @@ export async function saveSettings(settings: ContextDecisionsSettings, path: str
 }
 /** CLI/UI updates always pass through the same strict validation as persistence. */
 export function updateSetting(settings: ContextDecisionsSettings, key: string, text: string): ContextDecisionsSettings {
+  if (key === "globalAllowlist") throw new SettingsError("Use /decisions allow global to edit the allowlist");
   const next = structuredClone(settings);
   let target: Record<string, unknown>;
   let field: string;
