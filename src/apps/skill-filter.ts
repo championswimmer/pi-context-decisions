@@ -97,6 +97,19 @@ function taskWithoutExpandedSkill(prompt: string): string {
   const match = prompt.match(/^\s*<skill\b[^>]*>\r?\n[\s\S]*\r?\n<\/skill>(?:\r?\n\r?\n([\s\S]*))?$/u);
   return match?.[1]?.trim() ?? "";
 }
+/**
+ * Reusable application picker for any decision client/backend implementing decide().
+ * Scores only bounded task and names/descriptions; never loads skill files or mutates
+ * the caller's inventory. Returns original skill references, suitable for Pi's
+ * systemPromptOptions.skills. Unlike the automatic hook, explicitly picking has no
+ * inventory-size minimum by default. Raw score thresholds are on the 0–2 rubric.
+ */
+export async function pickSkills<T extends AdvertisedSkill>(
+  prompt: string, skills: readonly T[], client: RelevanceClient | null, options: SkillAdvertisementOptions = {},
+): Promise<SkillAdvertisementResult<T>> {
+  const event = { prompt, systemPromptOptions: { skills: [...skills] } };
+  return applySkillAdvertisementFilter(event, client, { minCandidates: 0, ...options });
+}
 /** Call from the early before_agent_start hook. ONLY assigns systemPromptOptions.skills. */
 export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   event: SkillAdvertisementEvent<T>, client: RelevanceClient | null, options: SkillAdvertisementOptions = {},

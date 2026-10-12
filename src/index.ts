@@ -8,4 +8,6 @@ export { createBackend } from "./core/backends/factory.ts";
 export type { BackendSelection, BackendDeps, RegistryLike } from "./core/backends/factory.ts";
 export { OPENROUTER_DECISION_MODELS, OPENROUTER_DECISION_SNAPSHOT } from "./catalog/openrouter-models.ts";
 export { rankSkills, buildRelevanceRequests, interpretRelevance } from "./apps/relevance.ts";
-export type { RelevanceItem, RelevanceOptions, RelevanceLabel, SkillCandidate } from "./apps/relevance.ts";
+export type { RelevanceItem, RelevanceOptions, RelevanceLabel, SkillCandidate, RelevanceClient } from "./apps/relevance.ts";
+export { pickSkills, filterSkills, applySkillAdvertisementFilter } from "./apps/skill-filter.ts";
+export type { AdvertisedSkill, SkillFilterOptions, SkillAdvertisementOptions, SkillAdvertisementResult } from "./apps/skill-filter.ts";

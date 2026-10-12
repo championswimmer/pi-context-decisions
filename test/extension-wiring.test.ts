@@ -104,6 +104,28 @@ test("headless native selection persists, filters through real core, only skills
   for (const key of Object.keys(before).filter((key) => key !== "skills") as (keyof typeof before)[]) assert.equal(e.systemPromptOptions[key], before[key]);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered, 1\/8 skills/); assert.match(h.messages.at(-1)!.text, /inputTokens/);
 });
+test("30-skill hook respects persisted decimal thresholds and batch settings via real commands", async (t) => {
+  const batches: number[] = [];
+  const h = await setup(t, { createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide(request) {
+    const metadata = request.state.skills as Record<string, { name: string; description: string }>;
+    batches.push(Object.keys(metadata).length);
+    assert.doesNotMatch(JSON.stringify(request), /private|filePath|baseDir|sourceInfo/);
+    return { answers: Object.fromEntries(Object.entries(metadata).map(([id, skill]) => [id, { type: "score", score: Number(skill.name.slice(6)) % 2 === 0 ? 1.2 : 1.8 }])) };
+  } }); } }, true);
+  const c = context();
+  await h.command("relevance chunkSize 5", c.ctx);
+  await h.command("relevance maxSkills 30", c.ctx);
+  await h.command("relevance relatedThreshold 1.25", c.ctx);
+  const e = event(30); const original = e.systemPromptOptions.skills;
+  await h.emit("before_agent_start", e, c.ctx);
+  assert.deepEqual(batches, [5, 5, 5, 5, 5, 5]);
+  assert.deepEqual(e.systemPromptOptions.skills, original.filter((_, i) => i % 2 === 1));
+  assert.equal((await loadSettings(h.path)).settings.relevance.relatedThreshold, 1.25);
+  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /batch 5.*raw thresholds related 1.25\/direct 1.5/);
+  await h.command("relevance relatedThreshold 1.6", c.ctx);
+  assert.equal(h.messages.at(-1)!.level, "error");
+  assert.equal((await loadSettings(h.path)).settings.relevance.relatedThreshold, 1.25);
+});
 test("disable, relevance-off, unconfigured, below-minimum and empty prompt make zero calls", async (t) => {
   const h = await setup(t, {}, true); const c = context();
   await h.command("disable", c.ctx); const disabled = event(); const original = disabled.systemPromptOptions.skills;

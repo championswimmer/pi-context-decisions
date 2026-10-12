@@ -8,6 +8,9 @@ export interface RelevanceSettings {
   enabled: boolean;
   mode: "score" | "choice";
   minLabel: "related" | "directly_relevant";
+  /** Raw 0–2 expected rubric-index thresholds; selection uses minLabel. */
+  relatedThreshold: number;
+  directThreshold: number;
   maxSkills: number;
   minCandidates: number;
   failMode: "open" | "closed";
@@ -25,7 +28,8 @@ export interface ContextDecisionsSettings {
 }
 export function defaultSettings(): ContextDecisionsSettings {
   return { enabled: true, backend: null, relevance: {
-    enabled: true, mode: "score", minLabel: "related", maxSkills: 12, minCandidates: 8,
+    enabled: true, mode: "score", minLabel: "related", relatedThreshold: 0.75, directThreshold: 1.5,
+    maxSkills: 12, minCandidates: 8,
     failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000, maxDescriptionChars: 400,
     chunkSize: 24, concurrency: 2, pinned: [],
   } };
@@ -113,6 +117,13 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
     if (typeof number !== "number" || !Number.isSafeInteger(number) || number < min || number > max) throw new SettingsError(`relevance.${key} must be an integer in [${min}, ${max}]`);
     result.relevance[key] = number;
   }
+  for (const key of ["relatedThreshold", "directThreshold"] as const) {
+    const number = input[key];
+    if (number === undefined) continue;
+    if (typeof number !== "number" || !Number.isFinite(number) || number < 0 || number > 2) throw new SettingsError(`relevance.${key} must be finite in [0, 2]`);
+    result.relevance[key] = number;
+  }
+  if (result.relevance.relatedThreshold > result.relevance.directThreshold) throw new SettingsError("Relevance thresholds must be ordered: relatedThreshold <= directThreshold");
   if (input.pinned !== undefined) {
     if (!Array.isArray(input.pinned) || input.pinned.length > 1000 || input.pinned.some((name) => !identifier(name) || name.length > 64)) throw new SettingsError("Pinned skill names must be nonempty, bounded identifiers");
     result.relevance.pinned = [...new Set(input.pinned as string[])];
@@ -161,7 +172,8 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
     if (text !== "true" && text !== "false") throw new SettingsError("Boolean setting requires true or false");
     target[field] = text === "true";
   } else if (typeof target[field] === "number") {
-    if (!/^\d+$/.test(text)) throw new SettingsError("Numeric setting requires a nonnegative integer");
+    const threshold = field === "relatedThreshold" || field === "directThreshold";
+    if (!(threshold ? /^(?:\d+(?:\.\d+)?|\.\d+)$/u : /^\d+$/u).test(text)) throw new SettingsError(threshold ? "Threshold requires a nonnegative decimal in [0, 2]" : "Numeric setting requires a nonnegative integer");
     target[field] = Number(text);
   } else target[field] = text;
   return parseSettings(next);

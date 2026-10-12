@@ -88,6 +88,17 @@ test("oversized valid-shaped settings cannot be written as an unreadable file", 
   const settings = defaultSettings(); settings.relevance.pinned = Array.from({ length: 1000 }, (_, i) => `${"a".repeat(60)}${String(i).padStart(4, "0")}`);
   await assert.rejects(saveSettings(settings, path), /exceeds 64 KiB/);
 });
+test("decimal thresholds persist, receive defaults in old settings, and reject bad bounds/order", async (t) => {
+  assert.equal(parseSettings({ relevance: { chunkSize: 5 } }).relevance.relatedThreshold, 0.75);
+  const settings = updateSetting(defaultSettings(), "relevance.relatedThreshold", "1.25");
+  assert.equal(settings.relevance.relatedThreshold, 1.25);
+  const path = join(await directory(t), "settings.json");
+  await saveSettings(settings, path); assert.equal((await loadSettings(path)).settings.relevance.relatedThreshold, 1.25);
+  assert.equal(updateSetting(settings, "relevance.directThreshold", "1.8").relevance.directThreshold, 1.8);
+  for (const value of [NaN, Infinity, -0.1, 2.1, "1", true]) assert.throws(() => parseSettings({ relevance: { relatedThreshold: value } }), SettingsError);
+  assert.throws(() => parseSettings({ relevance: { relatedThreshold: 1.6, directThreshold: 1.5 } }), SettingsError);
+  for (const value of ["NaN", "Infinity", "-1", "2.1", "1e0", "true", "1.2.3"]) assert.throws(() => updateSetting(settings, "relevance.relatedThreshold", value), SettingsError);
+});
 test("UI/CLI updates share validation, no coercive booleans or scientific/fractional limits", () => {
   const settings = defaultSettings();
   assert.equal(updateSetting(settings, "relevance.failMode", "open").relevance.failMode, "open");
