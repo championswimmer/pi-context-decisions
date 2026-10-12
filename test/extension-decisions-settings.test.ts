@@ -41,19 +41,31 @@ async function fixture(t: { after(fn: () => Promise<void>): void }, options: { u
   return { path, messages, dialogs, picks, inputs, lookups, commands, ctx, command, inference: () => inference };
 }
 
-test("/decisions alone opens settings with direct toggle, provider, model and scoring controls", async (t) => {
+test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits under Advanced…", async (t) => {
   const h = await fixture(t, { ui: true });
-  h.picks.push((choices) => choices.find((label) => label.startsWith("Context decisions:")), "Done");
+  h.picks.push((choices) => choices.find((label) => label.startsWith("Context decisions:")), "Advanced…", "Back", "Done");
   await h.command("");
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
   assert.match(h.dialogs[0].title, /settings/);
   assert.ok(h.dialogs[0].options.some((label) => label.startsWith("Provider / execution:")));
   assert.ok(h.dialogs[0].options.some((label) => label.startsWith("Model:")));
-  assert.ok(h.dialogs[0].options.includes("relevance.chunkSize: 50"));
-  assert.ok(h.dialogs[0].options.includes("relevance.concurrency: 0 (all batches parallel)"));
+  assert.ok(h.dialogs[0].options.includes("Advanced…") && h.dialogs[0].options.includes("Status"));
+  assert.equal(h.dialogs[0].options.filter((label) => label.startsWith("relevance.")).length, 0, "main menu carries no relevance knobs");
+  const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!;
+  assert.ok(advanced.options.includes("relevance.chunkSize: 50"));
+  assert.ok(advanced.options.includes("relevance.concurrency: 0 (all batches parallel)"));
+  assert.ok(advanced.options.every((label) => !label.startsWith("relevance.pinned")));
   assert.equal((await loadSettings(h.path)).settings.enabled, false);
   assert.equal(h.inputs.length, 0); assert.equal(h.inference(), 0);
+});
+test("RPC /decisions relevance opens Advanced directly and edits validate", async (t) => {
+  const h = await fixture(t, { ui: true });
+  h.picks.push((choices) => choices.find((label) => label.startsWith("relevance.chunkSize:")), "Back");
+  h.inputs.push("25");
+  await h.command("relevance");
+  assert.match(h.dialogs[0].title, /Advanced/);
+  assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 25);
 });
 
 test("headless enable/disable, batch size and all-parallel settings persist with bounds", async (t) => {
