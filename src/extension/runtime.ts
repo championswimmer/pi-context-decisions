@@ -68,7 +68,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     },
     setStatus(ctx) {
       if (!ctx.hasUI) return;
-      const state = settingsError ? "settings error · repair with /context-decisions model" : !settings.enabled || !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /context-decisions model" : last
+      const state = settingsError ? "settings error · repair with /decisions model" : !settings.enabled || !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions model" : last
         ? `${last.reason} · ${last.kept}/${last.candidates} skills · ${last.latencyMs}ms${last.errorCode ? ` · ${last.errorCode}` : ""}`
         : selectionLabel(settings.backend);
       ctx.ui.setStatus("context-decisions", state);
@@ -105,7 +105,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         try {
           if (current.backend.backend === "pi" && !ctx.modelRegistry.findOfType("classifier", current.backend.provider, current.backend.id)) throw new DecisionError("config", "Selected Pi classifier is not registered");
           const decision = controller.createClient(current.backend, ctx);
-          client = { async decide(request, options) { const response = await decision.decide(request, options); responses.push(response); return response; } };
+          const relevanceClient: RelevanceClient = decision;
+          client = { maxQuestions: relevanceClient.maxQuestions, async decide(request, options) { const response = await decision.decide(request, options); responses.push(response); return response; } };
         } catch { configError = "Decision client configuration failed"; }
       }
       let result: SkillAdvertisementResult<(typeof event.systemPromptOptions.skills)[number]>;
@@ -127,7 +128,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
           ...current.relevance,
           enabled: current.enabled,
           relevanceEnabled: current.relevance.enabled,
-          maxQuestions: 24, // local conservative cap; app reduces chunkSize when lower
+          maxQuestions: 50, // app reduces the requested batch when a provider declares a lower cap
           signal,
         });
       }
@@ -136,7 +137,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       last = { reason: result.reason, candidates: result.candidates, kept: result.kept.filter((skill) => !skill.disableModelInvocation).length,
         latencyMs: result.latencyMs, ...(result.errorCode ? { errorCode: result.errorCode } : {}), ...(usage ? { usage } : {}) };
       controller.setStatus(ctx);
-      if (result.errorCode && result.errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${result.reason} (${result.errorCode}); /context-decisions status`, "warning");
+      if (result.errorCode && result.errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${result.reason} (${result.errorCode}); /decisions status`, "warning");
     } finally { pending.delete(abort); }
   });
 }

@@ -18,6 +18,7 @@ export interface RelevanceSettings {
   maxPromptChars: number;
   maxDescriptionChars: number;
   chunkSize: number;
+  /** 0 dispatches every batch in parallel; positive values cap concurrent batches. */
   concurrency: number;
   pinned: string[];
 }
@@ -31,7 +32,7 @@ export function defaultSettings(): ContextDecisionsSettings {
     enabled: true, mode: "score", minLabel: "related", relatedThreshold: 0.75, directThreshold: 1.5,
     maxSkills: 12, minCandidates: 8,
     failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000, maxDescriptionChars: 400,
-    chunkSize: 24, concurrency: 2, pinned: [],
+    chunkSize: 50, concurrency: 0, pinned: [],
   } };
 }
 export class SettingsError extends Error {
@@ -83,7 +84,7 @@ export function validateBackendSelection(value: unknown): BackendSelection | nul
 }
 const NUMERIC_BOUNDS = {
   maxSkills: [0, 1000], minCandidates: [0, 1000], timeoutMs: [1, 300000],
-  maxPromptChars: [1, 4000], maxDescriptionChars: [1, 400], chunkSize: [1, 24], concurrency: [1, 4],
+  maxPromptChars: [1, 4000], maxDescriptionChars: [1, 400], chunkSize: [1, 50], concurrency: [0, 32],
 } as const;
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);

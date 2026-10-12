@@ -14,7 +14,7 @@ async function directory(t: { after(fn: () => Promise<void>): void }) {
 test("defaults are independent, disabled until a backend is chosen, fail closed, and bounded", async (t) => {
   const a = defaultSettings(); const b = defaultSettings(); a.relevance.pinned.push("one");
   assert.deepEqual(b.relevance.pinned, []); assert.equal(b.backend, null); assert.equal(b.relevance.failMode, "closed");
-  assert.equal(b.relevance.maxPromptChars, 4000); assert.equal(b.relevance.maxDescriptionChars, 400); assert.equal(b.relevance.chunkSize, 24);
+  assert.equal(b.relevance.maxPromptChars, 4000); assert.equal(b.relevance.maxDescriptionChars, 400); assert.equal(b.relevance.chunkSize, 50); assert.equal(b.relevance.concurrency, 0);
   assert.deepEqual((await loadSettings(join(await directory(t), "missing.json"))).settings, b);
 });
 test("every static router ID accepted by direct and native, aliases and outside-ten rejected", () => {
@@ -40,7 +40,7 @@ test("partial config receives defaults, unknown read fields warn but cannot be s
   assert.throws(() => parseSettings({ ...defaultSettings(), mystery: 1 }), SettingsError);
 });
 test("invalid settings cannot enable unbounded disclosure or invalid fail-open", () => {
-  for (const [key, value] of Object.entries({ maxPromptChars: 4001, maxDescriptionChars: 401, chunkSize: 25, concurrency: 5, timeoutMs: 300001, maxSkills: -1, minCandidates: 1001, mode: "unknown", minLabel: "irrelevant", failMode: true, enabled: "true", pinned: ["bad\nname"] })) {
+  for (const [key, value] of Object.entries({ maxPromptChars: 4001, maxDescriptionChars: 401, chunkSize: 51, concurrency: 33, timeoutMs: 300001, maxSkills: -1, minCandidates: 1001, mode: "unknown", minLabel: "irrelevant", failMode: true, enabled: "true", pinned: ["bad\nname"] })) {
     assert.throws(() => parseSettings({ relevance: { [key]: value } }), SettingsError, key);
   }
   for (const value of [NaN, Infinity, 1.5, "12"]) assert.throws(() => parseSettings({ relevance: { maxSkills: value } }), SettingsError);

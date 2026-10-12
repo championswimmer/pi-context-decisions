@@ -25,7 +25,7 @@ function host() {
   };
   return { pi, handlers, commands,
     async emit(event: string, value: unknown, ctx: CommandContext) { for (const handler of handlers.get(event) ?? []) await handler(value, ctx as ExtensionContext); },
-    async command(args: string, ctx: CommandContext) { await commands.get("context-decisions")!.handler(args, ctx as ExtensionCommandContext); },
+    async command(args: string, ctx: CommandContext) { await commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext); },
   };
 }
 function answer(request: DecisionRequest): DecisionResponse {
@@ -42,8 +42,8 @@ function context(overrides: Partial<ExtensionRegistry> = {}, hasUI = false) {
   const registry: ExtensionRegistry = {
     getModelsOfType(type, provider) { return type === "chat" ? [{ provider: "openai", id: "chat" }] : classifiers.filter((model) => !provider || model.provider === provider); },
     findOfType(_type, provider, id) { return classifiers.find((model) => model.provider === provider && model.id === id); },
-    async getApiKeyForProvider() { return undefined; },
-    getProviderAuthStatus() { return { configured: false }; },
+    async getApiKeyForProvider(provider) { return provider === "custom" ? "FIXTURE-CUSTOM-KEY" : undefined; },
+    getProviderAuthStatus(provider) { return { configured: provider === "custom" }; },
     isUsingOAuth() { return false; },
     async classify(_model, request) { calls++; return { answers: answer(request).answers, usage: { input: 3 }, stopReason: "stop" }; },
     ...overrides,
@@ -75,9 +75,10 @@ async function setup(t: { after(fn: () => Promise<void>): void }, deps: Partial<
 
 test("real entry factory registers one command and three hooks, no custom provider or tools", () => {
   const h = host(); contextDecisions(h.pi as ExtensionAPI);
-  assert.deepEqual([...h.commands.keys()], ["context-decisions"]);
+  assert.deepEqual([...h.commands.keys()], ["decisions"]);
+  assert.equal(h.commands.has("context-decisions"), false);
   assert.deepEqual([...h.handlers.keys()], ["session_start", "session_shutdown", "before_agent_start"]);
-  assert.deepEqual(h.commands.get("context-decisions")!.getArgumentCompletions!("mo"), [{ value: "model", label: "model" }]);
+  assert.deepEqual(h.commands.get("decisions")!.getArgumentCompletions!("mo"), [{ value: "model", label: "model" }]);
 });
 test("real Pi context registry is type-compatible without a cast in production", () => {
   // Compiled by npm run typecheck against the installed peer types.
@@ -143,7 +144,7 @@ test("invalid manual router selections and missing native classifiers do not alt
   assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "pi", provider: "custom", id: "nested/model" });
 });
 test("all static-ten direct IDs configurable headless, no ranking/discovery or inference calls", async (t) => {
-  const h = await setup(t); const c = context();
+  const h = await setup(t); const c = context({ async getApiKeyForProvider() { return "FIXTURE-ROUTER-KEY"; } });
   for (const { id } of OPENROUTER_DECISION_MODELS) { await h.command(`model openrouter ${id}`, c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: id }); }
   assert.equal(c.calls(), 0); assert.equal(c.dialogs.length, 0);
 });
@@ -162,7 +163,7 @@ test("picker restricts router entries, preserves native classifiers, and marks a
   assert.doesNotMatch(JSON.stringify(entries), /FIXTURE/);
 });
 test("UI picker uses static entries, supports cancellation and None without writes/inference", async (t) => {
-  const h = await setup(t); const c = context({}, true); c.selections.push(undefined);
+  const h = await setup(t); const c = context({ async getApiKeyForProvider(provider) { return provider === "openrouter" ? "FIXTURE-ROUTER-KEY" : undefined; } }, true); c.selections.push(undefined);
   await h.command("model", c.ctx); assert.equal(c.dialogs.length, 1); assert.equal(c.calls(), 0);
   c.selections.push((options) => options.find((option) => option.includes("openrouter direct typesafe/jev-1.13"))!);
   await h.command("model", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" });
@@ -179,8 +180,8 @@ test("headless picker without args returns actionable error, settings updates an
 });
 test("UI settings dialog validation, cancellation and boolean edit share persisted config", async (t) => {
   const h = await setup(t); const c = context({}, true);
-  c.selections.push((options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, (options) => options.find((option) => option.startsWith("enabled:"))!, "Done");
-  c.inputs.push("999", "false"); await h.command("settings", c.ctx);
+  c.selections.push((options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, (options) => options.find((option) => option.startsWith("Context decisions:"))!, "Done");
+  c.inputs.push("999"); await h.command("settings", c.ctx);
   assert.ok(h.messages.some((message) => message.level === "error")); assert.equal((await loadSettings(h.path)).settings.enabled, false);
   c.selections.push(undefined); await h.command("", c.ctx); assert.equal(c.calls(), 0);
 });
