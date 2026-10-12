@@ -1,20 +1,37 @@
 {
   "name": "pi-context-decisions",
   "version": "0.1.0",
-  "description": "Decision-model driven context selection for Pi",
+  "description": "Pi extension that uses decision/classifier models (Pi, TypeSafe JEV, OpenAI, OpenRouter) to filter which skills are advertised for each prompt",
   "type": "module",
+  "license": "MIT",
+  "author": "Arnav Gupta",
   "keywords": [
     "pi-package",
     "pi-extension",
+    "pi",
+    "skills",
     "decisions",
-    "classifiers"
+    "classifiers",
+    "context"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/championswimmer/pi-context-decisions.git"
+  },
+  "homepage": "https://github.com/championswimmer/pi-context-decisions#readme",
+  "bugs": {
+    "url": "https://github.com/championswimmer/pi-context-decisions/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.18.0"
   },
   "files": [
     "src/",
-    "AGENTS.md",
+    "README.md",
+    "LICENSE",
     ".agents/plans/mcp-visibility.md"
   ],
   "exports": {
@@ -31,7 +48,8 @@
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "demo:skills": "node --experimental-strip-types scripts/demo-skill-picker.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
