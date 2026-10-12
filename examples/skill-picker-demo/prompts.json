@@ -1,0 +1,60 @@
+{
+  "note": "Illustrative relevant skills are not guaranteed model predictions. The offline lexical fixture is deterministic but is not a relevance-quality benchmark.",
+  "examples": [
+    {
+      "prompt": "Build an accessible React signup form with validation and browser tests.",
+      "illustrativeRelevantSkills": [
+        "react-components",
+        "web-accessibility",
+        "form-validation",
+        "browser-testing"
+      ]
+    },
+    {
+      "prompt": "Optimize PostgreSQL reporting queries and plan a safe schema migration.",
+      "illustrativeRelevantSkills": [
+        "postgres-queries",
+        "database-migrations"
+      ]
+    },
+    {
+      "prompt": "Clean a CSV dataset with Python and write pytest regression tests.",
+      "illustrativeRelevantSkills": [
+        "python-data",
+        "python-testing",
+        "test-data"
+      ]
+    },
+    {
+      "prompt": "Deploy Docker containers to Kubernetes with GitHub Actions CI and health metrics.",
+      "illustrativeRelevantSkills": [
+        "docker-containers",
+        "kubernetes-deploy",
+        "github-actions",
+        "observability"
+      ]
+    },
+    {
+      "prompt": "Design payment checkout with idempotent webhooks and confirmation email.",
+      "illustrativeRelevantSkills": [
+        "payments",
+        "email-delivery",
+        "node-api"
+      ]
+    },
+    {
+      "prompt": "Review login security, cookie expiry, and potential secret exposure.",
+      "illustrativeRelevantSkills": [
+        "authentication",
+        "security-review"
+      ]
+    },
+    {
+      "prompt": "Create a production incident runbook with rollback and latency dashboards.",
+      "illustrativeRelevantSkills": [
+        "incident-response",
+        "observability"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "pi-context-decisions-skill-picker-demo",
+  "private": true,
+  "type": "module",
+  "description": "Thirty metadata-only demo skills for configurable decision-backed context selection",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "demo": "node --experimental-strip-types ../../scripts/demo-skill-picker.ts",
+    "test": "node --experimental-strip-types --test ../../test/demo-skill-picker.test.ts"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "backend": {
+    "backend": "typesafe",
+    "model": "jev-latest"
+  },
+  "relevance": {
+    "enabled": true,
+    "mode": "score",
+    "chunkSize": 10,
+    "relatedThreshold": 1,
+    "directThreshold": 1.5,
+    "minLabel": "related",
+    "maxSkills": 6,
+    "minCandidates": 0,
+    "concurrency": 2,
+    "timeoutMs": 15000,
+    "failMode": "closed",
+    "pinned": []
+  }
+}

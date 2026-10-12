@@ -1,0 +1,10 @@
+{
+  "backend": "mock",
+  "batchSize": 10,
+  "threshold": 0.5,
+  "maxSkills": 6,
+  "concurrency": 2,
+  "timeoutMs": 15000,
+  "live": false,
+  "note": "Illustrative runDemo options; CLI flags configure actual runs. threshold is normalized expected relevance, not a probability."
+}
