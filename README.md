@@ -19,14 +19,28 @@ For a local package install, `pi install /absolute/path/to/pi-context-decisions`
 
 ## User settings: `/decisions`
 
-Run **`/decisions`** to open the settings menu in TUI/RPC: toggle context decisions, choose the **provider and execution path**, select a model, and adjust scoring settings. This is the extension's only command; headless use supports the same actions through arguments.
+Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **floating dialog** drawn over the session, not a block in the status area: the session underneath keeps printing and scrolling while the dialog stays where it is. The main screen is deliberately short:
+
+| Row | What it does |
+|---|---|
+| **Context decisions** · On/Off | Immediately enables or disables skill filtering (Space or Enter). |
+| **Provider / execution** | Pi's classifier pipeline or a direct TypeSafe, OpenAI or OpenRouter endpoint. |
+| **Model** | The decision model. Providers without a key are labelled **missing key**. |
+| **Always allowed · Global / Project** | The searchable allowlist editors (see below). |
+| **Advanced…** | Every relevance fine-tuning knob (see below). |
+| **Status…** | Credentials source, last decision and allowlist counts. Makes no inference calls. |
+| **Close** | Closes the dialog. |
+
+**Advanced…** holds skill filtering on/off, scoring mode, minimum relevance, related/direct thresholds, max skills kept, minimum inventory, batch size, concurrency, timeout, failure mode and the prompt/description size limits. Selecting a row edits it inline with validation (the same rules as `/decisions relevance <key> <value>`); **On failure** is a choice list where `open` carries a visible warning and is never reached by cycling. Legacy `pin`/`unpin` names stay on the text commands. This is the extension's only command; headless use supports the same actions through arguments.
+
+Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on/off rows, **Esc** goes back (and closes from the main screen). While the dialog has focus, **Esc and Ctrl+C act on the dialog, not on the running agent**: close it to interrupt or type a prompt. Running `/decisions` again while it is open focuses the existing dialog instead of opening a second one. Reloading or shutting down the session closes the dialog and cancels its in-flight work. RPC clients get the same grouping (Advanced is a sub-menu) through select/input requests; print/JSON use the text commands.
 
 **No backend is selected by default**, so startup and prompts make no decision calls until you configure one. Selection persists across sessions and opts in to sending bounded task/skill metadata on eligible prompts. Choosing a provider/model does not change the enabled toggle. Providers and models are labelled **configured** or **missing key**; unavailable selections are rejected without changing settings. Configure the relevant `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `TYPESAFE_API_KEY` in the environment, or use `/login <provider>` in Pi. Credentials remain Pi-first/environment-second; OpenAI requires its API key, not Codex/ChatGPT OAuth.
 
 ```text
-/decisions                                    # settings menu; status headless
+/decisions                                    # floating settings dialog; status headless
 /decisions provider                           # provider/path picker; availability headless
-/decisions model                              # full model picker (TUI/RPC)
+/decisions model                              # opens the dialog on the model screen (TUI); select menu (RPC)
 /decisions provider openai                     # direct Luna with available API key
 /decisions model pi typesafe jev-latest         # Pi internal classifier
 /decisions model typesafe jev-1.13.0            # direct TypeSafe
@@ -73,7 +87,8 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 ## Settings and relevance policy
 
 ```text
-/decisions settings                           # dialog; JSON summary headless
+/decisions settings                           # dialog (TUI); menu (RPC); JSON summary headless
+/decisions relevance                          # opens Advanced directly (TUI/RPC)
 /decisions settings enabled false
 /decisions enable
 /decisions disable
@@ -106,13 +121,13 @@ Invalid persisted settings are reported explicitly and advertisements fail close
 
 ### Global and project skill allowlists
 
-From `/decisions`, select **Allow list (Global)** or **Allow list (Project)**. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the selection cap, and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
+From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the main screen. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the selection cap, and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
 
 - **Global** names are stored as `globalAllowlist` in the user settings file.
 - **Project** names are stored in `<cwd>/.pi/pi-context-decisions.json` as `{ "alwaysAllowed": ["skill-name"] }`. It can be shared in the repository; this is scoped to Pi's working directory, so starting in different subdirectories uses different lists. A malformed project list is warned about and treated as empty, not a full-inventory fallback.
 - Lists store names only, sorted and deduplicated. Saved names for unloaded skills appear as **(not loaded)** and survive saves unless explicitly removed.
 
-The terminal overlay starts in **A-Z**, with immediate local fuzzy search across names and descriptions. **Typing and changing tabs never make decision calls.** Press **Ctrl+R** (or Enter from the search box) for **Relevance** ranking of all loaded skills in the chosen scope against the search term. This explicitly uses the same selected decision backend and 50-skill parallel batches, and may incur charges—even when automatic filtering is disabled. Only search text and skill names/descriptions are sent. Empty searches and missing models/credentials make no call; inline guidance leaves local fuzzy search usable. Query changes mark old results stale; restarting/closing cancels in-flight work.
+The editor starts in **A-Z**, with immediate local fuzzy search across names and descriptions. **Typing and changing tabs never make decision calls.** Press **Ctrl+R** (or Enter from the search box) for **Relevance** ranking of all loaded skills in the chosen scope against the search term. This explicitly uses the same selected decision backend and 50-skill parallel batches, and may incur charges—even when automatic filtering is disabled. Only search text and skill names/descriptions are sent. Empty searches and missing models/credentials make no call; inline guidance leaves local fuzzy search usable. Query changes mark old results stale; restarting/closing cancels in-flight work.
 
 Keys: **↓** enter list, **↑/↓** navigate, **Space** toggle, **Enter** expand description, **Tab** switch A-Z/Relevance, **Ctrl+K** clear search, **Ctrl+S** save in place. **Esc** returns to search; Esc again closes and discards unsaved changes. Selection changes do not save automatically, and ranking never changes selections. The picker uses Pi's terminal UI; RPC/headless clients can use text commands:
 
