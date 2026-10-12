@@ -1,0 +1,95 @@
+name: Release to npm
+
+# Publishes pi-context-decisions to npm when a semver tag such as v0.1.0 is pushed.
+# Uses npm trusted publishing (GitHub Actions OIDC): no NPM_TOKEN secret is needed.
+#
+# Trusted publisher settings on npmjs.com (package -> Settings -> Trusted Publisher):
+#   Provider: GitHub Actions
+#   Organization or user: championswimmer
+#   Repository: pi-context-decisions
+#   Workflow filename: release.yml
+#   Environment: (leave empty; this workflow declares none)
+#   Allowed actions: tick "npm publish". Trusted publishers created after 2026-09-03
+#     default to staged publishing only, and this workflow publishes directly.
+#     (Leave "npm dist-tag" off; this workflow does not manage dist-tags.)
+# A new configuration expires unless its first successful publish happens within 2 days.
+# Stable versions publish to the "latest" dist-tag; prerelease versions (1.0.0-rc.1)
+# publish to "next", because npm refuses a prerelease on "latest" without --tag.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for npm trusted publishing (OIDC)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false # never cache in release builds
+
+      - name: Ensure npm supports trusted publishing (>= 11.5.1)
+        run: |
+          npm install --global npm@^11.5.1
+          NPM_VERSION="$(npm --version)"
+          echo "npm $NPM_VERSION"
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error("npm "+process.argv[1]+" is older than 11.5.1"); process.exit(1) }' "$NPM_VERSION"
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "Tag version:     $TAG_VERSION"
+          echo "Package version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Verify tagged commit is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tagged commit $GITHUB_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Verify package contents
+        run: npm pack --dry-run --ignore-scripts
+
+      # Provenance is attached automatically by trusted publishing when the
+      # repository is public. No --provenance flag: it fails for private repos.
+      # prepublishOnly re-runs typecheck and tests, which is intentional and cheap.
+      - name: Publish to npm with trusted publishing
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$VERSION" in
+            *-*) NPM_TAG="next" ;;
+            *) NPM_TAG="latest" ;;
+          esac
+          echo "Publishing $VERSION with dist-tag $NPM_TAG"
+          npm publish --access public --tag "$NPM_TAG"
