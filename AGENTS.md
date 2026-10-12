@@ -11,7 +11,7 @@
 - `src/core/`: Pi classifier and direct TypeSafe/OpenAI/OpenRouter transports/codecs/auth.
 - `src/host/pi-credentials.ts`: opt-in standalone public SDK credential adapter, exported as `./pi-credentials`; active extensions keep using `ctx.modelRegistry`.
 - `src/catalog/`: **static checked-in eight survivors of the original top ten** OpenRouter decisions plus pure picker merge. Snapshot 2026-10-12, token window October 5–11. Future updates require code changes, never runtime discovery.
-- `src/apps/`: metadata-only relevance and skill policy.
+- `src/apps/`: metadata-only relevance and skill policy; public `pickSkills` composes existing ranking/filtering for all four backends. Explicit picks default to no inventory minimum; automatic hook defaults to eight.
 - `test/`: offline fixtures and mocked real Pi registration/lifecycle/commands.
 - `.agents/skills/`: project-local skills; `.agents/plans/`: preserved research/architecture handoffs.
 - `../pi-skill-picker-jev`: pattern reference only; do not copy wholesale or add as a dependency.
@@ -28,6 +28,7 @@ Earlier research plans proposed dynamic discovery and fail-open defaults. Latest
 - Credentials for all three direct providers come from public request-time `getProviderAuth` first, then env (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`). Exact `openai` API key only, never `openai-codex`/current-chat substitution. Reject OpenAI source `OAuth` even when cached snapshots are empty; do not blanket-reject OpenRouter OAuth. Standalone SDK adapter respects Pi defaults (`~/.pi/agent`, overridden by `PI_CODING_AGENT_DIR`) and disables startup model-network refresh. Delegate references/commands to Pi; never read auth files directly, log keys, or persist secrets/settings tokens.
 - Decision payloads contain bounded prompt and skill name/description metadata only. No bodies, paths, images, transcripts, or tool results. Diagnostics contain only safe codes/counts/usage.
 - **Fail closed** on active decision/configuration errors. Full-inventory fallback requires explicit `failMode: "open"`; disabled/unconfigured/below-minimum behavior intentionally makes no calls and preserves advertisements.
+- Score thresholds are raw 0–2 rubric indices, inclusive and ordered (`relatedThreshold <= directThreshold`); persisted decimal settings are supported. `chunkSize` controls scoring batch size, reduced by `maxQuestions` when needed; evaluate every candidate, not just the first batch. Pins/manual-only policy and stable references survive selection.
 - Only mutate `before_agent_start.systemPromptOptions.skills`. Do not claim access control or silently implement MCP/tool filtering. Later extensions may overwrite selections.
 - Keep native OpenRouter entries constrained to the same static retained list; do not destructively override Pi's provider. Missing native registrations stay errors, not automatic direct-backend fallback.
 

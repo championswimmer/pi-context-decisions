@@ -74,6 +74,11 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 /context-decisions relevance maxSkills 12
 /context-decisions relevance minCandidates 8
 /context-decisions relevance minLabel directly_relevant
+/context-decisions relevance chunkSize 10         # scoring batch size, 1–24
+/context-decisions relevance relatedThreshold 1.25 # raw 0–2, inclusive
+/context-decisions relevance directThreshold 1.75  # must be >= relatedThreshold
+/context-decisions relevance concurrency 2
+/context-decisions relevance timeoutMs 8000
 /context-decisions relevance failMode open      # explicit opt-in to retaining all ads on failure
 /context-decisions pin typescript
 /context-decisions unpin typescript
@@ -83,7 +88,7 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically written with mode `0600`. Defaults:
 
 - Relevance enabled, `score` mode; skips fewer than **8 unique automatic skills** and empty prompts.
-- Score rubric: **irrelevant → related → directly relevant** (indices 0–2). Fractional scores are expected rubric indices, not class probabilities. Policy labels: score ≥1.5 directly relevant, ≥0.75 related, otherwise irrelevant; normalized score = score/2.
+- Score rubric: **irrelevant → related → directly relevant** (indices 0–2). Fractional scores are expected rubric indices, not class probabilities. Default policy labels: score ≥1.5 directly relevant, ≥0.75 related, otherwise irrelevant; normalized score = score/2. Persisted `relatedThreshold` and `directThreshold` accept decimals in [0, 2], ordered lowest first. `minLabel` chooses which inclusive threshold selects skills. Choice mode instead uses the model's categorical label; the numeric thresholds apply only to score mode.
 - Keep related or better, cap **12 unpinned** selections; pinned names bypass cap/threshold. Original skill order and object references are preserved. Manual-only skills are not sent for classification.
 - **Fail closed**: decision failures hide unverified automatic advertisements, retaining pinned/manual-only entries. `failMode open` explicitly retains the full inventory on failure; status labels that fallback.
 - Whole filtering deadline **8000ms**, chunks up to **24 questions**, concurrency **2** (configurable up to 4).
@@ -127,6 +132,30 @@ const luna = createDecisionClient(createBackend({ backend: "openai" }, { registr
 ```
 
 This host-only adapter uses public `ModelRuntime`/`ModelRegistry`, respects Pi's normal agent-directory paths, and does not refresh model catalogs over the network. Active extensions must instead pass `ctx.modelRegistry` to retain in-process credentials/provider overrides. The portable main export has no Pi runtime dependency.
+
+### Reusable skill picker
+
+`pickSkills` works with any of the four core backends through the same decision client. It evaluates **every** unique automatic candidate in bounded batches, ranks by expected relevance, applies threshold/cap/pins, and returns the original skill objects in inventory order. Names and descriptions are the only skill information transmitted; file paths are retained locally for Pi's selected advertisements. It does not read or attach full skill bodies.
+
+```typescript
+import { createBackend, createDecisionClient, pickSkills } from "pi-context-decisions";
+
+const client = createDecisionClient(createBackend(selection, {
+  registry: ctx.modelRegistry,
+  getRegistry: () => ctx.modelRegistry, // required when selection.backend is "pi"
+}));
+const picked = await pickSkills(prompt, thirtySkills, client, {
+  chunkSize: 10, maxQuestions: 24, concurrency: 2,
+  relatedThreshold: 1.25, directThreshold: 1.75, // raw rubric indices in [0, 2]
+  minLabel: "related", maxSkills: 6, timeoutMs: 8000,
+});
+// picked.items: all candidate scores; picked.kept: selected original objects.
+// An explicit picker has minCandidates: 0 by default; the automatic hook defaults to 8.
+// Inside an early before_agent_start handler:
+// event.systemPromptOptions.skills = picked.kept;
+```
+
+Passing `null` as the client intentionally skips filtering without calls. Active errors return `fail-closed` and a safe error code; retaining the inventory on errors requires explicit `failMode: "open"`. Use `maxQuestions` to impose a lower provider limit; effective batch size is the smaller of `chunkSize` and `maxQuestions`. The extension uses a conservative cap of 24. Configure `minCandidates` to change the automatic inventory-size gate. Disabled, unconfigured, or below-minimum prompts make no decision calls. The existing early hook already attaches the selected advertisements for each eligible prompt; no second hook or provider-specific application logic is needed.
 
 ## Development
 
