@@ -15,18 +15,23 @@ Keep this extension first or near the start of your configured extensions/packag
 
 For a local package install, `pi install /absolute/path/to/pi-context-decisions` is supported; ensure package ordering remains appropriate. This package is not published to npm yet.
 
-## Choose a model
+## User settings: `/decisions`
 
-**No backend is selected by default**, so startup and prompts make no decision calls until you configure one. Selection persists across sessions and opts in to sending bounded task/skill metadata on eligible prompts.
+Run **`/decisions`** to open the settings menu in TUI/RPC: toggle context decisions, choose the **provider and execution path**, select a model, and adjust scoring settings. This is the extension's only command; headless use supports the same actions through arguments.
+
+**No backend is selected by default**, so startup and prompts make no decision calls until you configure one. Selection persists across sessions and opts in to sending bounded task/skill metadata on eligible prompts. Choosing a provider/model does not change the enabled toggle. Providers and models are labelled **configured** or **missing key**; unavailable selections are rejected without changing settings. Configure the relevant `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `TYPESAFE_API_KEY` in the environment, or use `/login <provider>` in Pi. Credentials remain Pi-first/environment-second; OpenAI requires its API key, not Codex/ChatGPT OAuth.
 
 ```text
-/context-decisions model                       # picker (TUI/RPC)
-/context-decisions model pi typesafe jev-latest  # Pi internal classifier
-/context-decisions model typesafe jev-1.13.0     # direct TypeSafe
-/context-decisions model openai gpt-6-luna       # direct OpenAI
-/context-decisions model openrouter typesafe/jev-1.13
-/context-decisions model none                   # stop decision calls
-/context-decisions status
+/decisions                                    # settings menu; status headless
+/decisions provider                           # provider/path picker; availability headless
+/decisions model                              # full model picker (TUI/RPC)
+/decisions provider openai                     # direct Luna with available API key
+/decisions model pi typesafe jev-latest         # Pi internal classifier
+/decisions model typesafe jev-1.13.0            # direct TypeSafe
+/decisions model openai gpt-6-luna              # direct OpenAI
+/decisions model openrouter typesafe/jev-1.13
+/decisions model none                          # stop decision calls
+/decisions status
 ```
 
 Native Pi classifiers are listed independently of the chat model; Pi's `/model` excludes classifiers. The picker preserves all non-OpenRouter native classifiers. For OpenRouter, **only the checked-in eight surviving models** are allowed in the picker and settings. A “via Pi” entry appears only if the exact classifier is registered; direct entries are always offered, annotated with credential availability. We do not replace Pi's OpenRouter provider or its chat/image models. Missing native models are a configuration error, not an automatic switch to a paid direct backend.
@@ -66,23 +71,24 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 ## Settings and relevance policy
 
 ```text
-/context-decisions settings                    # dialog; JSON summary headless
-/context-decisions settings enabled false
-/context-decisions enable
-/context-decisions disable
-/context-decisions relevance mode choice
-/context-decisions relevance maxSkills 12
-/context-decisions relevance minCandidates 8
-/context-decisions relevance minLabel directly_relevant
-/context-decisions relevance chunkSize 10         # scoring batch size, 1–24
-/context-decisions relevance relatedThreshold 1.25 # raw 0–2, inclusive
-/context-decisions relevance directThreshold 1.75  # must be >= relatedThreshold
-/context-decisions relevance concurrency 2
-/context-decisions relevance timeoutMs 8000
-/context-decisions relevance failMode open      # explicit opt-in to retaining all ads on failure
-/context-decisions pin typescript
-/context-decisions unpin typescript
-/context-decisions test                         # explicit synthetic bool call; may incur cost
+/decisions settings                           # dialog; JSON summary headless
+/decisions settings enabled false
+/decisions enable
+/decisions disable
+/decisions relevance mode choice
+/decisions relevance maxSkills 12
+/decisions relevance minCandidates 8
+/decisions relevance minLabel directly_relevant
+/decisions relevance chunkSize 50              # scoring batch size, 1–50
+/decisions relevance relatedThreshold 1.25     # raw 0–2, inclusive
+/decisions relevance directThreshold 1.75      # must be >= relatedThreshold
+/decisions relevance concurrency 0            # all batches parallel (default)
+/decisions relevance concurrency 2            # optional concurrent-batch cap, 1–32
+/decisions relevance timeoutMs 8000
+/decisions relevance failMode open             # explicit full-inventory fallback on failure
+/decisions pin typescript
+/decisions unpin typescript
+/decisions test                                # explicit synthetic bool call; may incur cost
 ```
 
 Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically written with mode `0600`. Defaults:
@@ -91,7 +97,7 @@ Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically
 - Score rubric: **irrelevant → related → directly relevant** (indices 0–2). Fractional scores are expected rubric indices, not class probabilities. Default policy labels: score ≥1.5 directly relevant, ≥0.75 related, otherwise irrelevant; normalized score = score/2. Persisted `relatedThreshold` and `directThreshold` accept decimals in [0, 2], ordered lowest first. `minLabel` chooses which inclusive threshold selects skills. Choice mode instead uses the model's categorical label; the numeric thresholds apply only to score mode.
 - Keep related or better, cap **12 unpinned** selections; pinned names bypass cap/threshold. Original skill order and object references are preserved. Manual-only skills are not sent for classification.
 - **Fail closed**: decision failures hide unverified automatic advertisements, retaining pinned/manual-only entries. `failMode open` explicitly retains the full inventory on failure; status labels that fallback.
-- Whole filtering deadline **8000ms**, chunks up to **24 questions**, concurrency **2** (configurable up to 4).
+- Whole filtering deadline **8000ms**, requested batches of **50 skills**. Concurrency **0** means every batch starts in parallel: 300 skills use six batches; 400 use eight. Set concurrency 1–32 to limit simultaneous batches. A lower declared provider/client question limit reduces effective batch size, without omitting candidates.
 - Configurable prompt ≤4000 characters and each description ≤400; names ≤64, JSON state ≤65536 characters per batch, inventory ≤1000 unique candidates. These are local safety bounds, not provider token-limit guarantees.
 
 Invalid persisted settings are reported explicitly and advertisements fail closed until repaired with commands or a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
@@ -145,7 +151,7 @@ const client = createDecisionClient(createBackend(selection, {
   getRegistry: () => ctx.modelRegistry, // required when selection.backend is "pi"
 }));
 const picked = await pickSkills(prompt, thirtySkills, client, {
-  chunkSize: 10, maxQuestions: 24, concurrency: 2,
+  chunkSize: 50, maxQuestions: 50, concurrency: 0, // all scoring batches in parallel
   relatedThreshold: 1.25, directThreshold: 1.75, // raw rubric indices in [0, 2]
   minLabel: "related", maxSkills: 6, timeoutMs: 8000,
 });
@@ -155,7 +161,7 @@ const picked = await pickSkills(prompt, thirtySkills, client, {
 // event.systemPromptOptions.skills = picked.kept;
 ```
 
-Passing `null` as the client intentionally skips filtering without calls. Active errors return `fail-closed` and a safe error code; retaining the inventory on errors requires explicit `failMode: "open"`. Use `maxQuestions` to impose a lower provider limit; effective batch size is the smaller of `chunkSize` and `maxQuestions`. The extension uses a conservative cap of 24. Configure `minCandidates` to change the automatic inventory-size gate. Disabled, unconfigured, or below-minimum prompts make no decision calls. The existing early hook already attaches the selected advertisements for each eligible prompt; no second hook or provider-specific application logic is needed.
+Passing `null` as the client intentionally skips filtering without calls. Active errors return `fail-closed` and a safe error code; retaining the inventory on errors requires explicit `failMode: "open"`. Use `maxQuestions` to impose a lower provider limit; effective batch size is the smaller of `chunkSize` and `maxQuestions`. The extension requests batches up to 50 and respects a lower limit declared by the selected client. Configure `minCandidates` to change the automatic inventory-size gate. Disabled, unconfigured, or below-minimum prompts make no decision calls. The existing early hook already attaches the selected advertisements for each eligible prompt; no second hook or provider-specific application logic is needed.
 
 ## Development
 

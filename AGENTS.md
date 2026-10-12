@@ -4,7 +4,7 @@
 
 ## Layout and status
 
-- `src/extension.ts`: Pi package entry; `src/extension/`: lifecycle, commands, host contracts.
+- `src/extension.ts`: Pi package entry; `src/extension/`: lifecycle, `/decisions` user settings command, host contracts. Register only `decisions`; no compatibility alias.
 - `src/settings.ts`: validated, atomic, credential-free user settings.
 - `src/index.ts`: portable application/core exports.
 - `src/decision/`: canonical primitives, validation, client, typed errors.
@@ -28,7 +28,8 @@ Earlier research plans proposed dynamic discovery and fail-open defaults. Latest
 - Credentials for all three direct providers come from public request-time `getProviderAuth` first, then env (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`). Exact `openai` API key only, never `openai-codex`/current-chat substitution. Reject OpenAI source `OAuth` even when cached snapshots are empty; do not blanket-reject OpenRouter OAuth. Standalone SDK adapter respects Pi defaults (`~/.pi/agent`, overridden by `PI_CODING_AGENT_DIR`) and disables startup model-network refresh. Delegate references/commands to Pi; never read auth files directly, log keys, or persist secrets/settings tokens.
 - Decision payloads contain bounded prompt and skill name/description metadata only. No bodies, paths, images, transcripts, or tool results. Diagnostics contain only safe codes/counts/usage.
 - **Fail closed** on active decision/configuration errors. Full-inventory fallback requires explicit `failMode: "open"`; disabled/unconfigured/below-minimum behavior intentionally makes no calls and preserves advertisements.
-- Score thresholds are raw 0–2 rubric indices, inclusive and ordered (`relatedThreshold <= directThreshold`); persisted decimal settings are supported. `chunkSize` controls scoring batch size, reduced by `maxQuestions` when needed; evaluate every candidate, not just the first batch. Pins/manual-only policy and stable references survive selection.
+- Score thresholds are raw 0–2 rubric indices, inclusive and ordered (`relatedThreshold <= directThreshold`); persisted decimal settings are supported. Scoring defaults to `chunkSize: 50`, `concurrency: 0` (all batches parallel); positive concurrency 1–32 limits batch fan-out. Reduce batch size for a lower declared provider/client `maxQuestions`; evaluate every candidate, not just the first batch. Pins/manual-only policy and stable references survive selection.
+- `/decisions` opens settings: immediate enable toggle, provider/execution path, model, numeric policy. Provider/model availability uses public request-time Pi credential resolution, not chat-model inventory guesses; label missing keys and guide to the matching env variable or `/login <provider>`. Reject unusable selections before atomic persistence; never enable filtering as a side effect of selecting a provider/model. Headless arguments support the same behavior.
 - Only mutate `before_agent_start.systemPromptOptions.skills`. Do not claim access control or silently implement MCP/tool filtering. Later extensions may overwrite selections.
 - Keep native OpenRouter entries constrained to the same static retained list; do not destructively override Pi's provider. Missing native registrations stay errors, not automatic direct-backend fallback.
 

@@ -63,23 +63,23 @@ Run Pi **from this folder**, so these 30 `.agents/skills` directories are discov
 pi --extension ../../src/extension.ts
 ```
 
-Then choose a classifier using `/context-decisions model` and configure:
+Then choose a classifier using `/decisions model` and configure:
 
 ```text
-/context-decisions relevance chunkSize 10
-/context-decisions relevance relatedThreshold 1
-/context-decisions relevance directThreshold 1.5
-/context-decisions relevance minLabel related
-/context-decisions relevance maxSkills 6
-/context-decisions relevance minCandidates 0
-/context-decisions relevance concurrency 2
-/context-decisions relevance timeoutMs 15000
-/context-decisions relevance failMode closed
-/context-decisions enable
-/context-decisions status
+/decisions relevance chunkSize 10
+/decisions relevance relatedThreshold 1
+/decisions relevance directThreshold 1.5
+/decisions relevance minLabel related
+/decisions relevance maxSkills 6
+/decisions relevance minCandidates 0
+/decisions relevance concurrency 2
+/decisions relevance timeoutMs 15000
+/decisions relevance failMode closed
+/decisions enable
+/decisions status
 ```
 
-Try a prompt from `prompts.json`; inspect `/context-decisions status`. Other user/project skills may also be discoverable in your Pi installation, so the real interactive inventory can exceed this fixture's 30. The standalone runner deliberately loads exactly the fixture inventory. A later extension can overwrite skill advertisements; tool/MCP filtering is not implemented.
+Try a prompt from `prompts.json`; inspect `/decisions status`. Other user/project skills may also be discoverable in your Pi installation, so the real interactive inventory can exceed this fixture's 30. The standalone runner deliberately loads exactly the fixture inventory. A later extension can overwrite skill advertisements; tool/MCP filtering is not implemented.
 
 ## Reuse the demo runner
 
