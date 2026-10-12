@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { createAllowlistComponent, showAllowlistPicker, type AllowlistPickerDeps, type AllowlistTheme } from "../src/extension/allowlist-picker.ts";
+import { createAllowlistComponent, type AllowlistPickerDeps, type AllowlistTheme } from "../src/extension/allowlist-picker.ts";
 import { rankSkills, type RelevanceItem } from "../src/apps/relevance.ts";
 import type { ScopedSkill } from "../src/apps/allowlist.ts";
 import type { CommandContext } from "../src/extension/contracts.ts";
@@ -110,10 +110,19 @@ test("ranking/save errors use safe codes and do not expose provider messages; ma
   h.component.handleInput!(keys.save); await tick(); assert.match(h.rendered(), /operation-failed/); assert.doesNotMatch(h.rendered(), /SECRET_KEY/); h.component.dispose();
   const malformed = harness({ rank: async () => [item("alpha", 1)] }); malformed.input("q"); malformed.component.handleInput!(keys.rank); await tick(); assert.match(malformed.rendered(), /invalid_response/); malformed.component.dispose();
 });
-test("terminal-only custom overlay guard works for RPC, and terminal custom result is propagated", async () => {
-  let customCalls = 0; const reports: string[] = [];
-  const deps: AllowlistPickerDeps = { scope: "global", skills: [], initial: [], locationLabel: "settings", async save() {}, report(message) { reports.push(message); } };
-  const ctx = { mode: "rpc", ui: { custom: async () => { customCalls++; return true; } } } as unknown as CommandContext;
-  assert.equal(await showAllowlistPicker(ctx, deps), false); assert.equal(customCalls, 0); assert.match(reports[0], /terminal UI/);
-  ctx.mode = "tui"; assert.equal(await showAllowlistPicker(ctx, deps), true); assert.equal(customCalls, 1);
+test("an embedding host caps rendered rows through maxRows and keeps the selected row visible", () => {
+  const skills = Array.from({ length: 30 }, (_, n) => skill(`skill-${String(n).padStart(2, "0")}`, "A long description. ".repeat(20)));
+  for (const cap of [30, 12, 9, 6, 4, 3, 2, 1]) {
+    const component = createAllowlistComponent({ requestRender() {} }, theme, () => {}, {
+      scope: "global", skills, initial: [], locationLabel: "settings.json", async save() {}, report() {}, maxRows: () => cap,
+    });
+    component.focused = true;
+    component.handleInput!(keys.down);
+    for (let n = 0; n < 12; n++) component.handleInput!(keys.down);
+    component.handleInput!(keys.enter);
+    const lines = component.render(80);
+    assert.ok(lines.length <= cap, `${lines.length} lines exceed maxRows ${cap}`);
+    if (cap >= 6) assert.match(lines.join("\n"), /❯ \[ \] skill-12/);
+    component.dispose();
+  }
 });

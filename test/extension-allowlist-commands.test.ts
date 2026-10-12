@@ -12,6 +12,21 @@ import { loadProjectAllowlist, projectAllowlistPath } from "../src/project-allow
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const keys = { down: "\x1b[B", enter: "\r", esc: "\x1b" };
+async function until(component: Component, pattern: RegExp, width = 120): Promise<string> {
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    const text = component.render(width).join("\n");
+    if (pattern.test(text)) return text;
+    if (Date.now() > deadline) assert.fail(`Timed out waiting for ${pattern}; last render:\n${text}`);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+/** Main-screen rows in dialog order: toggle, provider, model, global, project, Advanced, Status, Close. */
+function openAllowlistRow(component: Component, row: "global" | "project") {
+  for (let i = 0; i < (row === "global" ? 3 : 4); i++) component.handleInput!(keys.down);
+  component.handleInput!(keys.enter);
+}
 async function saved(component: Component): Promise<void> {
   const deadline = Date.now() + 2000;
   while (!component.render(120).join("\n").includes("Always-allowed skills saved")) {
@@ -43,8 +58,10 @@ async function harness(t: { after(fn: () => Promise<void>): void }, configured =
   const ctx: CommandContext = { cwd: root, hasUI: false, mode: "print", modelRegistry: registry,
     ui: { async select(_title, options) { return choices.shift()?.(options); }, async input() { return undefined; }, notify() {}, setStatus() {},
       async custom(factory) {
-        const component = await factory({ requestRender() {} } as Parameters<typeof factory>[0], { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], () => {});
-        overlays.push(component); await customDriver?.(component); component.dispose?.(); return false as never;
+        let settle!: (value: unknown) => void;
+        const result = new Promise((resolve) => { settle = resolve; });
+        const component = await factory({ requestRender() {}, terminal: { rows: 40 } } as Parameters<typeof factory>[0], { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], (value) => settle(value));
+        overlays.push(component); await customDriver?.(component); component.dispose?.(); settle("closed"); return result as never;
       },
     },
   };
@@ -75,16 +92,26 @@ test("global edits refuse to overwrite invalid settings; missing cwd and malform
   h.ctx.cwd = undefined; await h.command("allow project list"); assert.match(h.messages.at(-1)!, /working directory/);
   assert.ok(h.messages.every((message) => !message.includes("PRIVATE_CONTENT"))); assert.deepEqual(h.requests, []);
 });
-test("/decisions settings opens Global and Project editors; draft save selects only current scope", async (t) => {
+test("/decisions settings opens ONE floating dialog hosting Global and Project editors; saves only the current scope", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "tui";
-  h.choices.push((options) => options.find((item) => item.startsWith("Allow list (Global)")), () => "Done");
-  h.driver(async (component) => { assert.match(component.render(120).join("\n"), /\[ \] alpha/); assert.doesNotMatch(component.render(120).join("\n"), /\[ \] project-only/);
-    component.handleInput!("\x1b[B"); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component); });
+  h.driver(async (component) => {
+    const main = component.render(100).join("\n");
+    assert.match(main, /Always allowed · Global/); assert.match(main, /Always allowed · Project/); assert.match(main, /Advanced…/);
+    assert.doesNotMatch(main, /relatedThreshold|chunkSize|Batch size/, "relevance knobs live under Advanced");
+    openAllowlistRow(component, "global");
+    assert.match(await until(component, /\[ \] alpha/), /Global/); assert.doesNotMatch(component.render(120).join("\n"), /\[ \] project-only/);
+    component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
+    component.handleInput!(keys.esc); component.handleInput!(keys.esc); await until(component, /Context decisions/);
+  });
   await h.command("settings"); assert.equal(h.overlays.length, 1); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
-  h.choices.push((options) => options.find((item) => item.startsWith("Allow list (Project)")), () => "Done");
-  h.driver(async (component) => { assert.match(component.render(120).join("\n"), /project-only/); component.handleInput!("\x1b[B"); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component); });
+  h.driver(async (component) => {
+    await until(component, /Always allowed · Project\s+[1-9?…]/);
+    openAllowlistRow(component, "project");
+    await until(component, /project-only/); component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
+  });
   await h.command("settings"); assert.equal(h.overlays.length, 2); assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]);
   assert.deepEqual(h.requests, []); assert.equal(h.commands.has("context-decisions"), false);
+  assert.deepEqual(h.messages, [], "dialog feedback stays inside the dialog, not the transcript");
 });
 test("RPC allowlist editor is unavailable but text commands remain functional", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "rpc";
@@ -96,6 +123,7 @@ test("explicit topic ranking uses configured decision client even when auto filt
   const h = await harness(t, true); h.ctx.hasUI = true; h.ctx.mode = "tui";
   await h.command("disable");
   h.driver(async (component) => {
+    await until(component, /Search:/);
     for (const char of "Browser work") component.handleInput!(char); assert.equal(h.requests.length, 0);
     component.handleInput!("\x12"); await tick(); await tick();
     assert.match(component.render(120).join("\n"), /1.80\/2/);
@@ -106,7 +134,7 @@ test("explicit topic ranking uses configured decision client even when auto filt
 });
 test("missing credential guidance remains inline and local fuzzy works without creating a client", async (t) => {
   const h = await harness(t, true); h.setKey(undefined); h.ctx.hasUI = true; h.ctx.mode = "tui";
-  h.driver(async (component) => { for (const char of "Browser") component.handleInput!(char); component.handleInput!("\x12"); await tick();
+  h.driver(async (component) => { await until(component, /Search:/); for (const char of "Browser") component.handleInput!(char); component.handleInput!("\x12"); await tick();
     assert.match(component.render(160).join("\n"), /TYPESAFE_API_KEY/); assert.deepEqual(h.requests, []);
     component.handleInput!("\t"); assert.match(component.render(120).join("\n"), /alpha/); });
   await h.command("allowlist global"); assert.deepEqual(h.requests, []);

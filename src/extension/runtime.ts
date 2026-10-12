@@ -93,8 +93,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       ctx.ui.setStatus("context-decisions", state);
     },
   };
-  registerCommands(pi, controller, deps.env);
+  const commands = registerCommands(pi, controller, deps.env);
   pi.on("session_start", async (_event, ctx) => {
+    commands.closeDialogs(); // a dialog from a previous session must never outlive its context
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
     await projectWriteQueue;
     await writeQueue;
@@ -106,6 +107,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     controller.setStatus(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => {
+    // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
+    // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
+    commands.closeDialogs();
     abortPending(); generation++; last = undefined;
     if (ctx.hasUI) ctx.ui.setStatus("context-decisions", undefined);
   });

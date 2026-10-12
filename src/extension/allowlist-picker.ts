@@ -2,7 +2,6 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Input, fuzzyFilter, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable } from "@earendil-works/pi-tui";
 import type { AllowlistScope, ScopedSkill } from "../apps/allowlist.ts";
 import type { RelevanceItem } from "../apps/relevance.ts";
-import type { CommandContext } from "./contracts.ts";
 
 export interface AllowlistPickerDeps {
   scope: AllowlistScope;
@@ -13,6 +12,8 @@ export interface AllowlistPickerDeps {
   rank?: (query: string, skills: ScopedSkill[], signal: AbortSignal) => Promise<RelevanceItem[]>;
   unavailable?: string;
   rankLabel?: string;
+  /** Embedding hosts (the settings dialog) cap the rendered height here instead of Pi's 80% default. */
+  maxRows?: () => number;
   report(message: string, level?: "info" | "warning" | "error"): void;
 }
 export type AllowlistTheme = Pick<Theme, "fg" | "bg">;
@@ -129,10 +130,13 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       let footer = [`${Math.min(index + 1, items.length)}/${items.length}`, "Type search · ↓ list · ↑↓ move · Space toggle · Enter description",
         "Ctrl+S save · Ctrl+R rank · Tab tabs · Ctrl+K clear",
         "Esc search / Esc close (discard unsaved changes)"];
-      // Pi clips custom overlays to floor(80% of terminal rows). Read its public
-      // terminal size on each render so resizing cannot hide focus or save help.
+      // An embedding host supplies its own budget. Otherwise Pi clips custom overlays to
+      // floor(80% of terminal rows); read the public terminal size on each render so
+      // resizing cannot hide focus or save help.
       const terminalRows = tui.terminal?.rows;
-      const height = terminalRows === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(terminalRows * 0.8));
+      const hostRows = deps.maxRows?.();
+      const height = hostRows !== undefined && Number.isFinite(hostRows) ? Math.max(1, Math.floor(hostRows))
+        : terminalRows === undefined ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(terminalRows * 0.8));
       if (headers.length + footer.length + 1 > height) {
         footer = height >= 8 ? ["Ctrl+S save · Space toggle · Enter info", "Tab tabs · Ctrl+R rank · Esc close"] : ["Ctrl+S save · Esc close"];
         headers = [title, `${tabs} · ${draft.size} selected · ${Math.min(index + 1, items.length)}/${items.length}`, ...input.render(w), theme.fg("warning", display(state))];
@@ -201,11 +205,4 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       redraw();
     },
   };
-}
-
-export async function showAllowlistPicker(ctx: CommandContext, deps: AllowlistPickerDeps): Promise<boolean> {
-  if (ctx.mode !== "tui" || !ctx.ui.custom) { deps.report("Allow list editor needs the terminal UI; use /decisions allow <global|project> list|add|remove|clear", "warning"); return false; }
-  return ctx.ui.custom<boolean>((tui, theme, _keys, done) => createAllowlistComponent(tui, theme, done, deps), {
-    overlay: true, overlayOptions: { width: "80%", maxHeight: "80%" },
-  });
 }

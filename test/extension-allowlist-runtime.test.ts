@@ -57,7 +57,9 @@ async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" 
       ctx.hasUI = true; ctx.mode = "tui";
       ctx.ui.custom = async (factory) => {
         const component = await factory({ requestRender() {} } as Parameters<typeof factory>[0], { fg: (_token: unknown, text: string) => text, bg: (_token: unknown, text: string) => text } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], () => {});
-        rendered = component.render(120).join("\n"); component.dispose?.(); return false as never;
+        // The dialog loads the embedded editor's inputs asynchronously.
+        for (let i = 0; i < 500 && !/Search:/.test(component.render(120).join("\n")); i++) await new Promise((resolve) => setTimeout(resolve, 1));
+        rendered = component.render(120).join("\n"); component.dispose?.(); return "closed" as never;
       };
       await commands.get("decisions")!.handler(`allowlist ${scope}`, ctx as ExtensionCommandContext);
       return rendered;

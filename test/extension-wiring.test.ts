@@ -180,7 +180,7 @@ test("headless picker without args returns actionable error, settings updates an
 });
 test("UI settings dialog validation, cancellation and boolean edit share persisted config", async (t) => {
   const h = await setup(t); const c = context({}, true);
-  c.selections.push((options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, (options) => options.find((option) => option.startsWith("Context decisions:"))!, "Done");
+  c.selections.push("Advanced…", (options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, "Back", (options) => options.find((option) => option.startsWith("Context decisions:"))!, "Done");
   c.inputs.push("999"); await h.command("settings", c.ctx);
   assert.ok(h.messages.some((message) => message.level === "error")); assert.equal((await loadSettings(h.path)).settings.enabled, false);
   c.selections.push(undefined); await h.command("", c.ctx); assert.equal(c.calls(), 0);

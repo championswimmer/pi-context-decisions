@@ -8,18 +8,35 @@ import { SettingsError, updateSetting, validateBackendSelection } from "../setti
 import { normalizeAllowlist, type AllowlistScope } from "../apps/allowlist.ts";
 import { rankSkills } from "../apps/relevance.ts";
 import { projectAllowlistPath } from "../project-allowlist.ts";
-import { showAllowlistPicker, type AllowlistPickerDeps } from "./allowlist-picker.ts";
+import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
+import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
+import { ADVANCED_FIELDS, advancedValueText, describeError, sanitizeTerminalText } from "./settings-model.ts";
 
 const COMMANDS = ["settings", "provider", "model", "status", "enable", "disable", "relevance", "allow", "allowlist", "pin", "unpin", "test"];
 type DirectProvider = "openai" | "typesafe" | "openrouter";
-function cleanLabel(value: string): string { return value.replace(/[\p{Cc}\p{Cf}]/gu, " ").slice(0, 400); }
-function safeError(error: unknown): string {
-  if (error instanceof SettingsError) return error.message;
-  if (error instanceof DecisionError) return `Decision operation failed (${error.code}${error.status ? `, HTTP ${error.status}` : ""})`;
-  return "Context-decisions operation failed";
+function cleanLabel(value: string): string { return sanitizeTerminalText(value, 400); }
+const safeError = describeError;
+/** Thrown by a dialog-scoped context after the dialog closed; callers must drop the work silently. */
+export class DialogClosedError extends Error { constructor() { super("Settings dialog closed"); this.name = "DialogClosedError"; } }
+/**
+ * Lazy, guarded view of a command context for dialog work. `hasUI`/`mode`/`cwd` are read eagerly
+ * (plain values, safe); `ui` and `modelRegistry` are read only while the dialog is open, because
+ * Pi invalidates every ctx property after a reload. Never spread a ctx and never read `ctx.signal`:
+ * in a command that is the agent-run signal, not the dialog's lifetime.
+ */
+export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefined, isOpen: () => boolean): CommandContext {
+  const hasUI = ctx.hasUI, mode = ctx.mode, cwd = ctx.cwd;
+  const guard = <T,>(read: () => T): T => { if (!isOpen()) throw new DialogClosedError(); return read(); };
+  return Object.defineProperties({} as CommandContext, {
+    hasUI: { value: hasUI, enumerable: true }, mode: { value: mode, enumerable: true }, cwd: { value: cwd, enumerable: true },
+    ui: { get: () => guard(() => ctx.ui), enumerable: true },
+    modelRegistry: { get: () => guard(() => ctx.modelRegistry), enumerable: true },
+    signal: { value: signal, enumerable: true },
+  });
 }
+function statusSafely(controller: Controller, ctx: CommandContext): void { try { controller.setStatus(ctx); } catch { /* cosmetic; the dialog may have closed */ } }
 function directProvider(provider: string): provider is DirectProvider { return ["openai", "typesafe", "openrouter"].includes(provider); }
 function credentialGuide(provider: string, native = false): string {
   const variable = provider === "typesafe" ? "TYPESAFE_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : provider === "openrouter" ? "OPENROUTER_API_KEY" : undefined;
@@ -82,12 +99,15 @@ function parseModel(tokens: string[]): BackendSelection | null {
   throw new SettingsError("Use /decisions model pi <provider> <id>, typesafe [id], openai [id], openrouter <id>, or none");
 }
 function authLabel(status: AuthStatus): string { return status === "ok" ? "configured" : status === "missing" ? "missing key" : "unverified key"; }
-async function persistModel(controller: Controller, ctx: CommandContext, selection: BackendSelection | null, env?: Record<string, string | undefined>) {
+async function saveModel(controller: Controller, ctx: CommandContext, selection: BackendSelection | null, env?: Record<string, string | undefined>): Promise<string> {
   requireNative(selection, ctx);
   await requireCredentials(selection, ctx, env);
   await controller.update((settings) => ({ ...settings, backend: selection }));
-  controller.setStatus(ctx);
-  controller.report(ctx, `Decision model: ${selectionLabel(selection)}. ${selection ? "Eligible prompts send bounded task text and skill name/description metadata when enabled." : "No decision calls until a model is chosen."}`);
+  statusSafely(controller, ctx);
+  return `Decision model: ${selectionLabel(selection)}. ${selection ? "Eligible prompts send bounded task text and skill name/description metadata when enabled." : "No decision calls until a model is chosen."}`;
+}
+async function persistModel(controller: Controller, ctx: CommandContext, selection: BackendSelection | null, env?: Record<string, string | undefined>) {
+  controller.report(ctx, await saveModel(controller, ctx, selection, env));
 }
 async function chooseModel(controller: Controller, ctx: CommandContext, tokens: string[], env?: Record<string, string | undefined>, filter?: (entry: PickerEntry) => boolean) {
   if (tokens.length) return persistModel(controller, ctx, parseModel(tokens), env);
@@ -106,18 +126,18 @@ async function chooseModel(controller: Controller, ctx: CommandContext, tokens: 
   if (entry.note) controller.report(ctx, cleanLabel(entry.note));
   await persistModel(controller, ctx, validateBackendSelection(entry.selection), env);
 }
-interface ProviderChoice { backend: "pi" | DirectProvider; provider: string; status: AuthStatus; label: string }
+interface ProviderChoice { backend: "pi" | DirectProvider; provider: string; status: AuthStatus; label: string; name: string }
 async function providerChoices(ctx: CommandContext, env?: Record<string, string | undefined>): Promise<ProviderChoice[]> {
   const entries = await pickerEntries(ctx, env);
   const choices: ProviderChoice[] = [];
   for (const provider of ["typesafe", "openai", "openrouter"] as const) {
     const entry = entries.find((item) => item.selection.backend === provider);
-    choices.push({ backend: provider, provider, status: entry?.authStatus ?? "missing", label: `${provider} · direct API [${authLabel(entry?.authStatus ?? "missing")}]` });
+    choices.push({ backend: provider, provider, status: entry?.authStatus ?? "missing", name: `${provider} · direct API`, label: `${provider} · direct API [${authLabel(entry?.authStatus ?? "missing")}]` });
   }
   for (const entry of entries) {
     const selection = entry.selection;
     if (selection.backend !== "pi" || choices.some((choice) => choice.backend === "pi" && choice.provider === selection.provider)) continue;
-    choices.push({ backend: "pi", provider: selection.provider, status: entry.authStatus, label: `${cleanLabel(selection.provider)} · Pi internal classifier pipeline [${authLabel(entry.authStatus)}]` });
+    choices.push({ backend: "pi", provider: selection.provider, status: entry.authStatus, name: `${cleanLabel(selection.provider)} · Pi internal classifier pipeline`, label: `${cleanLabel(selection.provider)} · Pi internal classifier pipeline [${authLabel(entry.authStatus)}]` });
   }
   return choices;
 }
@@ -146,7 +166,7 @@ async function chooseProvider(controller: Controller, ctx: CommandContext, token
   if (choice.status !== "ok") throw new SettingsError(credentialGuide(choice.provider, choice.backend === "pi"));
   await chooseModel(controller, ctx, [], env, (entry) => entry.selection.backend === choice.backend && (entry.selection.backend !== "pi" || entry.selection.provider === choice.provider));
 }
-async function status(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
+async function statusLines(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>): Promise<string[]> {
   const settings = controller.getSettings();
   let credentials = "not configured";
   if (settings.backend) {
@@ -162,7 +182,7 @@ async function status(controller: Controller, ctx: CommandContext, env?: Record<
   const last = controller.getLastDecision();
   const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
-  controller.report(ctx, [
+  return [
     `Context decisions: ${settings.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
     `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, ${settings.relevance.mode}, minimum ${settings.relevance.minLabel}, fail-${settings.relevance.failMode}`,
     `Scoring: batch ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all batches parallel (0)" : settings.relevance.concurrency}, raw thresholds related ${settings.relevance.relatedThreshold}/direct ${settings.relevance.directThreshold} (0–2), cap ${settings.relevance.maxSkills}, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms`,
@@ -172,13 +192,16 @@ async function status(controller: Controller, ctx: CommandContext, env?: Record<
     ...(last ? [`Last: ${last.reason}, ${last.kept}/${last.candidates} skills, ${last.latencyMs}ms${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
     OPENROUTER_DECISION_SNAPSHOT.attribution,
     "Skill advertisements only; tools, MCP visibility, and explicit skill access are unchanged.",
-  ].join("\n"));
+  ];
 }
-async function listNames(controller: Controller, ctx: CommandContext, scope: AllowlistScope): Promise<string[]> {
+async function status(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
+  controller.report(ctx, (await statusLines(controller, ctx, env)).join("\n"));
+}
+async function listNames(controller: Controller, ctx: CommandContext, scope: AllowlistScope, report = true): Promise<string[]> {
   if (scope === "global") return controller.getSettings().globalAllowlist;
   if (!ctx.cwd) throw new SettingsError("Project allowlist needs a working directory");
   const result = await controller.loadProjectAllowlist(ctx.cwd);
-  for (const message of [...result.warnings, ...(result.error ? [result.error] : [])]) controller.report(ctx, message, "warning");
+  if (report) for (const message of [...result.warnings, ...(result.error ? [result.error] : [])]) controller.report(ctx, message, "warning");
   return result.names;
 }
 async function saveNames(controller: Controller, ctx: CommandContext, scope: AllowlistScope, values: Iterable<string>): Promise<void> {
@@ -190,17 +213,22 @@ async function saveNames(controller: Controller, ctx: CommandContext, scope: All
     if (!ctx.cwd) throw new SettingsError("Project allowlist needs a working directory");
     await controller.saveProjectAllowlist(ctx.cwd, names);
   }
-  controller.setStatus(ctx);
+  statusSafely(controller, ctx);
 }
-async function editAllowlist(controller: Controller, ctx: CommandContext, scope: AllowlistScope, env?: Record<string, string | undefined>): Promise<void> {
-  if (ctx.mode !== "tui" || !ctx.ui.custom) throw new SettingsError("Allow list editor needs the terminal UI; use /decisions allow <global|project> list|add|remove|clear");
-  const initial = await listNames(controller, ctx, scope);
+/**
+ * Inputs for the embedded allowlist editor. Every context read goes through `scopedContext`, and
+ * ranking uses its own signal (picker + dialog + operation), never `ctx.signal` or a spread ctx.
+ */
+async function allowlistDeps(controller: Controller, ctx: CommandContext, scope: AllowlistScope, env: Record<string, string | undefined> | undefined,
+  isOpen: () => boolean, dialogSignal: AbortSignal): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">> {
+  const base = scopedContext(ctx, dialogSignal, isOpen);
+  const initial = await listNames(controller, base, scope, false);
   const settings = controller.getSettings();
   let unavailable: string | undefined;
   if (controller.getSettingsError()) unavailable = "Repair settings before relevance ranking";
   else if (!settings.backend) unavailable = "Select a decision model in /decisions to enable relevance ranking";
   else {
-    try { requireNative(settings.backend, ctx); await requireCredentials(settings.backend, ctx, env); }
+    try { requireNative(settings.backend, base); await requireCredentials(settings.backend, base, env); }
     catch (error) { unavailable = safeError(error); }
   }
   const rank: AllowlistPickerDeps["rank"] = unavailable ? undefined : async (query, skills, pickerSignal) => {
@@ -209,8 +237,8 @@ async function editAllowlist(controller: Controller, ctx: CommandContext, scope:
     if (!current.backend) throw new DecisionError("config", "Select a decision model before relevance ranking");
     const operation = controller.beginOperation();
     try {
-      const signal = AbortSignal.any([pickerSignal, operation.signal, ...(ctx.signal ? [ctx.signal] : [])]);
-      const rankingContext = { ...ctx, signal };
+      const signal = AbortSignal.any([pickerSignal, operation.signal, dialogSignal]);
+      const rankingContext = scopedContext(ctx, signal, isOpen);
       requireNative(current.backend, rankingContext);
       await requireCredentials(current.backend, rankingContext, env);
       const client = controller.createClient(current.backend, rankingContext);
@@ -221,20 +249,20 @@ async function editAllowlist(controller: Controller, ctx: CommandContext, scope:
       }, { ...current.relevance, rubric: "topic", maxQuestions: 50, signal });
     } finally { operation.close(); }
   };
-  await showAllowlistPicker(ctx, {
+  return {
     scope, skills: controller.getInventory(), initial,
-    locationLabel: scope === "global" ? "Pi user context-decisions settings.json" : projectAllowlistPath(ctx.cwd!),
-    save: (names) => saveNames(controller, ctx, scope, names),
+    locationLabel: scope === "global" ? "Pi user context-decisions settings.json" : projectAllowlistPath(base.cwd!),
+    save: (names) => saveNames(controller, base, scope, names),
     ...(rank ? { rank, rankLabel: `${selectionLabel(settings.backend)} · explicit ranking may incur charges` } : { unavailable }),
-    report: (message, level) => controller.report(ctx, message, level),
-  });
+  };
 }
-async function allowlistCommand(controller: Controller, ctx: CommandContext, tokens: string[], editor: boolean, env?: Record<string, string | undefined>): Promise<void> {
+async function allowlistCommand(controller: Controller, ctx: CommandContext, tokens: string[], editor: boolean, env: Record<string, string | undefined> | undefined,
+  openEditor: (scope: AllowlistScope) => Promise<void>): Promise<void> {
   const [scope, action, ...names] = tokens;
   if (scope !== "global" && scope !== "project") throw new SettingsError("Use /decisions allow <global|project> list|add <name>|remove <name>|clear, or allowlist <global|project>");
   if (editor || action === undefined) {
     if (action !== undefined) throw new SettingsError("Use /decisions allowlist <global|project>");
-    await editAllowlist(controller, ctx, scope, env); return;
+    await openEditor(scope); return;
   }
   if (action === "list" && names.length === 0) {
     const current = await listNames(controller, ctx, scope);
@@ -248,7 +276,32 @@ async function allowlistCommand(controller: Controller, ctx: CommandContext, tok
   } else throw new SettingsError("Use /decisions allow <global|project> list|add <name>|remove <name>|clear");
   controller.report(ctx, `Always-allowed ${scope} list saved`);
 }
-async function settingsDialog(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
+const EDITOR_UNAVAILABLE = "Allow list editor needs the terminal UI; use /decisions allow <global|project> list|add|remove|clear";
+/** RPC fallback: the same grouping as the terminal dialog, built from select/input requests. */
+async function advancedMenu(controller: Controller, ctx: CommandContext) {
+  for (;;) {
+    const settings = controller.getSettings();
+    const fields = ADVANCED_FIELDS.map((field) => `relevance.${field.key}`);
+    const labels = ADVANCED_FIELDS.map((field) => `relevance.${field.key}: ${field.key === "concurrency" && settings.relevance.concurrency === 0 ? "0 (all batches parallel)" : String(settings.relevance[field.key])}`);
+    const pick = await ctx.ui.select("Decisions · Advanced relevance settings", [...labels, "Back"], { signal: ctx.signal });
+    if (!pick || pick === "Back") return;
+    try {
+      const index = labels.indexOf(pick);
+      if (index < 0) throw new SettingsError("Invalid settings selection");
+      const key = fields[index];
+      const old = settings.relevance[ADVANCED_FIELDS[index].key];
+      if (typeof old === "boolean") await controller.update((current) => updateSetting(current, key, String(!old)));
+      else {
+        const hint = key === "relevance.failMode" ? " (open retains all advertisements on failure)" : key === "relevance.concurrency" ? " (0 = all batches parallel; 1–32 = limit)" : key.endsWith("Threshold") ? " (raw 0–2, inclusive)" : "";
+        const value = await ctx.ui.input(`New value for ${key}${hint}`, String(old), { signal: ctx.signal });
+        if (value === undefined) continue;
+        await controller.update((current) => updateSetting(current, key, value.trim()));
+      }
+      controller.setStatus(ctx);
+    } catch (error) { controller.report(ctx, safeError(error), "error"); }
+  }
+}
+async function settingsMenu(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
   if (!ctx.hasUI) { controller.report(ctx, JSON.stringify(controller.getSettings(), null, 2)); return; }
   for (;;) {
     const settings = controller.getSettings();
@@ -258,9 +311,7 @@ async function settingsDialog(controller: Controller, ctx: CommandContext, env?:
     const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
     const globalAllow = `Allow list (Global) · ${settings.globalAllowlist.length}`;
     const projectAllow = `Allow list (Project) · ${project?.names.length ?? 0}`;
-    const fields = Object.keys(settings.relevance).filter((key) => key !== "pinned").map((key) => `relevance.${key}`);
-    const labels = fields.map((key) => `${key}: ${key === "relevance.concurrency" && settings.relevance.concurrency === 0 ? "0 (all batches parallel)" : String(settings.relevance[key.slice(10) as keyof typeof settings.relevance])}`);
-    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, ...labels, "Status", "Done"], { signal: ctx.signal });
+    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, "Advanced…", "Status", "Done"], { signal: ctx.signal });
     if (!pick || pick === "Done") return;
     try {
       if (pick === toggle) {
@@ -270,26 +321,66 @@ async function settingsDialog(controller: Controller, ctx: CommandContext, env?:
       else if (pick === model) {
         const backend = settings.backend;
         await chooseModel(controller, ctx, [], env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
-      } else if (pick === globalAllow || pick === projectAllow) await editAllowlist(controller, ctx, pick === globalAllow ? "global" : "project", env);
+      } else if (pick === globalAllow || pick === projectAllow) throw new SettingsError(EDITOR_UNAVAILABLE);
+      else if (pick === "Advanced…") await advancedMenu(controller, ctx);
       else if (pick === "Status") await status(controller, ctx, env);
-      else {
-        const index = labels.indexOf(pick);
-        if (index < 0) throw new SettingsError("Invalid settings selection");
-        const key = fields[index];
-        const old = settings.relevance[key.slice(10) as keyof typeof settings.relevance];
-        if (typeof old === "boolean") await controller.update((current) => updateSetting(current, key, String(!old)));
-        else {
-          const hint = key === "relevance.failMode" ? " (open retains all advertisements on failure)" : key === "relevance.concurrency" ? " (0 = all batches parallel; 1–32 = limit)" : key.endsWith("Threshold") ? " (raw 0–2, inclusive)" : "";
-          const value = await ctx.ui.input(`New value for ${key}${hint}`, String(old), { signal: ctx.signal });
-          if (value === undefined) continue;
-          await controller.update((current) => updateSetting(current, key, value.trim()));
-        }
-        controller.setStatus(ctx);
-      }
     } catch (error) { controller.report(ctx, safeError(error), "error"); }
   }
 }
-export function registerCommands(pi: ExtensionHost, controller: Controller, env?: Record<string, string | undefined>): void {
+
+/** Operations behind the floating dialog. All context access is scoped, guarded and signal-owned. */
+function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record<string, string | undefined> | undefined, life: DialogLife): SettingsDialogOps {
+  const cwd = ctx.cwd;
+  const scoped = (signal?: AbortSignal) => scopedContext(ctx, signal, life.isOpen);
+  const refreshStatus = () => { if (life.isOpen()) statusSafely(controller, scoped()); };
+  return {
+    snapshot: () => ({ settings: controller.getSettings(), settingsError: controller.getSettingsError(), hasCwd: !!cwd }),
+    async projectCount() {
+      if (!cwd) return { count: 0 };
+      const result = await controller.loadProjectAllowlist(cwd);
+      const warning = result.error ?? result.warnings[0];
+      return { count: result.names.length, ...(warning ? { warning: sanitizeTerminalText(warning, 300) } : {}) };
+    },
+    async toggleEnabled() { await controller.update((current) => ({ ...current, enabled: !current.enabled })); refreshStatus(); },
+    async updateSetting(key, text) { await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
+    async listProviders(signal): Promise<ProviderRow[]> {
+      const choices = await providerChoices(scoped(signal), env);
+      return choices.map((choice) => ({
+        id: `${choice.backend}:${choice.provider}`, backend: choice.backend, provider: choice.provider, label: choice.name, status: choice.status,
+        ...(choice.status !== "ok" ? { guide: credentialGuide(choice.provider, choice.backend === "pi") } : {}),
+      }));
+    },
+    async listModels(filter, signal): Promise<ModelRow[]> {
+      const entries = (await pickerEntries(scoped(signal), env)).filter((entry) => !filter || (entry.selection.backend === filter.backend
+        && (entry.selection.backend !== "pi" || filter.provider === undefined || entry.selection.provider === filter.provider)));
+      const rows: ModelRow[] = entries.map((entry) => {
+        const provider = entry.selection.backend === "pi" ? entry.selection.provider : entry.selection.backend;
+        return {
+          id: JSON.stringify(entry.selection), label: entry.label, selection: entry.selection as BackendSelection, status: entry.authStatus,
+          ...(entry.authStatus !== "ok" ? { guide: credentialGuide(provider, entry.selection.backend === "pi") } : {}),
+          ...(entry.note ? { note: entry.note } : {}),
+        };
+      });
+      rows.push({ id: "none", label: "None (no decision calls)", selection: null, status: "none" });
+      return rows;
+    },
+    async selectModel(selection, signal) { return { message: await saveModel(controller, scoped(signal), selection, env) }; },
+    statusLines: (signal) => statusLines(controller, scoped(signal), env),
+    allowlist: (scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal),
+  };
+}
+
+export interface RegisteredCommands {
+  /** Synchronously closes any open settings dialog; resolves its pending command handler. */
+  closeDialogs(): void;
+}
+export function registerCommands(pi: ExtensionHost, controller: Controller, env?: Record<string, string | undefined>): RegisteredCommands {
+  const dialogs = createSettingsDialogManager();
+  const terminal = (ctx: CommandContext) => ctx.mode === "tui" && !!ctx.ui.custom;
+  const openDialog = async (ctx: CommandContext, route: InitialRoute): Promise<void> => {
+    // After "shutdown" the context may be invalid: return without touching it.
+    await dialogs.open(ctx, (life) => buildDialogOps(controller, ctx, env, life), route);
+  };
   pi.registerCommand("decisions", {
     description: "Context decisions settings: enabled, provider, model, batching, and skill-filter status",
     getArgumentCompletions(prefix) { const values = COMMANDS.filter((value) => value.startsWith(prefix)); return values.length ? values.map((value) => ({ value, label: value })) : null; },
@@ -298,17 +389,28 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
       try {
         const tokens = args.trim().split(/\s+/u).filter(Boolean);
         const action = tokens.shift();
-        if (!action) { if (ctx.hasUI) await settingsDialog(controller, ctx, env); else await status(controller, ctx, env); return; }
-        if (action === "model") await chooseModel(controller, ctx, tokens, env);
-        else if (action === "provider") await chooseProvider(controller, ctx, tokens, env);
+        if (!action) {
+          if (terminal(ctx)) await openDialog(ctx, "main");
+          else if (ctx.hasUI) await settingsMenu(controller, ctx, env);
+          else await status(controller, ctx, env);
+          return;
+        }
+        if (action === "model") { if (!tokens.length && terminal(ctx)) await openDialog(ctx, "model"); else await chooseModel(controller, ctx, tokens, env); }
+        else if (action === "provider") { if (!tokens.length && terminal(ctx)) await openDialog(ctx, "provider"); else await chooseProvider(controller, ctx, tokens, env); }
         else if (action === "status" && !tokens.length) await status(controller, ctx, env);
-        else if (action === "allow" || action === "allowlist") await allowlistCommand(controller, ctx, tokens, action === "allowlist", env);
+        else if (action === "allow" || action === "allowlist") await allowlistCommand(controller, ctx, tokens, action === "allowlist", env, async (scope) => {
+          if (!terminal(ctx)) throw new SettingsError(EDITOR_UNAVAILABLE);
+          await openDialog(ctx, { allowlist: scope });
+        });
         else if ((action === "enable" || action === "disable") && !tokens.length) {
           await controller.update((current) => ({ ...current, enabled: action === "enable" }));
           controller.setStatus(ctx); controller.report(ctx, `Context decisions ${action === "enable" ? "enabled" : "disabled"}`);
         } else if (action === "settings" || action === "relevance") {
-          if (!tokens.length) await settingsDialog(controller, ctx, env);
-          else if (tokens.length === 2) {
+          if (!tokens.length) {
+            if (terminal(ctx)) await openDialog(ctx, action === "relevance" ? "advanced" : "main");
+            else if (ctx.hasUI && action === "relevance") await advancedMenu(controller, ctx);
+            else await settingsMenu(controller, ctx, env);
+          } else if (tokens.length === 2) {
             const key = action === "relevance" ? `relevance.${tokens[0]}` : tokens[0];
             await controller.update((current) => updateSetting(current, key, tokens[1]));
             controller.setStatus(ctx); controller.report(ctx, "Context-decisions settings saved");
@@ -333,4 +435,5 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
       } catch (error) { controller.report(ctx, safeError(error), "error"); }
     },
   });
+  return { closeDialogs: () => dialogs.closeAll() };
 }
