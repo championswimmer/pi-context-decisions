@@ -2,7 +2,7 @@
 
 A [Pi](https://pi.dev) extension that uses decision/classifier models to filter **skill advertisements** for each prompt. Core adapters, the unified decision API, model picker, settings, and skill relevance filtering are implemented. **Tool and MCP visibility filtering is not implemented**; see the [MCP visibility plan](.agents/plans/mcp-visibility.md).
 
-Requires Pi 1.1.0 APIs and Node 22.18+. Pre-alpha; TypeSafe and the eight retained OpenRouter models passed a live `bool`/`choice`/`score` smoke test on 2026-10-12. OpenAI direct and native Pi inference remain unverified.
+Requires Pi 1.1.0 APIs and Node 22.18+. Pre-alpha; TypeSafe, the eight retained OpenRouter models, and direct OpenAI Luna passed live `bool`/`choice`/`score` checks on 2026-10-12. Luna used Pi's saved `openai` API key with `OPENAI_API_KEY` absent. Native Pi inference remains unverified.
 
 ## Load early
 
@@ -57,9 +57,9 @@ Source: [OpenRouter rankings](https://openrouter.ai/rankings), catalog joined wi
 | OpenAI direct | `https://api.openai.com/v1/decisions` | Pi-resolved `openai` API key first, then `OPENAI_API_KEY` |
 | OpenRouter direct | `https://openrouter.ai/api/alpha/decisions` | Pi-resolved `openrouter` first, then `OPENROUTER_API_KEY` |
 
-Pi resolution itself can include environment fallback. Keys are never stored in extension settings, logged, or returned by status. Direct endpoints are fixed HTTPS destinations, with bounded requests, retries, timeout, cancellation, and validated responses.
+All three direct backends use Pi's public request-time `getProviderAuth(provider)` first, then the named env variable when Pi resolution is missing, fails, or is incompatible. Pi resolution itself includes runtime overrides, saved credentials, configured `models.json` API keys, and environment fallback. Saved credentials normally live in `~/.pi/agent/auth.json`; `PI_CODING_AGENT_DIR` overrides the directory. The extension never reads credential files directly and delegates config references/secret commands to Pi. Keys are never stored in extension settings, logged, or returned by status. Direct endpoints are fixed HTTPS destinations, with bounded requests, retries, timeout, cancellation, and validated responses.
 
-**OpenAI ChatGPT OAuth cannot call Decisions.** Direct mode skips an identified OAuth credential and can use `OPENAI_API_KEY`; native Pi may hide the classifier while OAuth login is active, even with an env API key. If OAuth cannot be detected from host metadata, an unusable Pi credential surfaces as an authentication error. OpenAI Decisions is beta; OpenRouter Decisions is alpha.
+**OpenAI ChatGPT OAuth cannot call Decisions.** Resolve the exact `openai` provider API key, never `openai-codex` or the current chat provider. Direct mode rejects request-time OAuth auth even if Pi's cached snapshot is empty, and can fall back to `OPENAI_API_KEY`; native Pi may hide the classifier while OAuth login is active. OpenRouter's own OAuth can resolve an API-compatible key and is not rejected by this OpenAI-specific rule. OpenAI Decisions is beta; OpenRouter Decisions is alpha.
 
 Pi's OpenRouter System One parser is stricter than the direct alpha parser; some model responses may fail “via Pi” when metadata is omitted. Use the explicitly selected direct option as a workaround. Pi cost metadata, when present, is a catalog estimate, not a provider bill.
 
@@ -118,6 +118,16 @@ const { answer } = await decisions.bool(
 
 `choice`, `score`, named-question `decide`, and bounded `decideChunked` share the same contract. State is a JSON object; instructions and rubric criteria intentionally use a string-only, text/JSON subset. Errors reject with typed codes; applications choose fallback policy. The static router allowlist is enforced by extension configuration/picker; low-level backend constructors remain reusable independently.
 
+Standalone hosts can opt into Pi's local SDK credential resolution without loading a session:
+
+```typescript
+import { createPiCredentialRegistry } from "pi-context-decisions/pi-credentials";
+const registry = await createPiCredentialRegistry();
+const luna = createDecisionClient(createBackend({ backend: "openai" }, { registry }));
+```
+
+This host-only adapter uses public `ModelRuntime`/`ModelRegistry`, respects Pi's normal agent-directory paths, and does not refresh model catalogs over the network. Active extensions must instead pass `ctx.modelRegistry` to retain in-process credentials/provider overrides. The portable main export has no Pi runtime dependency.
+
 ## Development
 
 ```bash
@@ -127,6 +137,15 @@ npm run typecheck
 npm pack --dry-run --ignore-scripts
 ```
 
-Offline tests include provider fixtures, credential precedence/OAuth, malformed responses, deadlines, batching, real extension registration mocks, picker/headless commands, persistence, and lifecycle skill-array mutations. Live TypeSafe/OpenRouter smoke checks passed for the retained catalog; a terminal visual check has not been performed. To explicitly opt into additional billable public-fact checks (never part of `npm test`), run `PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/live-smoke.ts` with the relevant API keys in the environment. Optional model-ID arguments restrict the calls. The script prints safe status/scalars/usage, never credentials or raw provider error bodies. The UI uses Pi's built-in dialogs/status APIs, including RPC support.
+Offline tests include provider fixtures, credential precedence/OAuth, malformed responses, deadlines, batching, real extension registration mocks, picker/headless commands, persistence, and lifecycle skill-array mutations. Live TypeSafe/OpenRouter and direct Luna checks passed; a terminal visual check has not been performed. Explicitly opt into billable public-fact checks (never part of `npm test`):
+
+```bash
+# Only Luna; Pi's saved openai API key works without an env key.
+PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/live-smoke.ts gpt-6-luna
+# Only TypeSafe (or pass a retained OpenRouter ID).
+PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/live-smoke.ts jev-latest
+```
+
+The smoke script resolves Pi credentials first, then env; it never substitutes `openai-codex`. `openai` and `luna` are aliases for the explicit Luna target. With no model arguments it checks TypeSafe plus the retained router list, **not Luna**. Without the opt-in it exits before SDK initialization or network activity. It prints safe source-kind/presence booleans/status/scalars/usage, never credentials or raw provider error bodies. The UI uses Pi's built-in dialogs/status APIs, including RPC support.
 
 See [AGENTS.md](AGENTS.md) and `.agents/plans/` for contributor handoffs. `../pi-skill-picker-jev` was a pattern reference, not a dependency. Research plans retain historical proposals; the implemented static snapshot and fail-closed defaults above supersede earlier dynamic/fail-open recommendations.
