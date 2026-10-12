@@ -63,8 +63,12 @@ export interface DecisionUsage {
   cost?: number;
 }
 
+export type BackendId = "pi" | "typesafe" | "openai" | "openrouter";
+
 export interface DecisionResponse {
   answers: Record<string, DecisionAnswer>;
+  backend?: BackendId;
+  requestId?: string;
   provider?: string;
   model?: string;
   usage?: DecisionUsage;
@@ -75,7 +79,9 @@ export interface DecisionOptions {
   timeoutMs?: number;
 }
 
-/** Application code never needs to know about wire-level noul or predicate aliases. */
+/** One portable backend contract; provider wire names never reach applications. */
 export interface DecisionBackend {
+  readonly id: BackendId;
+  readonly model: string;
   decide(request: DecisionRequest, options?: DecisionOptions): Promise<DecisionResponse>;
 }

@@ -31,7 +31,8 @@ function sameKeys(value: Record<string, unknown>, expected: string[], message: s
   if (actual.length !== expected.length || expected.some((key) => !Object.hasOwn(value, key))) fail(message);
 }
 
-function json(value: unknown, ancestors = new Set<object>()): void {
+function json(value: unknown, ancestors = new Set<object>(), depth = 0): void {
+  if (depth > 64) fail("State JSON nesting exceeds the safety limit");
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number" && Number.isFinite(value)) return;
   if (typeof value !== "object") fail("State must contain only finite JSON values");
@@ -40,11 +41,11 @@ function json(value: unknown, ancestors = new Set<object>()): void {
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       if (!Object.hasOwn(value, i)) fail("State must not contain sparse arrays");
-      json(value[i], ancestors);
+      json(value[i], ancestors, depth + 1);
     }
   } else {
     record(value, "State must contain only plain JSON objects");
-    for (const entry of Object.values(value)) json(entry, ancestors);
+    for (const entry of Object.values(value)) json(entry, ancestors, depth + 1);
   }
   ancestors.delete(value);
 }
@@ -77,20 +78,29 @@ export function validateQuestion(question: unknown): asserts question is Decisio
   }
 }
 
-/** Cardinality and byte/token limits specific to a vendor belong in its adapter. */
-export function validateRequest(request: unknown): asserts request is DecisionRequest {
+export interface RequestLimits { maxChoices?: number; maxLevels?: number; maxQuestions?: number; maxRequestBytes?: number }
+
+/** Local safety caps are not claims about provider token/context limits. */
+export function validateRequest(request: unknown, limits: RequestLimits = {}): asserts request is DecisionRequest {
   record(request, "Decision request must be an object");
   record(request.state, "Decision state must be a JSON object");
   json(request.state);
   record(request.questions, "Decision questions must be a named map");
-  if (Object.keys(request.questions).length === 0) fail("Decision request must have at least one question");
+  const names = Object.keys(request.questions);
+  if (names.length === 0) fail("Decision request must have at least one question");
+  if (names.length > (limits.maxQuestions ?? 1000)) fail("Decision request exceeds the question safety limit");
+  if (Object.hasOwn(request, "images")) fail("Image input is not supported by this API");
   for (const [name, question] of Object.entries(request.questions)) {
     text(name, "Question names must be nonempty");
     validateQuestion(question);
+    if (question.type === "choice" && limits.maxChoices !== undefined && Object.keys(question.criteria).length > limits.maxChoices) fail("Choice exceeds backend option limit");
+    if (question.type === "score" && limits.maxLevels !== undefined && question.criteria.length > limits.maxLevels) fail("Score exceeds backend level limit");
   }
+  const bytes = new TextEncoder().encode(JSON.stringify({ state: request.state, questions: request.questions })).byteLength;
+  if (bytes > (limits.maxRequestBytes ?? 512 * 1024)) fail("Decision request exceeds the byte safety limit");
 }
 
-const ROUNDING_TOLERANCE = 0.001;
+const ROUNDING_TOLERANCE = 0.02;
 
 export function validateAnswer(question: DecisionQuestion, answer: unknown): asserts answer is DecisionAnswer {
   validateQuestion(question);
@@ -123,7 +133,7 @@ export function validateAnswer(question: DecisionQuestion, answer: unknown): ass
     if (Math.abs(sum - 1) > ROUNDING_TOLERANCE) fail("Outcome probabilities must sum to one within rounding tolerance");
     if (question.type === "score") {
       const expected = keys.reduce((total, key, index) => total + index * (answer.probabilities as Record<string, number>)[key], 0);
-      if (Math.abs(expected - (answer.score as number)) > ROUNDING_TOLERANCE * keys.length) fail("Score must agree with its probability distribution");
+      if (Math.abs(expected - (answer.score as number)) > ROUNDING_TOLERANCE * (keys.length - 1)) fail("Score must agree with its probability distribution");
     }
     if (question.type === "bool" && Math.abs((answer.probabilities.true as number) - (answer.probability as number)) > ROUNDING_TOLERANCE) {
       fail("Bool probability must agree with its distribution");
@@ -145,6 +155,8 @@ export function validateResponse(request: DecisionRequest, response: unknown): a
   record(response.answers, "Decision answers must be a named map");
   sameKeys(response.answers, Object.keys(request.questions), "Response must answer exactly the requested names");
   for (const [name, question] of Object.entries(request.questions)) validateAnswer(question, response.answers[name]);
+  if (response.backend !== undefined && !["pi", "typesafe", "openai", "openrouter"].includes(response.backend as string)) fail("Response backend must be recognized");
+  if (response.requestId !== undefined) text(response.requestId, "Response request id must be nonempty text");
   if (response.provider !== undefined) text(response.provider, "Response provider must be nonempty text");
   if (response.model !== undefined) text(response.model, "Response model must be nonempty text");
   if (response.usage !== undefined) {
