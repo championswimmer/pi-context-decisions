@@ -13,8 +13,15 @@
     "node": ">=22.18.0"
   },
   "files": [
-    "src/"
+    "src/",
+    "AGENTS.md",
+    ".agents/plans/mcp-visibility.md"
   ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./extension": "./src/extension.ts"
+  },
+  "types": "./src/index.ts",
   "pi": {
     "extensions": [
       "./src/extension.ts"
