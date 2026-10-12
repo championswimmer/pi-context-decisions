@@ -1,5 +1,7 @@
 import { applySkillAdvertisementFilter, filterSkills, type SkillAdvertisementResult } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
+import { allowlistedNames, toScopedSkills, type ScopedSkill } from "../apps/allowlist.ts";
+import { loadProjectAllowlist, saveProjectAllowlist } from "../project-allowlist.ts";
 import { createBackend } from "../core/backends/factory.ts";
 import { createDecisionClient } from "../decision/api.ts";
 import { DecisionError } from "../decision/errors.ts";
@@ -27,6 +29,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let generation = 0;
   const pending = new Set<AbortController>();
   let writeQueue = Promise.resolve();
+  let projectWriteQueue = Promise.resolve();
+  let inventorySnapshot: ScopedSkill[] | undefined;
+  const projectWarnings = new Set<string>();
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const load = async () => {
     const result = await (deps.load ?? loadSettings)(deps.settingsPath);
@@ -41,6 +46,20 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     getSettings: () => structuredClone(settings),
     getSettingsError: () => settingsError,
     getLastDecision: () => last ? structuredClone(last) : undefined,
+    getInventory() {
+      if (inventorySnapshot) return structuredClone(inventorySnapshot);
+      return toScopedSkills((pi.getCommands?.() ?? []).filter((command) => command.source === "skill" && command.name.startsWith("skill:")).map((command) => ({ name: command.name.slice(6), description: command.description ?? "", sourceInfo: { scope: command.sourceInfo?.scope } })));
+    },
+    loadProjectAllowlist,
+    async saveProjectAllowlist(cwd, names) {
+      const draft = [...names];
+      const operation = projectWriteQueue.then(async () => {
+        await saveProjectAllowlist(cwd, draft);
+        abortPending(); generation++; last = undefined;
+      });
+      projectWriteQueue = operation.catch(() => {});
+      await operation;
+    },
     async update(change) {
       const operation = writeQueue.then(async () => {
         await controller.ensureLoaded();
@@ -76,7 +95,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   };
   registerCommands(pi, controller, deps.env);
   pi.on("session_start", async (_event, ctx) => {
-    abortPending(); generation++; last = undefined;
+    abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
+    await projectWriteQueue;
     await writeQueue;
     await loading;
     loaded = false;
@@ -90,6 +110,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     if (ctx.hasUI) ctx.ui.setStatus("context-decisions", undefined);
   });
   pi.on("before_agent_start", async (event, ctx) => {
+    inventorySnapshot = toScopedSkills(event.systemPromptOptions.skills);
     await controller.ensureLoaded();
     const currentGeneration = generation;
     const current = structuredClone(settings);
@@ -100,6 +121,17 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     let client: RelevanceClient | null = null;
     let configError = settingsError;
     try {
+      const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : { names: [], warnings: [] };
+      const pinned = [...new Set([...current.relevance.pinned, ...allowlistedNames(event.systemPromptOptions.skills, { global: current.globalAllowlist, project: project.names })])];
+      if (currentGeneration !== generation) {
+        // A settings/project/session change during file I/O must not start stale decisions.
+        event.systemPromptOptions.skills = filterSkills(event.systemPromptOptions.skills, null, { ...current.relevance, pinned, failMode: "closed" }).kept;
+        return;
+      }
+      for (const warning of [...project.warnings, ...(project.error ? [project.error] : [])]) {
+        const warningKey = `${ctx.cwd ?? ""}\0${warning}`;
+        if (!projectWarnings.has(warningKey)) { projectWarnings.add(warningKey); controller.report(ctx, warning, "warning"); }
+      }
       // Never construct/request a client when explicitly disabled or unconfigured.
       if (!configError && current.enabled && current.relevance.enabled && current.backend) {
         try {
@@ -120,12 +152,13 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
           names.add(skill.name);
           return count + (skill.disableModelInvocation ? 0 : 1);
         }, 0);
-        const filtered = filterSkills(skills, null, { ...current.relevance, failMode: "closed" });
+        const filtered = filterSkills(skills, null, { ...current.relevance, pinned, failMode: "closed" });
         event.systemPromptOptions.skills = filtered.kept;
         result = { ...filtered, candidates, errorCode: "config", latencyMs: Date.now() - started };
       } else {
         result = await applySkillAdvertisementFilter(event, client, {
           ...current.relevance,
+          pinned,
           enabled: current.enabled,
           relevanceEnabled: current.relevance.enabled,
           maxQuestions: 50, // app reduces the requested batch when a provider declares a lower cap

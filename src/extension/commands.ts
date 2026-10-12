@@ -5,10 +5,14 @@ import { createDeadline } from "../core/control.ts";
 import type { BackendSelection } from "../core/backends/factory.ts";
 import { DecisionError } from "../decision/errors.ts";
 import { SettingsError, updateSetting, validateBackendSelection } from "../settings.ts";
+import { normalizeAllowlist, type AllowlistScope } from "../apps/allowlist.ts";
+import { rankSkills } from "../apps/relevance.ts";
+import { projectAllowlistPath } from "../project-allowlist.ts";
+import { showAllowlistPicker, type AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 
-const COMMANDS = ["settings", "provider", "model", "status", "enable", "disable", "relevance", "pin", "unpin", "test"];
+const COMMANDS = ["settings", "provider", "model", "status", "enable", "disable", "relevance", "allow", "allowlist", "pin", "unpin", "test"];
 type DirectProvider = "openai" | "typesafe" | "openrouter";
 function cleanLabel(value: string): string { return value.replace(/[\p{Cc}\p{Cf}]/gu, " ").slice(0, 400); }
 function safeError(error: unknown): string {
@@ -157,15 +161,92 @@ async function status(controller: Controller, ctx: CommandContext, env?: Record<
   }
   const last = controller.getLastDecision();
   const error = controller.getSettingsError();
+  const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
   controller.report(ctx, [
     `Context decisions: ${settings.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
     `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, ${settings.relevance.mode}, minimum ${settings.relevance.minLabel}, fail-${settings.relevance.failMode}`,
     `Scoring: batch ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all batches parallel (0)" : settings.relevance.concurrency}, raw thresholds related ${settings.relevance.relatedThreshold}/direct ${settings.relevance.directThreshold} (0–2), cap ${settings.relevance.maxSkills}, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms`,
+    `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
+    ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
     ...(error ? [`Settings error: ${error}. Use /decisions model/settings to repair the file.`] : []),
     ...(last ? [`Last: ${last.reason}, ${last.kept}/${last.candidates} skills, ${last.latencyMs}ms${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
     OPENROUTER_DECISION_SNAPSHOT.attribution,
     "Skill advertisements only; tools, MCP visibility, and explicit skill access are unchanged.",
   ].join("\n"));
+}
+async function listNames(controller: Controller, ctx: CommandContext, scope: AllowlistScope): Promise<string[]> {
+  if (scope === "global") return controller.getSettings().globalAllowlist;
+  if (!ctx.cwd) throw new SettingsError("Project allowlist needs a working directory");
+  const result = await controller.loadProjectAllowlist(ctx.cwd);
+  for (const message of [...result.warnings, ...(result.error ? [result.error] : [])]) controller.report(ctx, message, "warning");
+  return result.names;
+}
+async function saveNames(controller: Controller, ctx: CommandContext, scope: AllowlistScope, values: Iterable<string>): Promise<void> {
+  const names = normalizeAllowlist(values);
+  if (scope === "global") {
+    if (controller.getSettingsError()) throw new SettingsError("Repair settings before saving the global allowlist");
+    await controller.update((settings) => ({ ...settings, globalAllowlist: names }));
+  } else {
+    if (!ctx.cwd) throw new SettingsError("Project allowlist needs a working directory");
+    await controller.saveProjectAllowlist(ctx.cwd, names);
+  }
+  controller.setStatus(ctx);
+}
+async function editAllowlist(controller: Controller, ctx: CommandContext, scope: AllowlistScope, env?: Record<string, string | undefined>): Promise<void> {
+  if (ctx.mode !== "tui" || !ctx.ui.custom) throw new SettingsError("Allow list editor needs the terminal UI; use /decisions allow <global|project> list|add|remove|clear");
+  const initial = await listNames(controller, ctx, scope);
+  const settings = controller.getSettings();
+  let unavailable: string | undefined;
+  if (controller.getSettingsError()) unavailable = "Repair settings before relevance ranking";
+  else if (!settings.backend) unavailable = "Select a decision model in /decisions to enable relevance ranking";
+  else {
+    try { requireNative(settings.backend, ctx); await requireCredentials(settings.backend, ctx, env); }
+    catch (error) { unavailable = safeError(error); }
+  }
+  const rank: AllowlistPickerDeps["rank"] = unavailable ? undefined : async (query, skills, pickerSignal) => {
+    if (controller.getSettingsError()) throw new DecisionError("config", "Repair settings before relevance ranking");
+    const current = controller.getSettings();
+    if (!current.backend) throw new DecisionError("config", "Select a decision model before relevance ranking");
+    const operation = controller.beginOperation();
+    try {
+      const signal = AbortSignal.any([pickerSignal, operation.signal, ...(ctx.signal ? [ctx.signal] : [])]);
+      const rankingContext = { ...ctx, signal };
+      requireNative(current.backend, rankingContext);
+      await requireCredentials(current.backend, rankingContext, env);
+      const client = controller.createClient(current.backend, rankingContext);
+      const capped = client as typeof client & { maxQuestions?: number };
+      return await rankSkills(query, skills.map(({ name, description }) => ({ name, description })), {
+        decide: (request, options) => client.decide(request, options),
+        ...(capped.maxQuestions === undefined ? {} : { maxQuestions: capped.maxQuestions }),
+      }, { ...current.relevance, rubric: "topic", maxQuestions: 50, signal });
+    } finally { operation.close(); }
+  };
+  await showAllowlistPicker(ctx, {
+    scope, skills: controller.getInventory(), initial,
+    locationLabel: scope === "global" ? "Pi user context-decisions settings.json" : projectAllowlistPath(ctx.cwd!),
+    save: (names) => saveNames(controller, ctx, scope, names),
+    ...(rank ? { rank, rankLabel: `${selectionLabel(settings.backend)} · explicit ranking may incur charges` } : { unavailable }),
+    report: (message, level) => controller.report(ctx, message, level),
+  });
+}
+async function allowlistCommand(controller: Controller, ctx: CommandContext, tokens: string[], editor: boolean, env?: Record<string, string | undefined>): Promise<void> {
+  const [scope, action, ...names] = tokens;
+  if (scope !== "global" && scope !== "project") throw new SettingsError("Use /decisions allow <global|project> list|add <name>|remove <name>|clear, or allowlist <global|project>");
+  if (editor || action === undefined) {
+    if (action !== undefined) throw new SettingsError("Use /decisions allowlist <global|project>");
+    await editAllowlist(controller, ctx, scope, env); return;
+  }
+  if (action === "list" && names.length === 0) {
+    const current = await listNames(controller, ctx, scope);
+    controller.report(ctx, `Always-allowed ${scope} (${current.length}): ${current.length ? current.map(cleanLabel).join(", ") : "none"}`); return;
+  }
+  if (action === "clear" && names.length === 0) await saveNames(controller, ctx, scope, []);
+  else if ((action === "add" || action === "remove") && names.length > 0) {
+    const valid = normalizeAllowlist(names);
+    const current = await listNames(controller, ctx, scope);
+    await saveNames(controller, ctx, scope, action === "add" ? new Set([...current, ...valid]) : current.filter((name) => !valid.includes(name)));
+  } else throw new SettingsError("Use /decisions allow <global|project> list|add <name>|remove <name>|clear");
+  controller.report(ctx, `Always-allowed ${scope} list saved`);
 }
 async function settingsDialog(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
   if (!ctx.hasUI) { controller.report(ctx, JSON.stringify(controller.getSettings(), null, 2)); return; }
@@ -174,9 +255,12 @@ async function settingsDialog(controller: Controller, ctx: CommandContext, env?:
     const toggle = `Context decisions: ${settings.enabled ? "On" : "Off"}`;
     const provider = `Provider / execution: ${settings.backend?.backend === "pi" ? `Pi internal · ${cleanLabel(settings.backend.provider)}` : settings.backend ? `${settings.backend.backend} direct` : "not configured"}`;
     const model = `Model: ${selectionLabel(settings.backend)}`;
+    const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
+    const globalAllow = `Allow list (Global) · ${settings.globalAllowlist.length}`;
+    const projectAllow = `Allow list (Project) · ${project?.names.length ?? 0}`;
     const fields = Object.keys(settings.relevance).filter((key) => key !== "pinned").map((key) => `relevance.${key}`);
     const labels = fields.map((key) => `${key}: ${key === "relevance.concurrency" && settings.relevance.concurrency === 0 ? "0 (all batches parallel)" : String(settings.relevance[key.slice(10) as keyof typeof settings.relevance])}`);
-    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, ...labels, "Status", "Done"], { signal: ctx.signal });
+    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, ...labels, "Status", "Done"], { signal: ctx.signal });
     if (!pick || pick === "Done") return;
     try {
       if (pick === toggle) {
@@ -186,7 +270,8 @@ async function settingsDialog(controller: Controller, ctx: CommandContext, env?:
       else if (pick === model) {
         const backend = settings.backend;
         await chooseModel(controller, ctx, [], env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
-      } else if (pick === "Status") await status(controller, ctx, env);
+      } else if (pick === globalAllow || pick === projectAllow) await editAllowlist(controller, ctx, pick === globalAllow ? "global" : "project", env);
+      else if (pick === "Status") await status(controller, ctx, env);
       else {
         const index = labels.indexOf(pick);
         if (index < 0) throw new SettingsError("Invalid settings selection");
@@ -217,6 +302,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
         if (action === "model") await chooseModel(controller, ctx, tokens, env);
         else if (action === "provider") await chooseProvider(controller, ctx, tokens, env);
         else if (action === "status" && !tokens.length) await status(controller, ctx, env);
+        else if (action === "allow" || action === "allowlist") await allowlistCommand(controller, ctx, tokens, action === "allowlist", env);
         else if ((action === "enable" || action === "disable") && !tokens.length) {
           await controller.update((current) => ({ ...current, enabled: action === "enable" }));
           controller.setStatus(ctx); controller.report(ctx, `Context decisions ${action === "enable" ? "enabled" : "disabled"}`);

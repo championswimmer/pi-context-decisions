@@ -3,15 +3,18 @@ import type { RegistryLike, BackendSelection } from "../core/backends/factory.ts
 import type { DecisionClient } from "../decision/api.ts";
 import type { ContextDecisionsSettings, SettingsLoadResult } from "../settings.ts";
 import type { DecisionUsage } from "../decision/types.ts";
+import type { ScopedSkill } from "../apps/allowlist.ts";
+import type { ProjectAllowlistLoad } from "../project-allowlist.ts";
 
-export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand">;
+export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand"> & Partial<Pick<ExtensionAPI, "getCommands">>;
 export interface ExtensionRegistry extends RegistryLike {
   getProviderAuthStatus?(provider: string): { configured: boolean };
 }
 export interface CommandContext {
   hasUI: boolean;
   mode: ExtensionContext["mode"];
-  ui: Pick<ExtensionUIContext, "select" | "input" | "notify" | "setStatus">;
+  cwd?: string;
+  ui: Pick<ExtensionUIContext, "select" | "input" | "notify" | "setStatus"> & Partial<Pick<ExtensionUIContext, "custom">>;
   modelRegistry: ExtensionRegistry;
   signal?: AbortSignal;
 }
@@ -28,6 +31,9 @@ export interface Controller {
   getSettings(): ContextDecisionsSettings;
   getSettingsError(): string | undefined;
   getLastDecision(): LastDecision | undefined;
+  getInventory(): ScopedSkill[];
+  loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad>;
+  saveProjectAllowlist(cwd: string, names: Iterable<string>): Promise<void>;
   update(change: (current: ContextDecisionsSettings) => ContextDecisionsSettings): Promise<void>;
   createClient(selection: BackendSelection, ctx: CommandContext): DecisionClient;
   beginOperation(): { signal: AbortSignal; close(): void };
