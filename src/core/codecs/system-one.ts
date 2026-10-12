@@ -26,5 +26,16 @@ export function decodeSystemOne(request: DecisionRequest, value: unknown, option
       : {type: "score", score: number(raw.score), ...meta};
     entries.push([id, answer]);
   }
-  return responseCheck(request, {answers: Object.fromEntries(entries), ...responseMetadata(value)});
+  const response = responseCheck(request, {answers: Object.fromEntries(entries), ...responseMetadata(value)});
+  if (options.strictMetadata) {
+    // TypeSafe defines choice as the highest-probability option. This extra
+    // guarantee is provider-specific; OpenRouter's optional metadata remains tolerant.
+    for (const answer of Object.values(response.answers)) {
+      if (answer.type === "choice" && answer.probabilities) {
+        const maximum = Math.max(...Object.values(answer.probabilities));
+        if (maximum - answer.probabilities[answer.choice] > 0.02) invalid();
+      }
+    }
+  }
+  return response;
 }

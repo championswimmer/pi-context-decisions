@@ -25,8 +25,9 @@ async function resolve(provider: "typesafe" | "openai" | "openrouter", variable:
   let oauth = false;
   if (provider === "openai" && deps.registry?.isUsingOAuth) {
     try {
-      const model = deps.registry.getModelsOfType?.("chat", "openai")[0];
-      if (model) oauth = deps.registry.isUsingOAuth(model);
+      // Pi 1.1.0 ModelRegistry.isUsingOAuth reads ONLY model.provider. Provider
+      // auth is independent of catalog contents, which extensions may replace.
+      oauth = deps.registry.isUsingOAuth({provider: "openai"});
     } catch { oauth = true; } // Don't forward a key if a present OAuth detector fails.
   }
   if (deps.registry && !oauth) {

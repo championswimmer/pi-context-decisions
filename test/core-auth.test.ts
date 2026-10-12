@@ -42,9 +42,35 @@ test("OpenAI ChatGPT OAuth key is never resolved or sent; explicit API env fallb
 test("OpenAI uses API-key Pi auth; unknown detection does not sniff tokens or use openai-codex", async () => {
   for (const registry of [
     {async getApiKeyForProvider(provider: string) {assert.equal(provider, "openai"); return "fixture";}},
-    {async getApiKeyForProvider(provider: string) {assert.equal(provider, "openai"); return "fixture";}, getModelsOfType() {return [];}, isUsingOAuth() {throw new Error("should not be called without model");}},
     {async getApiKeyForProvider(provider: string) {assert.equal(provider, "openai"); return "fixture";}, getModelsOfType() {return [{provider: "openai", id: "chat"}];}, isUsingOAuth() {return false;}},
   ]) assert.deepEqual(await resolveOpenAIKey({registry, env: {}}), {key: "fixture", source: "pi"});
+});
+test("OpenAI OAuth exclusion does not depend on a populated chat catalog", async () => {
+  for (const catalog of [[], [{ provider: "openai", id: "chat" }]]) {
+    let oauthChecks = 0;
+    let keyLookups = 0;
+    const registry = {
+      async getApiKeyForProvider() { keyLookups++; return "fixture-oauth-token"; },
+      getModelsOfType() { return catalog; },
+      isUsingOAuth(model: unknown) {
+        assert.equal((model as { provider: string }).provider, "openai");
+        oauthChecks++;
+        return true;
+      },
+    };
+    assert.deepEqual(await resolveOpenAIKey({ registry, env: { OPENAI_API_KEY: "env-fixture" } }), { key: "env-fixture", source: "env" });
+    assert.equal(oauthChecks, 1);
+    assert.equal(keyLookups, 0);
+    await assert.rejects(resolveOpenAIKey({ registry, env: {} }), { code: "auth" });
+  }
+});
+test("OpenAI provider-level API key auth with an empty catalog still uses Pi first", async () => {
+  const registry = {
+    async getApiKeyForProvider() { return "pi-fixture"; },
+    getModelsOfType() { return []; },
+    isUsingOAuth(model: unknown) { assert.equal((model as { provider: string }).provider, "openai"); return false; },
+  };
+  assert.deepEqual(await resolveOpenAIKey({ registry, env: { OPENAI_API_KEY: "env-fixture" } }), { key: "pi-fixture", source: "pi" });
 });
 test("OAuth detector failure takes safe env path without leaking detector errors", async () => {
   const registry = {async getApiKeyForProvider() {throw new Error("must not look up token");}, getModelsOfType() {return [{provider: "openai", id: "chat"}];}, isUsingOAuth() {throw new Error("private-detector-fixture");}};

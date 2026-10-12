@@ -45,6 +45,18 @@ test("OpenRouter scalar-only responses valid; TypeSafe requires documented metad
   const value = systemFixture(); delete (value.answers.relevance as {legend?: unknown}).legend;
   assert.throws(() => decodeSystemOne(request, value, {strictMetadata: true}), {code: "invalid_response"});
 });
+test("TypeSafe rejects contradictory choices but accepts ties and rounding differences", () => {
+  const contradictory = systemFixture();
+  contradictory.answers.category.probabilities = { direct: 0, related: 0, irrelevant: 1 };
+  assert.throws(() => decodeSystemOne(request, contradictory, { strictMetadata: true }), { code: "invalid_response" });
+  // Only TypeSafe guarantees argmax; do not impose this extra wire contract on OpenRouter.
+  assert.equal(decodeSystemOne(request, contradictory, { strictMetadata: false }).answers.category.type, "choice");
+  for (const probabilities of [{ direct: 0.5, related: 0.5, irrelevant: 0 }, { direct: 0.49, related: 0.5, irrelevant: 0.01 }]) {
+    const rounded = systemFixture();
+    rounded.answers.category.probabilities = probabilities;
+    assert.equal(decodeSystemOne(request, rounded, { strictMetadata: true }).answers.category.type, "choice");
+  }
+});
 test("System One rejects missing/extra/nonscalar/wrong typed/malformed metadata answers", () => {
   for (const change of [
     (v: Record<string, unknown>) => {delete v.binary;},
