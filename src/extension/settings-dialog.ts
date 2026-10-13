@@ -11,7 +11,7 @@ import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-
 import type { CommandContext } from "./contracts.ts";
 import {
   ADVANCED_FIELDS, advancedField, advancedValueText, backendLabel, describeError, dialogHeightBudget, layoutMenu, modelLabel,
-  sanitizeTerminalText, type AdvancedKey,
+  sanitizeTerminalText, type AdvancedKey, type StatusSection,
 } from "./settings-model.ts";
 
 /** Percent sizes are resolved by Pi on every render; the options object itself is read once. */
@@ -40,7 +40,7 @@ export interface SettingsDialogOps {
   listProviders(signal: AbortSignal): Promise<ProviderRow[]>;
   listModels(filter: Extract<SettingsRoute, { kind: "model" }>["filter"], signal: AbortSignal): Promise<ModelRow[]>;
   selectModel(selection: BackendSelection | null, signal: AbortSignal): Promise<{ message: string }>;
-  statusLines(signal: AbortSignal): Promise<string[]>;
+  statusSections(signal: AbortSignal): Promise<StatusSection[]>;
   allowlist(scope: AllowlistScope, signal: AbortSignal): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">>;
 }
 export interface DialogTui { requestRender(): void; terminal?: { readonly rows: number } }
@@ -66,7 +66,8 @@ interface Frame {
   banner?: Banner;
   providers?: ProviderRow[];
   models?: ModelRow[];
-  lines?: string[];
+  sections?: StatusSection[];
+  pageSize?: number;
   input?: Input;
   child?: Component & Focusable & { dispose(): void };
 }
@@ -91,7 +92,11 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   const redraw = () => { if (!closed) tui.requestRender(); };
   const top = (): Frame | undefined => stack[stack.length - 1];
   const refreshSnapshot = () => { try { snap = ops.snapshot(); } catch { /* keep the last good snapshot */ } };
-  const innerBudget = () => Math.max(1, dialogHeightBudget(tui.terminal?.rows) - 2);
+  // The allowlist has its own search/save help. On tiny heights it outranks extra footer chrome.
+  const innerBudget = () => {
+    const budget = dialogHeightBudget(tui.terminal?.rows);
+    return Math.max(1, budget - (budget < 7 ? 2 : 4));
+  };
   const applyFocus = () => {
     const frame = top();
     if (frame?.input) frame.input.focused = focused && !closed;
@@ -171,7 +176,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     if (route.kind === "main") loadProject();
     else if (route.kind === "provider") load(frame, (signal) => ops.listProviders(signal), (rows) => { frame.providers = rows; frame.selected = 0; });
     else if (route.kind === "model") load(frame, (signal) => ops.listModels(route.filter, signal), (rows) => { frame.models = rows; frame.selected = 0; });
-    else if (route.kind === "status") load(frame, (signal) => ops.statusLines(signal), (lines) => { frame.lines = lines.map((line) => sanitizeTerminalText(line, 800)); frame.scroll = 0; });
+    else if (route.kind === "status") load(frame, (signal) => ops.statusSections(signal), (sections) => {
+      frame.sections = sections.map((section) => ({ title: sanitizeTerminalText(section.title, 120), fields: section.fields.map((field) => ({
+        ...field, label: sanitizeTerminalText(field.label, 120), value: sanitizeTerminalText(field.value, 1200),
+      })) }));
+      frame.scroll = 0;
+    });
     else if (route.kind === "edit") {
       const input = new Input({ prompt: "Value: " });
       input.setValue(String(snap.settings.relevance[route.key]));
@@ -305,7 +315,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     switch (frame.route.kind) {
       case "main": return "↑↓ move · Enter select · Space toggle · Esc close";
       case "edit": return "Enter save · Esc cancel";
-      case "status": return "↑↓ scroll · Enter refresh · Esc back";
+      case "status": return "↑↓ / PgUp PgDn scroll · Enter refresh · Esc back";
       case "allowlist": return "Esc back";
       default: return "↑↓ move · Enter select · Space toggle · Esc back";
     }
@@ -326,10 +336,18 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     const fill = Math.max(0, inner - 1 - visibleWidth(labelText) - visibleWidth(tagText));
     return theme.fg("border", `${left}─`) + theme.fg("accent", labelText) + theme.fg("border", "─".repeat(fill)) + theme.fg("warning", tagText) + theme.fg("border", right);
   };
-  const bottomLine = (label: string, width: number): string => {
-    const inner = width - 2;
-    const text = truncateToWidth(` ${label} `, Math.max(0, inner - 1), "…");
-    return theme.fg("border", "╰─") + theme.fg("dim", text) + theme.fg("border", "─".repeat(Math.max(0, inner - 1 - visibleWidth(text)) ) + "╯");
+  const ruleLine = (left: string, right: string, width: number): string => theme.fg("border", left + "─".repeat(width - 2) + right);
+  const footerLines = (frame: Frame, inner: number, budget: number): string[] => {
+    if (budget < 5 || (frame.route.kind === "allowlist" && budget < 7)) return []; // Preserve focus on tiny terminals.
+    const room = Math.min(2, budget - 4);
+    const full = wrapTextWithAnsi(hint(frame), inner);
+    if (full.length <= room) return full;
+    const compact = frame.route.kind === "edit" ? "Enter save · Esc cancel" : frame.route.kind === "allowlist" ? "Esc back"
+      : frame.route.kind === "status" ? "↑↓ scroll · Enter refresh · Esc" : "↑↓ move · Enter/Space · Esc";
+    const short = wrapTextWithAnsi(compact, inner);
+    if (short.length <= room) return short;
+    // At very narrow widths use complete key names, not clipped fragments of instructions.
+    return [inner >= 12 ? "↑↓ · ↵ · Esc" : inner >= 3 ? "Esc" : "↵"];
   };
   const bodyLine = (text: string, inner: number): string => theme.fg("border", "│") + " " + truncateToWidth(text, inner, "…", true) + " " + theme.fg("border", "│");
 
@@ -359,9 +377,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     const banner = bannerLines(frame, inner);
     const bannerCount = banner.length ? Math.min(banner.length, Math.max(1, Math.min(4, bodyBudget - 1))) : 0;
     const descSource = selected?.disabled ?? selected?.description ?? "";
-    // The description yields to the list: it only takes lines the full list does not need (one line minimum).
+    // Do not displace a row when the whole list fits exactly. Longer lists still show selection help.
     const spare = bodyBudget - bannerCount - items.length;
-    const wantDesc = bodyBudget >= 8 && descSource ? Math.max(1, Math.min(2, spare)) : 0;
+    const wantDesc = bodyBudget >= 8 && descSource && spare !== 0 ? Math.max(1, Math.min(2, spare)) : 0;
     const descLines = wantDesc === 0 ? [] : wantDesc === 1
       ? [theme.fg("muted", truncateToWidth(sanitizeTerminalText(descSource, 1200), inner, "…"))]
       : wrap(descSource, inner, 2).map((line) => theme.fg("muted", line));
@@ -373,6 +391,25 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     const rows = items.slice(layout.start, layout.end).map((item, i) => row(item, layout.start + i));
     if (!items.length) rows.push(theme.fg("muted", "Nothing to show"));
     return [...rows, ...descLines.slice(0, descCount), ...banner.slice(0, bannerCount)];
+  };
+
+  const statusBody = (sections: StatusSection[], inner: number): string[] => {
+    // Keep diagnostics readable on very wide terminals, with hanging indents for long values.
+    const width = Math.min(inner, 88);
+    const labelWidth = Math.min(18, Math.max(0, ...sections.flatMap((section) => section.fields.map((field) => visibleWidth(field.label)))));
+    return sections.flatMap((section, index) => [
+      ...(index ? [""] : []), theme.fg("accent", section.title),
+      ...section.fields.flatMap((field) => {
+        const color = (text: string) => field.warning ? theme.fg("warning", text) : text;
+        if (width < labelWidth + 14) return [
+          theme.fg("muted", `${field.label}:`),
+          ...wrapTextWithAnsi(field.value, Math.max(1, width - 2)).map((line) => `  ${color(line)}`),
+        ];
+        const prefix = truncateToWidth(`${field.label}:`, labelWidth + 1, "…", true) + "  ";
+        return wrapTextWithAnsi(field.value, width - labelWidth - 3).map((line, i) =>
+          (i === 0 ? theme.fg("muted", prefix) : " ".repeat(labelWidth + 3)) + color(line));
+      }),
+    ]);
   };
 
   const component: SettingsDialogComponent = {
@@ -388,7 +425,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       const frame = top();
       if (closed || !frame) return [];
       const budget = dialogHeightBudget(tui.terminal?.rows);
-      const tag = busy ? "saving…" : frame.loading ? "checking…" : "";
+      let tag = busy ? "saving…" : frame.loading ? "checking…" : "";
       if (w < 8 || budget < 3) {
         // Too small for a frame: keep the one thing that matters visible.
         const items = frame.child || frame.input ? [] : itemsFor(frame);
@@ -396,7 +433,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         return [truncateToWidth(`${tag ? `${tag} ` : ""}${sanitizeTerminalText(line, 200)}`, w, "…", true)];
       }
       const inner = w - 4;
-      const bodyBudget = budget - 2;
+      const footer = footerLines(frame, inner, budget);
+      const bodyBudget = budget - 2 - (footer.length ? 1 + footer.length : 0);
       let body: string[];
       const route = frame.route;
       if (route.kind === "allowlist" && frame.child) body = frame.child.render(inner).slice(0, bodyBudget);
@@ -413,13 +451,16 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         if (bodyBudget < 4) body = fit(bodyBudget, [{ lines: [], min: 0 }, { lines: [], min: 0 }, { lines: frame.input.render(inner), min: 1 }, { lines: bannerLines(frame, inner), min: 1 }]);
       } else if (route.kind === "status") {
         const banner = bannerLines(frame, inner);
-        const lines = frame.lines ? frame.lines.flatMap((line) => wrapTextWithAnsi(line, inner)) : [theme.fg("muted", frame.loading ? "Collecting status without inference calls…" : "Nothing to show")];
+        const lines = frame.sections ? statusBody(frame.sections, inner) : [theme.fg("muted", frame.loading ? "Collecting status without inference calls…" : "Nothing to show")];
         const room = Math.max(1, bodyBudget - Math.min(banner.length, Math.max(0, bodyBudget - 1)));
         frame.scroll = Math.min(Math.max(0, frame.scroll), Math.max(0, lines.length - room));
-        body = fit(bodyBudget, [{ lines: lines.slice(frame.scroll, frame.scroll + room), min: 1 }, { lines: banner, min: 1 }]);
+        frame.pageSize = room;
+        if (!tag && lines.length > room) tag = `${frame.scroll + 1}–${Math.min(frame.scroll + room, lines.length)} / ${lines.length}`;
+        body = [...lines.slice(frame.scroll, frame.scroll + room), ...banner.slice(0, bodyBudget - room)];
       } else body = listBody(frame, inner, bodyBudget);
       body = body.slice(0, bodyBudget);
-      return [borderLine("╭", "╮", crumb(frame), tag, w), ...body.map((line) => bodyLine(line, inner)), bottomLine(hint(frame), w)];
+      return [borderLine("╭", "╮", crumb(frame), tag, w), ...body.map((line) => bodyLine(line, inner)),
+        ...(footer.length ? [ruleLine("├", "┤", w), ...footer.map((line) => bodyLine(theme.fg("dim", line), inner))] : []), ruleLine("╰", "╯", w)];
     },
     handleInput(data: string) {
       if (closed) return;
@@ -445,8 +486,10 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       if (frame.route.kind === "status") {
         if (keys.matches(data, "tui.select.up")) frame.scroll = Math.max(0, frame.scroll - 1);
         else if (keys.matches(data, "tui.select.down")) frame.scroll += 1;
-        else if (keys.matches(data, "tui.select.pageUp")) frame.scroll = Math.max(0, frame.scroll - 5);
-        else if (keys.matches(data, "tui.select.pageDown")) frame.scroll += 5;
+        else if (keys.matches(data, "tui.select.pageUp")) frame.scroll = Math.max(0, frame.scroll - (frame.pageSize ?? 5));
+        else if (keys.matches(data, "tui.select.pageDown")) frame.scroll += frame.pageSize ?? 5;
+        else if (matchesKey(data, "home")) frame.scroll = 0;
+        else if (matchesKey(data, "end")) frame.scroll = Number.POSITIVE_INFINITY;
         else if (keys.matches(data, "tui.select.confirm") && !frame.loading) enter(frame);
         redraw();
         return;

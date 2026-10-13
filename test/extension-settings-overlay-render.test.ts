@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as xtermModule from "@xterm/headless";
 import { Container, Input, TuiMainScreen, type Component, type Terminal } from "@earendil-works/pi-tui";
 import { defaultSettings } from "../src/settings.ts";
-import { dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { dialogHeightBudget, statusSections } from "../src/extension/settings-model.ts";
 import { createSettingsDialogComponent, SETTINGS_OVERLAY_OPTIONS, type DialogResult, type SettingsDialogOps } from "../src/extension/settings-dialog.ts";
 
 type XTerminal = InstanceType<typeof xtermModule.Terminal>;
@@ -50,11 +50,15 @@ function fakeOps(): SettingsDialogOps {
     snapshot: () => ({ settings: structuredClone(settings), hasCwd: true }),
     async projectCount() { return { count: 2 }; }, async toggleEnabled() {}, async updateSetting() {},
     async listProviders() { return []; }, async listModels() { return []; }, async selectModel() { return { message: "ok" }; },
-    async statusLines() { return ["status"]; }, async allowlist(scope) { return { scope, skills: [], initial: [], locationLabel: "x", async save() {} }; },
+    async statusSections() { return statusSections(settings, {
+      credentials: "not configured", projectCount: 2, projectPath: "/project/".repeat(12) + ".pi/pi-context-decisions.json",
+      last: { reason: "skipped", kept: 18, candidates: 18, latencyMs: 0 },
+      attribution: "Source: fixture catalog attribution. Static checked-in snapshot; updates require a code change.",
+    }); }, async allowlist(scope) { return { scope, skills: [], initial: [], locationLabel: "x", async save() {} }; },
   };
 }
-async function scenario(rows: number, appendCount: number) {
-  const terminal = new EmulatedTerminal(80, rows);
+async function scenario(rows: number, appendCount: number, cols = 80) {
+  const terminal = new EmulatedTerminal(cols, rows);
   const tui = new TuiMainScreen(terminal, false);
   const transcript = new Lines(); const editor = new Input({ prompt: "> " });
   const base = new Container(); base.addChild(transcript); base.addChild(editor); tui.addChild(base);
@@ -89,6 +93,13 @@ for (const rows of [24, 12]) test(`real renderer ${80}x${rows}: the dialog stays
   const viewport = lines.slice(viewportTop, viewportTop + rows);
   // The dialog occupies the top of the viewport...
   assert.match(viewport[1], /╭─ Decisions/); assert.match(viewport[first.row + first.height - 1], /╰─/);
+  const rendered = s.dialog.render(first.width).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+  for (let i = 0; i < first.height; i++) {
+    assert.equal(viewport[first.row + i].slice(first.col, first.col + first.width), rendered[i], `overlay row ${i} must replace every underlying transcript cell`);
+  }
+  const footerStart = rendered.findIndex((line) => line.startsWith("├"));
+  assert.ok(footerStart > 0, "footer has a separate top border");
+  assert.ok(rendered.slice(footerStart + 1, -1).every((line) => /^│ .* │$/.test(line)), "help is enclosed by side borders");
   assert.ok(viewport.slice(1, 1 + first.height).some((line) => /Always allowed · Global/.test(line)) || rows < 16, "dialog content is on screen");
   // ...while the newest output stays visible below it (the editor is the last row).
   assert.match(viewport[rows - 1], /^> /); assert.equal(viewport[rows - 2].trim(), lineOf(89));
@@ -103,6 +114,38 @@ for (const rows of [24, 12]) test(`real renderer ${80}x${rows}: the dialog stays
   // The newest lines are visible in the rows the dialog does not cover.
   const visibleBelow = viewport.slice(1 + first.height).map((line) => /transcript line (\d{3})/.exec(line)?.[1]).filter((value): value is string => value !== undefined).map(Number);
   assert.ok(visibleBelow.includes(89), "the newest line is visible below the dialog");
+  s.dialog.dispose();
+});
+
+for (const [cols, rows] of [[80, 24], [46, 12], [160, 24]]) test(`real renderer ${cols}x${rows}: grouped status scrolls above streaming text with an enclosed footer`, async () => {
+  const s = await scenario(rows, 0, cols);
+  for (let i = 0; i < 6; i++) s.dialog.handleInput!("\x1b[B");
+  s.dialog.handleInput!("\r");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  s.tui.renderNow(); await s.terminal.flush();
+  const seen = new Set<string>();
+  for (let n = 30; n < 130; n++) {
+    s.append(n);
+    s.tui.renderNow(); await s.terminal.flush();
+    const bounds = s.handle.getBounds()!;
+    assert.ok(bounds.height <= dialogHeightBudget(rows));
+    const { lines, viewportTop } = s.terminal.snapshot();
+    const viewport = lines.slice(viewportTop, viewportTop + rows);
+    const expected = s.dialog.render(bounds.width).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+    for (let i = 0; i < bounds.height; i++) {
+      const actual = viewport[bounds.row + i].slice(bounds.col, bounds.col + bounds.width);
+      assert.equal(actual, expected[i], `rendered status row ${i} at transcript line ${n}`);
+      seen.add(actual);
+    }
+    assert.match(expected.at(-1)!, /^╰─+╯$/);
+    assert.ok(expected.some((line) => /^├─+┤$/.test(line)));
+    assert.ok(s.handle.isFocused());
+    assert.equal(viewport[rows - 2].trim(), lineOf(n));
+    s.dialog.handleInput!("\x1b[B");
+  }
+  const text = [...seen].join("\n");
+  for (const group of ["Overview", "Last decision", "Skill filtering", "Scoring", "Always-allowed lists", "Scope & catalog"]) assert.ok(text.includes(group), `${group} was never rendered`);
+  assert.match(text, /Credentials:/); assert.match(text, /Timeout:/); assert.match(text, /Project file:/);
   s.dialog.dispose();
 });
 

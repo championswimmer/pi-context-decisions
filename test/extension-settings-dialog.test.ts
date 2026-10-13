@@ -4,7 +4,7 @@ import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
 import type { ScopedSkill } from "../src/apps/allowlist.ts";
 import type { RelevanceItem } from "../src/apps/relevance.ts";
 import { defaultSettings, SettingsError, updateSetting, type ContextDecisionsSettings } from "../src/settings.ts";
-import { dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { dialogHeightBudget, statusSections } from "../src/extension/settings-model.ts";
 import {
   createSettingsDialogComponent, createSettingsDialogManager, type DialogResult, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps,
 } from "../src/extension/settings-dialog.ts";
@@ -42,7 +42,7 @@ function fakeOps(over: Partial<SettingsDialogOps> = {}, init: { hasCwd?: boolean
     async listProviders(signal) { record("listProviders", signal); return providers(); },
     async listModels(filter, signal) { record(`listModels:${filter?.backend ?? "all"}`, signal); return models(); },
     async selectModel(selection, signal) { record("selectModel", signal); settings.backend = selection as ContextDecisionsSettings["backend"]; return { message: "Decision model saved" }; },
-    async statusLines(signal) { record("statusLines", signal); return ["Context decisions: enabled", "Credentials: environment"]; },
+    async statusSections(signal) { record("statusSections", signal); return [{ title: "Overview", fields: [{ label: "Context decisions", value: "enabled" }, { label: "Credentials", value: "environment" }] }]; },
     async allowlist(scope, signal) { record(`allowlist:${scope}`, signal); return allowlistDeps(scope); },
     ...over,
   };
@@ -95,14 +95,52 @@ test("main screen shows exactly the eight concise rows; relevance knobs are not 
   assert.equal(h.results.length, 0); h.component.dispose();
 });
 
-test("the description yields to the list: all eight rows incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
-  const f = fakeOps(); const h = mount(f, { rows: 16 });
+test("the description yields to the list: all eight rows and the bordered footer fit an 18-row terminal; tiny heights keep the selected row", () => {
+  const f = fakeOps(); const h = mount(f, { rows: 18 });
   const text = h.text(100); assert.match(text, /Status…/); assert.match(text, /Close/);
-  assert.ok(h.component.render(100).length <= dialogHeightBudget(16));
-  assert.match(text, /Immediately enables or disables/, "a one-line description still fits");
+  assert.ok(h.component.render(100).length <= dialogHeightBudget(18));
+  assert.doesNotMatch(text, /Immediately enables or disables/, "description yields to all eight rows and footer chrome");
   const small = mount(fakeOps(), { rows: 8 }); small.press(...Array(7).fill(KEY.down));
   assert.match(small.text(100), /❯ Close/); assert.ok(small.component.render(100).length <= dialogHeightBudget(8));
   h.component.dispose(); small.component.dispose();
+});
+
+test("keyboard help occupies a padded footer row between a separator and a plain bottom border", () => {
+  const h = mount(fakeOps());
+  const lines = h.component.render(100);
+  assert.match(lines.at(-3)!, /^├─+┤$/);
+  assert.match(lines.at(-2)!, /^│ ↑↓ move · Enter select · Space toggle · Esc close\s+│$/);
+  assert.match(lines.at(-1)!, /^╰─+╯$/);
+  for (const line of lines.slice(-3)) assert.equal(visibleWidth(line), 100);
+  assert.ok(lines.length <= dialogHeightBudget(h.tui.terminal.rows));
+  h.component.dispose();
+});
+
+test("wrapped keyboard help and tiny fallbacks never lose the focused row or exceed the height budget", async () => {
+  for (const rows of [3, 4, 5, 6, 7, 8, 12, 16, 24]) for (const width of [1, 7, 8, 12, 24, 40, 80]) {
+    const h = mount(fakeOps(), { rows });
+    h.press(...Array(7).fill(KEY.down));
+    const lines = h.component.render(width);
+    assert.ok(lines.length <= dialogHeightBudget(rows), `${width}x${rows}`);
+    for (const line of lines) assert.equal(visibleWidth(line), width, `${width}x${rows}`);
+    if (width >= 8 && dialogHeightBudget(rows) >= 3) assert.ok(lines.some((line) => line.includes("❯")));
+    const footerStart = lines.findIndex((line) => line.startsWith("├"));
+    if (footerStart >= 0) {
+      assert.ok(lines.slice(footerStart + 1, -1).every((line) => /^│ .* │$/.test(line)));
+      assert.ok(lines.slice(footerStart + 1, -1).every((line) => !line.includes("…")), "footer instructions are wrapped/abbreviated, never clipped");
+    }
+    h.component.dispose();
+  }
+  const h = mount(fakeOps(), { rows: 24 });
+  const lines = h.component.render(40);
+  const footerStart = lines.findIndex((line) => line.startsWith("├"));
+  assert.equal(lines.slice(footerStart + 1, -1).map((line) => line.slice(2, -2).trimEnd()).join(" "), "↑↓ move · Enter select · Space toggle · Esc close");
+  h.component.navigate({ allowlist: "global" }); await h.until(/Search:/);
+  h.tui.terminal.rows = 16;
+  const embedded = h.component.render(40);
+  assert.ok(embedded.length <= dialogHeightBudget(16));
+  assert.match(embedded.join("\n"), /Ctrl\+S save/);
+  h.component.dispose();
 });
 
 test("toggle calls the save once even if Enter repeats; display changes only after the refreshed snapshot", async () => {
@@ -320,10 +358,57 @@ test("focus reaches the edit Input only in the edit route", async () => {
 
 test("status route loads lines, scrolls and refreshes; errors render inline", async () => {
   const f = fakeOps(); const h = mount(f); toRow(h, 6); h.press(KEY.enter);
-  await h.until(/Credentials: environment/); h.press(KEY.enter); await tick(); assert.equal(f.calls.filter((call) => call === "statusLines").length, 2);
+  await h.until(/Credentials:\s+environment/); h.press(KEY.enter); await tick(); assert.equal(f.calls.filter((call) => call === "statusSections").length, 2);
   h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › Status/); h.component.dispose();
-  const g = fakeOps({ statusLines: async () => { throw new SettingsError("Repair settings first"); } });
+  const g = fakeOps({ statusSections: async () => { throw new SettingsError("Repair settings first"); } });
   const k = mount(g, { initialRoute: "main" }); toRow(k, 6); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
+});
+
+test("status has grouped labels, hanging wraps and reachable diagnostics across scroll, refresh and resize", async () => {
+  const settings = defaultSettings();
+  const projectPath = "/long-project/".repeat(12) + ".pi/pi-context-decisions.json";
+  const sections = statusSections(settings, {
+    credentials: "Set OPENAI_API_KEY or configure /login openai. No inference calls are made here.", projectCount: 3, projectPath,
+    last: { reason: "filtered", candidates: 30, kept: 12, latencyMs: 142, errorCode: "timeout", usage: { inputTokens: 50, cost: 0.01 } },
+    attribution: "Source: OpenRouter rankings (unofficial endpoint), usage through 2026-10-11, verified 2026-10-12 UTC. CC BY 4.0. Static checked-in snapshot; updates require a code change.",
+  });
+  let loads = 0;
+  const h = mount(fakeOps({ statusSections: async () => { loads++; return sections; } }), { rows: 24 });
+  toRow(h, 6); h.press(KEY.enter); await h.until(/Overview/);
+  const initial = h.text(100);
+  assert.match(initial, /Context decisions:\s+enabled/);
+  assert.match(initial, /Model:\s+not configured/);
+  assert.match(initial, /Credentials:\s+Set OPENAI_API_KEY/);
+  assert.match(initial, /\d+–\d+ \/ \d+/, "the header shows the scroll range");
+  assert.ok(h.component.render(200).filter((line) => line.startsWith("│")).slice(0, -1).every((line) => line.slice(2, -2).trimEnd().length <= 88));
+  for (const width of [40, 100]) {
+    h.press("\x1b[H"); // Home
+    const seen: string[] = [];
+    for (let step = 0; step < 180; step++) {
+      const lines = h.component.render(width);
+      const separator = lines.findIndex((line) => line.startsWith("├"));
+      const body = lines.slice(1, separator).map((line) => line.slice(2, -2).trimEnd());
+      if (!step) seen.push(...body); else seen.push(body.at(-1)!);
+      assert.ok(lines.length <= dialogHeightBudget(h.tui.terminal.rows));
+      h.press(KEY.down);
+    }
+    const text = seen.join("\n");
+    for (const section of sections) {
+      assert.ok(text.includes(section.title), `${width}: missing section ${section.title}`);
+      for (const field of section.fields) assert.ok(text.includes(`${field.label}:`), `${width}: missing field ${field.label}`);
+    }
+    assert.ok(text.replace(/\s/g, "").includes(projectPath), "wrapped project paths remain complete and scrollable");
+    assert.match(text, /CC BY 4\.0/); assert.match(text, /2026-10-12/); assert.match(text, /unchanged/);
+    assert.doesNotMatch(text, /…/, "status data wraps instead of truncating");
+  }
+  h.press("\x1b[H"); h.component.render(100); h.press(KEY.pageDown);
+  assert.doesNotMatch(h.text(100), /Overview/);
+  h.tui.terminal.rows = 12;
+  assert.ok(h.component.render(40).length <= dialogHeightBudget(12));
+  h.press("\x1b[F"); assert.match(h.text(40), /code change/); // End
+  h.press(KEY.enter); await tick(); assert.equal(loads, 2); assert.match(h.text(100), /Overview/);
+  h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › Status/);
+  h.component.dispose();
 });
 
 test("allowlist route embeds the editor within the dialog budget; Esc from search pops to main and cancels ranking", async () => {
@@ -337,6 +422,17 @@ test("allowlist route embeds the editor within the dialog budget; Esc from searc
   h.press(KEY.esc); // search mode: closes the embedded editor, not the dialog
   assert.equal(ranks[0].aborted, true); assert.equal(h.results.length, 0);
   assert.doesNotMatch(h.text(), /Search:/); assert.match(h.text(), /Always allowed · Global/);
+  h.component.dispose();
+});
+
+test("a tiny embedded allowlist preserves the search cursor and save help before extra footer chrome", async () => {
+  const h = mount(fakeOps(), { rows: 8, initialRoute: { allowlist: "global" } });
+  await tick(); await tick();
+  const lines = h.component.render(100);
+  assert.ok(lines.length <= dialogHeightBudget(8));
+  assert.ok(lines.join("\n").includes(CURSOR_MARKER), "resizing must not hide focused Search");
+  assert.match(lines.join("\n"), /Ctrl\+S save/);
+  h.press(KEY.down); assert.match(h.text(), /❯ \[ \] skill-00/);
   h.component.dispose();
 });
 
@@ -409,7 +505,7 @@ test("rendered frame fits width and height at every size for every route, with h
   const make = () => fakeOps({
     listProviders: async () => [{ id: "x", backend: "openai", provider: "openai", label: hostile, status: "missing", guide: hostile }, ...Array.from({ length: 25 }, (_, n) => ({ id: `p${n}`, backend: "typesafe" as const, provider: "typesafe", label: `provider-${n} ${hostile}`, status: "ok" as const }))],
     listModels: async () => Array.from({ length: 25 }, (_, n) => ({ id: `m${n}`, label: `model-${n} ${hostile}`, selection: null, status: "ok" as const, note: hostile })),
-    statusLines: async () => Array.from({ length: 30 }, (_, n) => `status line ${n} ${hostile}`),
+    statusSections: async () => [{ title: "Diagnostics", fields: Array.from({ length: 30 }, (_, n) => ({ label: `status line ${n}`, value: hostile })) }],
     allowlist: async (scope) => allowlistDeps(scope, { skills: Array.from({ length: 40 }, (_, n) => skill(`skill-${n}-${hostile}`.slice(0, 60), hostile)) }),
   });
   const routes: [string, (h: ReturnType<typeof mount>) => void][] = [

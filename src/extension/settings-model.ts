@@ -2,7 +2,7 @@
 // No Pi or pi-tui imports: everything here is unit-testable without a terminal.
 import { DecisionError } from "../decision/errors.ts";
 import { SettingsError, type ContextDecisionsSettings, type RelevanceSettings } from "../settings.ts";
-import { selectionLabel } from "./contracts.ts";
+import { selectionLabel, type LastDecision } from "./contracts.ts";
 
 /** Strip control and format characters (ANSI introducers, bidi overrides) and bound the length. */
 export function sanitizeTerminalText(value: unknown, limit = 400): string {
@@ -80,6 +80,57 @@ export function backendLabel(selection: ContextDecisionsSettings["backend"]): st
   return `${selection.backend} direct`;
 }
 export function modelLabel(selection: ContextDecisionsSettings["backend"]): string { return sanitizeTerminalText(selectionLabel(selection), 160); }
+
+export interface StatusField { label: string; value: string; warning?: boolean }
+export interface StatusSection { title: string; fields: StatusField[] }
+export interface StatusDetails {
+  credentials: string;
+  projectCount: number;
+  projectPath: string;
+  projectWarning?: string;
+  settingsError?: string;
+  last?: LastDecision;
+  attribution: string;
+}
+
+/** Structured terminal diagnostics; RPC/headless keep their existing text presentation. */
+export function statusSections(settings: ContextDecisionsSettings, details: StatusDetails): StatusSection[] {
+  const r = settings.relevance;
+  const field = (label: string, value: string | number, warning = false): StatusField => ({ label, value: String(value), ...(warning ? { warning } : {}) });
+  const last = details.last;
+  const usage = last?.usage;
+  const warnings = [
+    ...(details.settingsError ? [field("Settings error", `${details.settingsError}. Use /decisions model/settings to repair the file.`, true)] : []),
+    ...(details.projectWarning ? [field("Project warning", details.projectWarning, true)] : []),
+  ];
+  return [
+    { title: "Overview", fields: [field("Context decisions", settings.enabled ? "enabled" : "disabled"), field("Model", selectionLabel(settings.backend)), field("Credentials", details.credentials)] },
+    ...(warnings.length ? [{ title: "Needs attention", fields: warnings }] : []),
+    { title: "Last decision", fields: last ? [
+      field("Result", last.reason), field("Skills kept", `${last.kept} / ${last.candidates}`), field("Latency", `${last.latencyMs} ms`),
+      ...(last.errorCode ? [field("Error", last.errorCode, true)] : []),
+      ...(usage?.inputTokens !== undefined ? [field("Input tokens", usage.inputTokens)] : []),
+      ...(usage?.outputTokens !== undefined ? [field("Output tokens", usage.outputTokens)] : []),
+      ...(usage?.totalTokens !== undefined ? [field("Total tokens", usage.totalTokens)] : []),
+      ...(usage?.cost !== undefined ? [field("Cost (USD)", `${usage.cost}${settings.backend?.backend === "pi" ? " (catalog estimate)" : ""}`)] : []),
+    ] : [field("Result", "No decision recorded yet")] },
+    { title: "Skill filtering", fields: [
+      field("Relevance", r.enabled ? "on" : "off"), field("Mode", r.mode), field("Minimum relevance", r.minLabel),
+      field("On failure", r.failMode === "closed" ? "fail-closed" : "fail-open — all advertisements retained", r.failMode === "open"),
+    ] },
+    { title: "Scoring", fields: [
+      field("Batch size", r.chunkSize), field("Concurrency", r.concurrency === 0 ? "all batches parallel (0)" : r.concurrency),
+      field("Related threshold", `${r.relatedThreshold} (raw 0–2, inclusive)`), field("Direct threshold", `${r.directThreshold} (raw 0–2, inclusive)`),
+      field("Skill cap", r.maxSkills), field("Minimum inventory", r.minCandidates), field("Timeout", `${r.timeoutMs} ms`),
+      field("Prompt limit", `${r.maxPromptChars} chars`), field("Description limit", `${r.maxDescriptionChars} chars`),
+    ] },
+    { title: "Always-allowed lists", fields: [field("Global", settings.globalAllowlist.length), field("Project", details.projectCount), field("Project file", details.projectPath)] },
+    { title: "Scope & catalog", fields: [
+      field("Scope", "Skill advertisements only; tools, MCP visibility, and explicit skill access are unchanged."),
+      field("Source", details.attribution.replace(/^Source: /, "")),
+    ] },
+  ];
+}
 
 export interface MenuLayout { start: number; end: number }
 /**

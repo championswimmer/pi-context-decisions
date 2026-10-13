@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DecisionError } from "../src/decision/errors.ts";
 import { defaultSettings, SettingsError } from "../src/settings.ts";
 import {
-  ADVANCED_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, layoutMenu, sanitizeTerminalText,
+  ADVANCED_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, layoutMenu, sanitizeTerminalText, statusSections,
 } from "../src/extension/settings-model.ts";
 
 test("settings-model is pure: it imports no Pi or pi-tui module", () => {
@@ -39,6 +39,34 @@ test("value text: concurrency 0 explains all-parallel, booleans read On/Off", ()
   assert.equal(advancedValueText(field("enabled"), settings), "On");
   settings.relevance.enabled = false; assert.equal(advancedValueText(field("enabled"), settings), "Off");
   assert.equal(advancedValueText(field("relatedThreshold"), settings), "0.75");
+});
+
+test("status sections expose labeled settings, warnings, allowlists, last decision and provenance without invented usage", () => {
+  const settings = defaultSettings();
+  settings.backend = { backend: "pi", provider: "fixture", id: "classifier" };
+  settings.relevance.failMode = "open";
+  const sections = statusSections(settings, {
+    credentials: "Pi configured", projectCount: 3, projectPath: "/project/.pi/pi-context-decisions.json",
+    projectWarning: "Malformed project file", settingsError: "Invalid settings", attribution: "Source: attribution fixture",
+    last: { reason: "failed", candidates: 12, kept: 2, latencyMs: 42, errorCode: "timeout", usage: { inputTokens: 0, outputTokens: 3, totalTokens: 3, cost: 0 } },
+  });
+  assert.deepEqual(sections.map((section) => section.title), ["Overview", "Needs attention", "Last decision", "Skill filtering", "Scoring", "Always-allowed lists", "Scope & catalog"]);
+  const values = new Map(sections.flatMap((section) => section.fields.map((field) => [field.label, field.value] as const)));
+  for (const [label, value] of Object.entries({
+    "Context decisions": "enabled", Model: "Pi fixture/classifier", Credentials: "Pi configured", Result: "failed", "Skills kept": "2 / 12", Latency: "42 ms", Error: "timeout",
+    "Input tokens": "0", "Output tokens": "3", "Total tokens": "3", "Cost (USD)": "0 (catalog estimate)",
+    Mode: "score", "Minimum relevance": "related", "Batch size": "50", Concurrency: "all batches parallel (0)",
+    "Related threshold": "0.75 (raw 0–2, inclusive)", "Direct threshold": "1.5 (raw 0–2, inclusive)", "Skill cap": "12", "Minimum inventory": "8", Timeout: "8000 ms",
+    "Prompt limit": `${settings.relevance.maxPromptChars} chars`, "Description limit": `${settings.relevance.maxDescriptionChars} chars`,
+    Global: "0", Project: "3", "Project file": "/project/.pi/pi-context-decisions.json", Source: "attribution fixture",
+  })) assert.equal(values.get(label), value, label);
+  assert.match(values.get("Scope")!, /tools, MCP visibility, and explicit skill access are unchanged/);
+  assert.ok(sections.flatMap((section) => section.fields).filter((field) => field.warning).every((field) => ["Settings error", "Project warning", "Error", "On failure"].includes(field.label)));
+  const missing = statusSections(defaultSettings(), { credentials: "not configured", projectCount: 0, projectPath: "no cwd", attribution: "source" });
+  assert.deepEqual(missing.find((section) => section.title === "Last decision")!.fields, [{ label: "Result", value: "No decision recorded yet" }]);
+  assert.ok(!missing.flatMap((section) => section.fields).some((field) => /tokens|Cost/.test(field.label)));
+  const partial = statusSections(settings, { credentials: "ok", projectCount: 0, projectPath: "no cwd", attribution: "source", last: { reason: "ok", candidates: 1, kept: 1, latencyMs: 1, usage: { inputTokens: 2 } } });
+  assert.ok(!partial.flatMap((section) => section.fields).some((field) => /Output tokens|Total tokens|Cost/.test(field.label)));
 });
 
 test("dialogHeightBudget matches an independent oracle for the overlay options", () => {

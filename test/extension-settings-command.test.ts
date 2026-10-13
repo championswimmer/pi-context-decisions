@@ -118,6 +118,26 @@ for (const [args, crumb] of [
   dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
 });
 
+test("terminal Status supplies grouped, labeled diagnostics while headless status keeps its text output", async (t) => {
+  const h = await harness(t); const run = h.command(""); const dialog = await h.dialog();
+  for (let i = 0; i < 6; i++) dialog.handleInput!(KEY.down);
+  dialog.handleInput!(KEY.enter); await h.until(dialog, /Overview/);
+  assert.match(h.text(dialog), /Context decisions:\s+enabled/);
+  assert.match(h.text(dialog), /Credentials:\s+not configured/);
+  const seen = new Set<string>();
+  for (let i = 0; i < 120; i++) {
+    for (const line of dialog.render(100)) seen.add(line);
+    dialog.handleInput!(KEY.down);
+  }
+  const text = [...seen].join("\n");
+  for (const label of ["Last decision", "No decision recorded yet", "Skill filtering", "Scoring", "Related threshold:", "Direct threshold:", "Always-allowed lists", "Project file:", "Scope & catalog", "CC BY 4.0"]) assert.ok(text.includes(label), label);
+  assert.match(text, /tools, MCP visibility/); assert.match(text, /2026-10-12/);
+  assert.equal(h.requests.length, 0); assert.deepEqual(h.messages, []);
+  dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/);
+  assert.match(h.messages.at(-1)!, /Scoring: batch 50, concurrency all batches parallel \(0\)/);
+});
+
 test("RPC mode keeps the select menus with Advanced… and never calls custom", async (t) => {
   const h = await harness(t, { mode: "rpc" }); await h.command("");
   assert.equal(h.calls.custom, 0); assert.equal(h.calls.select, 1);
