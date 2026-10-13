@@ -31,6 +31,7 @@
   "files": [
     "src/",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     ".agents/plans/mcp-visibility.md"
   ],
@@ -48,6 +49,7 @@
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "demo:skills": "node --experimental-strip-types scripts/demo-skill-picker.ts",
+    "changelog": "node --experimental-strip-types .github/scripts/changelog.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm test"
   },

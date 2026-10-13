@@ -15,10 +15,10 @@
 - `src/catalog/`: **static checked-in eight survivors of the original top ten** OpenRouter decisions plus pure picker merge. Snapshot 2026-10-12, token window October 5–11. Future updates require code changes, never runtime discovery.
 - `src/apps/`: metadata-only relevance and skill policy; public `pickSkills` composes existing ranking/filtering for all four backends. Explicit picks default to no inventory minimum; automatic hook defaults to eight.
 - `test/`: offline fixtures and mocked real Pi registration/lifecycle/commands.
-- `.agents/skills/`: project-local skills; `.agents/plans/`: preserved research/architecture handoffs.
+- `.agents/skills/`: project-local skills; `.agents/plans/`: pending implementation handoffs; `.agents/research/`: archived research and live-validation evidence.
 - `../pi-skill-picker-jev`: pattern reference only; do not copy wholesale or add as a dependency.
 
-Earlier research plans proposed dynamic discovery and fail-open defaults. Latest user requirements override them: **static top-ten snapshot trimmed by confirmed routing failures, and default fail closed**, explicit fail-open optional. Do not overwrite historical plan files; add a uniquely named follow-up when needed.
+Archived research proposed dynamic discovery and fail-open defaults. Latest user requirements override it: **static top-ten snapshot trimmed by confirmed routing failures, and default fail closed**, explicit fail-open optional. Completed and superseded plans have been pruned; keep pending work in `.agents/plans/`. Preserve historical evidence in `.agents/research/`; add a uniquely named follow-up when needed.
 
 ## Working rules
 

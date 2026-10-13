@@ -1,10 +1,10 @@
 /**
  * Checked-in weekly-token snapshot, verified 2026-10-12 UTC.
- * Evidence: .agents/plans/openrouter-weekly-popularity.md (live OpenRouter catalog
+ * Evidence: .agents/research/openrouter-weekly-popularity.md (live OpenRouter catalog
  * joined to the full weekly frontend leaderboard). No runtime discovery or refresh.
  * These are popularity figures for public OpenRouter traffic, not model quality.
  * Two original top-ten entries were removed after confirmed routing guardrails;
- * see .agents/plans/live-provider-validation-2026-10-12.md. No replenishment.
+ * see .agents/research/live-provider-validation-2026-10-12.md. No replenishment.
  * Update this source file deliberately when adopting a newer verified snapshot.
  */
 export interface OpenRouterDecisionModel {

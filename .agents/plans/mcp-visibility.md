@@ -1,7 +1,7 @@
 # MCP / tool visibility — PLAN ONLY (not scheduled for implementation)
 
-Status: design plan from `/root/implementation-architecture`. **No code is to be written from this file until the user schedules it.** Depends on the decision API and backends from `implementation-architecture.md` (§2–3) being implemented.
-Evidence: installed Pi 1.1.0 (`$PI=/opt/homebrew/Cellar/pi-coding-agent/1.1.0/libexec/lib/node_modules/@earendil-works/pi-coding-agent`), `.agents/plans/pi-integration-research.md` §6.
+Status: design plan from `/root/implementation-architecture`. **No code is to be written from this file until the user schedules it.** The decision API (`src/decision/`) and backends (`src/core/backends/`) prerequisites are implemented; MCP/tool visibility work remains pending.
+Evidence: installed Pi 1.1.0 (`$PI=/opt/homebrew/Cellar/pi-coding-agent/1.1.0/libexec/lib/node_modules/@earendil-works/pi-coding-agent`), [archived Pi integration research](../research/pi-integration-research.md) §6.
 
 ## Goal
 
