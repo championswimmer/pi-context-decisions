@@ -12,7 +12,7 @@ import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
-import { ADVANCED_FIELDS, advancedValueText, describeError, sanitizeTerminalText } from "./settings-model.ts";
+import { ADVANCED_FIELDS, advancedValueText, describeError, sanitizeTerminalText, statusSections, type StatusDetails } from "./settings-model.ts";
 
 const COMMANDS = ["settings", "provider", "model", "status", "enable", "disable", "relevance", "allow", "allowlist", "pin", "unpin", "test"];
 type DirectProvider = "openai" | "typesafe" | "openrouter";
@@ -166,7 +166,7 @@ async function chooseProvider(controller: Controller, ctx: CommandContext, token
   if (choice.status !== "ok") throw new SettingsError(credentialGuide(choice.provider, choice.backend === "pi"));
   await chooseModel(controller, ctx, [], env, (entry) => entry.selection.backend === choice.backend && (entry.selection.backend !== "pi" || entry.selection.provider === choice.provider));
 }
-async function statusLines(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>): Promise<string[]> {
+async function statusDetails(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>): Promise<StatusDetails> {
   const settings = controller.getSettings();
   let credentials = "not configured";
   if (settings.backend) {
@@ -179,15 +179,24 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
       credentials = auth.source === "pi" ? "Pi-resolved (may include Pi's env fallback)" : auth.source === "env" ? "environment" : credentialGuide(provider);
     }
   }
-  const last = controller.getLastDecision();
-  const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
+  return {
+    credentials, projectCount: project?.names.length ?? 0,
+    projectPath: ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd",
+    projectWarning: project?.error ?? project?.warnings[0], settingsError: controller.getSettingsError(),
+    last: controller.getLastDecision(), attribution: OPENROUTER_DECISION_SNAPSHOT.attribution,
+  };
+}
+async function statusLines(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>): Promise<string[]> {
+  const settings = controller.getSettings();
+  const details = await statusDetails(controller, ctx, env);
+  const { credentials, last, settingsError: error } = details;
   return [
     `Context decisions: ${settings.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
     `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, ${settings.relevance.mode}, minimum ${settings.relevance.minLabel}, fail-${settings.relevance.failMode}`,
     `Scoring: batch ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all batches parallel (0)" : settings.relevance.concurrency}, raw thresholds related ${settings.relevance.relatedThreshold}/direct ${settings.relevance.directThreshold} (0–2), cap ${settings.relevance.maxSkills}, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms`,
-    `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
-    ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
+    `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${details.projectCount} (${details.projectPath})`,
+    ...(details.projectWarning ? [`Project allowlist warning: ${details.projectWarning}`] : []),
     ...(error ? [`Settings error: ${error}. Use /decisions model/settings to repair the file.`] : []),
     ...(last ? [`Last: ${last.reason}, ${last.kept}/${last.candidates} skills, ${last.latencyMs}ms${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
     OPENROUTER_DECISION_SNAPSHOT.attribution,
@@ -365,7 +374,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
       return rows;
     },
     async selectModel(selection, signal) { return { message: await saveModel(controller, scoped(signal), selection, env) }; },
-    statusLines: (signal) => statusLines(controller, scoped(signal), env),
+    statusSections: async (signal) => statusSections(controller.getSettings(), await statusDetails(controller, scoped(signal), env)),
     allowlist: (scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal),
   };
 }
