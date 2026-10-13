@@ -19,7 +19,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const skill = (name: string, description = "Fixture description"): ScopedSkill => ({ name, description, scope: "global", disableModelInvocation: false });
-const item = (name: string, score: number): RelevanceItem => ({ name, score, normalized: score / 2, label: score >= 1.5 ? "directly_relevant" : score >= 0.75 ? "related" : "irrelevant" });
+const item = (name: string, score: number): RelevanceItem => ({ name, score, normalized: score / 2 });
 
 interface OpsFixture {
   ops: SettingsDialogOps;
@@ -177,13 +177,13 @@ test("None clears the model through selectModel(null)", async () => {
 test("Advanced lists every knob, edit is prefilled, invalid values stay inline and Esc saves nothing", async () => {
   const f = fakeOps(); const h = mount(f); toRow(h, 5); h.press(KEY.enter);
   assert.match(h.text(), /Decisions › Advanced/);
-  for (const label of ["Skill filtering", "Scoring mode", "Related threshold", "Direct threshold", "Max skills kept", "Batch size", "Concurrency", "Timeout", "On failure"]) {
+  for (const label of ["Skill filtering", "Relevance threshold", "Shard size", "Max added per round", "Run picker", "On failure", "Timeout", "Concurrency", "Minimum inventory", "Prompt size", "Description size"]) {
     // Not every row fits at once: scroll through and gather.
     const seen = new Set<string>();
-    for (let i = 0; i < 13; i++) { if (h.text().includes(label)) seen.add(label); h.press(KEY.down); }
+    for (let i = 0; i < 14; i++) { if (h.text().includes(label)) seen.add(label); h.press(KEY.down); }
     assert.ok(seen.has(label), `${label} missing from Advanced`);
   }
-  h.press(...Array(20).fill(KEY.up)); h.press(...Array(7).fill(KEY.down)); // → Batch size
+  h.press(...Array(20).fill(KEY.up)); h.press(...Array(2).fill(KEY.down)); // → Shard size
   h.press(KEY.enter); assert.match(h.text(), /Value: 50/);
   h.press(KEY.backspace, KEY.backspace, ..."999"); h.press(KEY.enter); await tick();
   assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:relevance.chunkSize=999"]);
@@ -195,8 +195,27 @@ test("Advanced lists every knob, edit is prefilled, invalid values stay inline a
 
 test("a valid edit saves once and returns to Advanced with a Saved banner", async () => {
   const f = fakeOps(); const h = mount(f, { initialRoute: "advanced" });
-  h.press(...Array(7).fill(KEY.down), KEY.enter); h.press(KEY.backspace, KEY.backspace, "2", "5"); h.press(KEY.enter); await tick();
-  assert.equal(f.settings.relevance.chunkSize, 25); assert.match(h.text(), /Saved/); assert.match(h.text(), /Batch size\s+25/); h.component.dispose();
+  h.press(...Array(2).fill(KEY.down), KEY.enter); h.press(KEY.backspace, KEY.backspace, "2", "5"); h.press(KEY.enter); await tick();
+  assert.equal(f.settings.relevance.chunkSize, 25); assert.match(h.text(), /Saved/); assert.match(h.text(), /Shard size\s+25/); h.component.dispose();
+});
+
+test("Advanced shows the four picking controls first; threshold edit and Run picker options persist through the shared path", async () => {
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced" });
+  assert.match(h.text(100), /Skill filtering\s+On/);
+  h.press(KEY.down); assert.match(h.text(100), /Relevance threshold\s+0\.375/);
+  h.press(KEY.enter); assert.match(h.text(), /Value: 0\.375/);
+  h.press(...Array(5).fill(KEY.backspace), ..."0.5"); h.press(KEY.enter); await tick();
+  assert.equal(f.settings.relevance.threshold, 0.5); assert.match(h.text(100), /Relevance threshold\s+0\.5/);
+  h.press(KEY.down, KEY.down); assert.match(h.text(100), /Max added per round\s+12/);
+  h.press(KEY.down); assert.match(h.text(100), /Run picker\s+prompt/);
+  h.press(KEY.enter); assert.match(h.text(100), /Decisions › Advanced › Run picker/);
+  assert.match(h.text(100), /prompt\s+current/);
+  h.press(KEY.down); assert.match(h.text(100).replace(/\s*│\s*\n│\s*/g, " "), /No tool names, arguments or results are sent/);
+  h.press(KEY.enter); await tick();
+  assert.equal(f.settings.relevance.cadence, "tool-round"); assert.match(h.text(100), /Run picker\s+tool-round/);
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:relevance.threshold=0.5", "updateSetting:relevance.cadence=tool-round"]);
+  assert.doesNotMatch(h.text(100), /Scoring mode|Related threshold|Direct threshold|Minimum relevance/);
+  h.component.dispose();
 });
 
 /** updateSetting that applies the change only when the gate opens (a deferred persistence). */
@@ -209,7 +228,7 @@ function gatedSaves() {
   });
   return { f, gates };
 }
-const toBatchSizeEditor = (h: ReturnType<typeof mount>) => h.press(...Array(7).fill(KEY.down), KEY.enter);
+const toBatchSizeEditor = (h: ReturnType<typeof mount>) => h.press(...Array(2).fill(KEY.down), KEY.enter);
 const typeValue = (h: ReturnType<typeof mount>, text: string) => h.press(KEY.backspace, KEY.backspace, ...text);
 
 test("a deferred edit save resolving after Esc×2 to Main does not close the dialog; the snapshot still refreshes", async () => {
@@ -222,7 +241,7 @@ test("a deferred edit save resolving after Esc×2 to Main does not close the dia
   assert.deepEqual(h.results, [], "a late save must not close the dialog"); assert.equal(h.closedHooks.length, 0);
   assert.match(h.text(), /Always allowed · Global/); assert.doesNotMatch(h.text(), /saving…/);
   h.press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter);
-  assert.match(h.text(), /Decisions › Advanced/); assert.match(h.text(), /Batch size\s+25/, "persisted value shows after the refresh");
+  assert.match(h.text(), /Decisions › Advanced/); assert.match(h.text(), /Shard size\s+25/, "persisted value shows after the refresh");
   h.component.dispose();
 });
 
@@ -230,11 +249,11 @@ test("a deferred save resolving while the user edits ANOTHER field neither pops 
   const { f, gates } = gatedSaves(); const h = mount(f, { initialRoute: "advanced" });
   toBatchSizeEditor(h); typeValue(h, "25"); h.press(KEY.enter);
   h.press(KEY.esc); // back to advanced; the save is still in flight
-  h.press(KEY.down, KEY.enter); // Concurrency editor (row after Batch size)
-  assert.match(h.text(), /Decisions › Advanced › Concurrency/); h.press(KEY.backspace, "4", "2");
+  h.press(KEY.down, KEY.enter); // Max added per round editor (row after Shard size)
+  assert.match(h.text(), /Decisions › Advanced › Max added per round/); h.press(KEY.backspace, KEY.backspace, "4", "2");
   gates[0].release(); await tick();
   const text = h.text();
-  assert.match(text, /Decisions › Advanced › Concurrency/, "the newer editor stays open");
+  assert.match(text, /Decisions › Advanced › Max added per round/, "the newer editor stays open");
   assert.match(text, /Value: 42/, "its draft is preserved"); assert.deepEqual(h.results, []);
   assert.equal(f.settings.relevance.chunkSize, 25, "the save still persisted");
   h.press(KEY.enter); assert.equal(gates.length, 2, "the new editor can save once the first finished");
@@ -246,17 +265,17 @@ test("a deferred save whose origin editor is still current returns to Advanced w
   toBatchSizeEditor(h); typeValue(h, "25"); h.press(KEY.enter);
   assert.match(h.text(), /Value: 25/); gates[0].release(); await tick();
   assert.match(h.text(), /Decisions › Advanced/); assert.doesNotMatch(h.text(), /Value:/); assert.match(h.text(), /Saved/);
-  assert.match(h.text(), /Batch size\s+25/); assert.deepEqual(h.results, []); h.component.dispose();
+  assert.match(h.text(), /Shard size\s+25/); assert.deepEqual(h.results, []); h.component.dispose();
 });
 
-test("a deferred choice save after leaving the choice route does not pop whatever screen is now open", async () => {
+test("a deferred options save after leaving the options route does not pop whatever screen is now open", async () => {
   const { f, gates } = gatedSaves(); const h = mount(f, { initialRoute: "advanced" });
-  h.press(...Array(10).fill(KEY.down), KEY.enter, KEY.down, KEY.enter); // On failure → open (pending)
+  h.press(...Array(5).fill(KEY.down), KEY.enter, KEY.down, KEY.enter); // On failure → open (pending)
   assert.equal(gates[0].text, "open");
-  h.press(KEY.esc); assert.match(h.text(), /Decisions › Advanced/); h.press(KEY.down, KEY.enter); // Prompt size editor
-  assert.match(h.text(), /Decisions › Advanced › Prompt size/);
+  h.press(KEY.esc); assert.match(h.text(), /Decisions › Advanced/); h.press(KEY.down, KEY.enter); // Timeout editor
+  assert.match(h.text(), /Decisions › Advanced › Timeout/);
   gates[0].release(); await tick();
-  assert.match(h.text(), /Decisions › Advanced › Prompt size/); assert.equal(f.settings.relevance.failMode, "open"); assert.deepEqual(h.results, []);
+  assert.match(h.text(), /Decisions › Advanced › Timeout/); assert.equal(f.settings.relevance.failMode, "open"); assert.deepEqual(h.results, []);
   h.component.dispose();
 });
 
@@ -293,19 +312,19 @@ test("boolean knobs toggle in place; concurrency 0 explains all-parallel", async
   const f = fakeOps(); const h = mount(f, { initialRoute: "advanced" });
   assert.match(h.text(), /Skill filtering\s+On/); h.press(KEY.space); await tick();
   assert.equal(f.settings.relevance.enabled, false); assert.match(h.text(), /Skill filtering\s+Off/);
-  h.press(...Array(8).fill(KEY.down)); assert.match(h.text(), /Concurrency\s+0 \(all batches parallel\)/); h.component.dispose();
+  h.press(...Array(7).fill(KEY.down)); assert.match(h.text(), /Concurrency\s+0 \(all shards parallel\)/); h.component.dispose();
 });
 
 test("fail-open is reachable only by explicitly choosing it, never by cycling or a default row", async () => {
   const f = fakeOps(); const h = mount(f, { initialRoute: "advanced" });
-  h.press(...Array(10).fill(KEY.down), KEY.enter); assert.match(h.text(), /Decisions › Advanced › On failure/);
+  h.press(...Array(5).fill(KEY.down), KEY.enter); assert.match(h.text(), /Decisions › Advanced › On failure/);
   assert.match(h.text(), /closed\s+current/); assert.match(h.text(), /open/);
-  h.press(KEY.down); assert.match(h.text(), /WARNING/); h.press(KEY.up, KEY.space); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), [], "Space does not cycle a choice");
+  h.press(KEY.down); assert.match(h.text(), /WARNING/); h.press(KEY.up, KEY.space); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), [], "Space does not cycle an option");
   h.press(KEY.enter); await tick();
   assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:relevance.failMode=closed"]);
   assert.equal(f.settings.relevance.failMode, "closed"); h.component.dispose();
   const g = fakeOps(); const k = mount(g, { initialRoute: "advanced" });
-  k.press(...Array(10).fill(KEY.down), KEY.enter, KEY.down, KEY.enter); await tick();
+  k.press(...Array(5).fill(KEY.down), KEY.enter, KEY.down, KEY.enter); await tick();
   assert.equal(g.settings.relevance.failMode, "open"); assert.match(k.text(), /On failure\s+open/); k.component.dispose();
 });
 
@@ -416,8 +435,8 @@ test("rendered frame fits width and height at every size for every route, with h
     ["main", () => {}], ["advanced", (h) => h.component.navigate("advanced")], ["provider", (h) => h.component.navigate("provider")],
     ["model", (h) => h.component.navigate("model")], ["allowlist", (h) => h.component.navigate({ allowlist: "global" })],
     ["status", (h) => { toRow(h, 6); h.press(KEY.enter); }],
-    ["edit", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.down, KEY.down, KEY.enter); }],
-    ["choice", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.enter); }],
+    ["edit", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.enter); }],
+    ["options", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter); }],
   ];
   for (const rows of [8, 12, 24, 40]) for (const width of [40, 80, 120]) for (const [name, enter] of routes) for (const loaded of [false, true]) {
     const h = mount(make(), { rows }); enter(h);
@@ -440,7 +459,7 @@ test("rendered frame fits width and height at every size for every route, with h
       for (let step = 0; step < 40; step++) {
         h.press(KEY.down);
         const lines = check(`down${step}`);
-        if (["main", "advanced", "provider", "model", "choice"].includes(name) && budget >= 3 && width >= 8 && step % 5 === 0) {
+        if (["main", "advanced", "provider", "model", "options"].includes(name) && budget >= 3 && width >= 8 && step % 5 === 0) {
           assert.ok(lines.some((line) => line.includes("❯")), `${name} ${width}x${rows} step ${step}: selected row not visible`);
         }
       }

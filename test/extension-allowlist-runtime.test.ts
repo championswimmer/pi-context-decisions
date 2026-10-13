@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionCommandContext, ExtensionContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { SimSession, simHost } from "./helpers/pi-sim.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
-import type { CommandContext, ExtensionHost } from "../src/extension/contracts.ts";
+import type { CommandContext } from "../src/extension/contracts.ts";
 import { defaultSettings } from "../src/settings.ts";
 import { saveProjectAllowlist, projectAllowlistPath } from "../src/project-allowlist.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
@@ -22,17 +23,13 @@ function event(): BeforeAgentStartEvent {
 }
 async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" | "failure" | "config" | "pending" = "ok") {
   const cwd = await mkdtemp(join(tmpdir(), "allowlist-runtime-")); t.after(() => rm(cwd, { recursive: true, force: true }));
-  const handlers = new Map<string, ((event: unknown, ctx: ExtensionContext) => unknown)[]>();
-  const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
+  const sim = simHost();
+  const commands = sim.commands;
   const messages: string[] = [], requests: DecisionRequest[] = [];
   let started!: () => void;
   const ready = new Promise<void>((resolve) => { started = resolve; });
   let cancelled = false;
-  const pi: ExtensionHost = { on: ((name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => {
-    const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); return () => {};
-  }) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); },
-    getCommands() { return [{ name: "skill:fallback-only", description: "Fallback metadata", source: "skill", sourceInfo: { path: "/private/fallback", source: "fixture", scope: "project", origin: "top-level" } }]; },
-  };
+  const pi = { ...sim.pi, getCommands() { return [{ name: "skill:fallback-only", description: "Fallback metadata", source: "skill" as const, sourceInfo: { path: "/private/fallback", source: "fixture", scope: "project" as const, origin: "top-level" as const } }]; } };
   const settings = defaultSettings(); settings.globalAllowlist = ["global"];
   settings.backend = { backend: "pi", provider: "fixture", id: "classifier" }; settings.relevance.minCandidates = 0; settings.relevance.maxSkills = 0;
   const ctx: CommandContext = { cwd, hasUI: false, mode: "print", modelRegistry: {
@@ -51,7 +48,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" 
       return { answers: Object.fromEntries(Object.keys(request.questions).map((id) => [id, { type: "score", score: 0 }])) };
     } }); }, report(_ctx, message) { messages.push(message); },
   });
-  return { cwd, ctx, settings, requests, messages, ready, cancelled: () => cancelled,
+  return { cwd, ctx, settings, requests, messages, ready, cancelled: () => cancelled, sim,
     async editor(scope: "global" | "project") {
       let rendered = "";
       ctx.hasUI = true; ctx.mode = "tui";
@@ -64,7 +61,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" 
       await commands.get("decisions")!.handler(`allowlist ${scope}`, ctx as ExtensionCommandContext);
       return rendered;
     },
-    async emit(name: string, value: unknown) { for (const handler of handlers.get(name) ?? []) await handler(value, ctx as ExtensionContext); },
+    async emit(name: string, value: unknown) { await sim.emit(name, value, ctx); },
     async command(text: string) { await commands.get("decisions")!.handler(text, ctx as ExtensionCommandContext); },
   };
 }
@@ -85,12 +82,15 @@ test("wrong-scope names do not pin and project lists follow changed cwd rather t
   await saveProjectAllowlist(h.cwd, ["project"]);
   const allowed = event(); await h.emit("before_agent_start", allowed); assert.deepEqual(allowed.systemPromptOptions.skills.map((s) => s.name), ["project", "manual"]);
   const otherCwd = join(h.cwd, "other-cwd"); await mkdir(otherCwd); h.ctx.cwd = otherCwd;
+  // The earlier branch keeps its stable base (advertisements are never dropped); a NEW session follows the new cwd.
+  const sameBranch = event(); await h.emit("before_agent_start", sameBranch); assert.deepEqual(sameBranch.systemPromptOptions.skills.map((s) => s.name), ["project", "manual"]);
+  h.sim.session = new SimSession();
   const other = event(); await h.emit("before_agent_start", other); assert.deepEqual(other.systemPromptOptions.skills.map((s) => s.name), ["manual"]);
 });
 test("malformed project list warns once and continues scoring closed instead of revealing inventory", async (t) => {
   const h = await setup(t); await mkdir(join(h.cwd, ".pi")); await writeFile(projectAllowlistPath(h.cwd), "PRIVATE_INVALID_JSON");
   for (let i = 0; i < 2; i++) {
-    const e = event(); await h.emit("before_agent_start", e); assert.deepEqual(e.systemPromptOptions.skills.map((s) => s.name), ["global", "manual"]);
+    const e = event(); e.prompt = `task ${i}`; await h.emit("before_agent_start", e); assert.deepEqual(e.systemPromptOptions.skills.map((s) => s.name), ["global", "manual"]);
   }
   assert.equal(h.requests.length, 2); assert.equal(h.messages.filter((m) => m.includes("project skill allowlist")).length, 1);
   assert.doesNotMatch(JSON.stringify(h.messages), /PRIVATE_INVALID_JSON|PRIVATE_PROVIDER_ERROR/);

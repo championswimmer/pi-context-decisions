@@ -26,7 +26,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 for (const count of [300, 350, 400]) test(`${count} candidates default to 50-skill batches, all dispatched before a response`, async () => {
   const skills = inventory(count);
   const { client, pending } = deferredClient();
-  const ranking = pickSkills("task", skills, client, { maxSkills: count, relatedThreshold: 1.5 });
+  const ranking = pickSkills("task", skills, client, { maxSkills: count, threshold: 0.75 });
   await tick();
   assert.equal(pending.length, count / 50);
   assert.deepEqual(pending.map(({ request }) => Object.keys(request.questions).length), Array(count / 50).fill(50));

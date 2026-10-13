@@ -184,12 +184,12 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
   return [
     `Context decisions: ${settings.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
-    `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, ${settings.relevance.mode}, minimum ${settings.relevance.minLabel}, fail-${settings.relevance.failMode}`,
-    `Scoring: batch ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all batches parallel (0)" : settings.relevance.concurrency}, raw thresholds related ${settings.relevance.relatedThreshold}/direct ${settings.relevance.directThreshold} (0–2), cap ${settings.relevance.maxSkills}, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms`,
+    `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, threshold ${settings.relevance.threshold} (0–1), picker ${settings.relevance.cadence}, fail-${settings.relevance.failMode}`,
+    `Scoring: shard ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all shards parallel (0)" : settings.relevance.concurrency}, max ${settings.relevance.maxSkills} added per round, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms. Skills are only ever added; already-added skills are never re-scored`,
     `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
     ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
     ...(error ? [`Settings error: ${error}. Use /decisions model/settings to repair the file.`] : []),
-    ...(last ? [`Last: ${last.reason}, ${last.kept}/${last.candidates} skills, ${last.latencyMs}ms${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
+    ...(last ? [`Last (${last.trigger ?? "prompt"}): ${last.reason}, +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : `, ${last.advertised} advertised`}${last.redelivered ? `, ${last.redelivered} re-delivered` : ""}${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
     OPENROUTER_DECISION_SNAPSHOT.attribution,
     "Skill advertisements only; tools, MCP visibility, and explicit skill access are unchanged.",
   ];
@@ -282,7 +282,7 @@ async function advancedMenu(controller: Controller, ctx: CommandContext) {
   for (;;) {
     const settings = controller.getSettings();
     const fields = ADVANCED_FIELDS.map((field) => `relevance.${field.key}`);
-    const labels = ADVANCED_FIELDS.map((field) => `relevance.${field.key}: ${field.key === "concurrency" && settings.relevance.concurrency === 0 ? "0 (all batches parallel)" : String(settings.relevance[field.key])}`);
+    const labels = ADVANCED_FIELDS.map((field) => `relevance.${field.key}: ${field.key === "concurrency" && settings.relevance.concurrency === 0 ? "0 (all shards parallel)" : String(settings.relevance[field.key])}`);
     const pick = await ctx.ui.select("Decisions · Advanced relevance settings", [...labels, "Back"], { signal: ctx.signal });
     if (!pick || pick === "Back") return;
     try {
@@ -290,9 +290,17 @@ async function advancedMenu(controller: Controller, ctx: CommandContext) {
       if (index < 0) throw new SettingsError("Invalid settings selection");
       const key = fields[index];
       const old = settings.relevance[ADVANCED_FIELDS[index].key];
+      const field = ADVANCED_FIELDS[index];
       if (typeof old === "boolean") await controller.update((current) => updateSetting(current, key, String(!old)));
-      else {
-        const hint = key === "relevance.failMode" ? " (open retains all advertisements on failure)" : key === "relevance.concurrency" ? " (0 = all batches parallel; 1–32 = limit)" : key.endsWith("Threshold") ? " (raw 0–2, inclusive)" : "";
+      else if (field.kind === "options") {
+        // Same values and descriptions as the terminal dialog's option list.
+        const choices = (field.options ?? []).map((option) => `${option.value} · ${option.description}`);
+        const picked = await ctx.ui.select(`${field.label} (currently ${String(old)})`, [...choices, "Back"], { signal: ctx.signal });
+        const at = picked === undefined ? -1 : choices.indexOf(picked);
+        if (at < 0) continue;
+        await controller.update((current) => updateSetting(current, key, field.options![at].value));
+      } else {
+        const hint = key === "relevance.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : key === "relevance.threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" ? " (new skills added per picking round)" : "";
         const value = await ctx.ui.input(`New value for ${key}${hint}`, String(old), { signal: ctx.signal });
         if (value === undefined) continue;
         await controller.update((current) => updateSetting(current, key, value.trim()));

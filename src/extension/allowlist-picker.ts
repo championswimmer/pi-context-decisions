@@ -152,7 +152,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       const block = (i: number): string[] => {
         const row = items[i]; const item = scores.get(row.name);
         const prefix = `${listFocused && i === index ? "❯" : " "} ${draft.has(row.name) ? "[x]" : "[ ]"}`;
-        const line = `${prefix} ${display(row.name, 128)}${row.loaded ? "" : " (not loaded)"}${mode === "relevance" && item ? ` · ${item.score.toFixed(2)}/2 ${display(item.label, 40)}` : ""}`;
+        const line = `${prefix} ${display(row.name, 128)}${row.loaded ? "" : " (not loaded)"}${mode === "relevance" && item ? ` · ${item.normalized.toFixed(2)} relevance` : ""}`;
         return [listFocused && i === index ? theme.fg("accent", line) : line,
           ...(expanded === row.name ? wrapTextWithAnsi(display(row.description), Math.max(1, w - 4)).slice(0, Math.min(3, bodyBudget - 1)).map((line) => `  • ${line}`) : [])];
       };

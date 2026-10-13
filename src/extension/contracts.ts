@@ -6,7 +6,8 @@ import type { DecisionUsage } from "../decision/types.ts";
 import type { ScopedSkill } from "../apps/allowlist.ts";
 import type { ProjectAllowlistLoad } from "../project-allowlist.ts";
 
-export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand"> & Partial<Pick<ExtensionAPI, "getCommands">>;
+/** `appendEntry` records the stable-base ledger; `getActiveTools` chooses Pi's skill-file reader for deltas. */
+export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand" | "appendEntry" | "getActiveTools"> & Partial<Pick<ExtensionAPI, "getCommands">>;
 export interface ExtensionRegistry extends RegistryLike {
   getProviderAuthStatus?(provider: string): { configured: boolean };
 }
@@ -20,8 +21,18 @@ export interface CommandContext {
 }
 export interface LastDecision {
   reason: string;
+  /** Skills scored this round: never skills that were already advertised. */
   candidates: number;
+  /** Skills NEWLY added this round. */
   kept: number;
+  /** Skills advertised on this branch after the round (stable base + additions). */
+  advertised?: number;
+  /** Skills re-delivered after compaction or edits, without being re-scored. */
+  redelivered?: number;
+  /** Scores were reused for the same task; no decision call was made. */
+  cached?: boolean;
+  /** `prompt`: a submitted prompt. `queued`: steering/follow-up user text. `tool-round`: after completed tool calls. */
+  trigger?: "prompt" | "queued" | "tool-round";
   latencyMs: number;
   errorCode?: string;
   usage?: DecisionUsage;
@@ -52,4 +63,6 @@ export interface ExtensionDependencies {
   save?: (settings: ContextDecisionsSettings, path: string) => Promise<void>;
   createClient?: (selection: BackendSelection, ctx: CommandContext) => DecisionClient;
   report?: Controller["report"];
+  /** Test seam for the project allowlist read (defaults to the real bounded file read). */
+  loadProjectAllowlist?: Controller["loadProjectAllowlist"];
 }

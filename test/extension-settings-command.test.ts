@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { simHost } from "./helpers/pi-sim.ts";
 import type { Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
@@ -23,7 +24,6 @@ const waitFor = async <T,>(read: () => T | undefined | false, label: string): Pr
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
 };
-type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 async function harness(t: { after(fn: () => Promise<void>): void }, options: {
   mode?: "tui" | "rpc" | "print"; custom?: boolean; configured?: boolean; env?: Record<string, string | undefined>; pendingDecision?: boolean;
@@ -32,11 +32,10 @@ async function harness(t: { after(fn: () => Promise<void>): void }, options: {
   const root = await mkdtemp(join(tmpdir(), "settings-command-")); t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, "settings.json");
   if (options.configured) await saveSettings({ ...defaultSettings(), backend: { backend: "typesafe", model: "jev-latest" } }, path);
-  const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
-  const handlers = new Map<string, Handler[]>();
+  const sim = simHost();
+  const commands = sim.commands;
   const pi: ExtensionHost = {
-    on: ((name: string, handler: Handler) => { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); return () => {}; }) as ExtensionAPI["on"],
-    registerCommand(name, command) { commands.set(name, command); },
+    ...sim.pi,
     getCommands() { return [
       { name: "skill:alpha", description: "Browser testing", source: "skill", sourceInfo: { path: "/private/alpha", source: "fixture", scope: "user", origin: "top-level" } },
       { name: "skill:beta", description: "Database querying", source: "skill", sourceInfo: { path: "/private/beta", source: "fixture", scope: "user", origin: "top-level" } },
@@ -90,7 +89,7 @@ async function harness(t: { after(fn: () => Promise<void>): void }, options: {
     } }); },
   });
   const command = (args: string) => commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext);
-  const emit = async (name: string, event: unknown = {}) => { for (const handler of handlers.get(name) ?? []) await handler(event, ctx as ExtensionContext); };
+  const emit = async (name: string, event: unknown = {}) => { await sim.emit(name, event, ctx); };
   const dialog = async (index = 0) => waitFor(() => components[index], "settings dialog component");
   const text = (component: Component, width = 100) => component.render(width).join("\n");
   const until = async (component: Component, pattern: RegExp) => waitFor(() => pattern.test(text(component)) && text(component), `${pattern}`);
@@ -173,7 +172,7 @@ test("dialog work never reads ctx.signal (the agent-run signal), even through st
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   const run = h.command("allowlist global"); const dialog = await h.dialog(); await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
-  dialog.handleInput!(KEY.rank); await h.until(dialog, /1\.80\/2/);
+  dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/);
   assert.equal(h.requests.length, 1);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
   dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Model route

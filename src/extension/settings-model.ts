@@ -24,7 +24,7 @@ export function dialogHeightBudget(rows: number | undefined): number {
 }
 
 export type AdvancedKey = Exclude<keyof RelevanceSettings, "pinned">;
-export type AdvancedKind = "bool" | "choice" | "int" | "decimal";
+export type AdvancedKind = "bool" | "options" | "int" | "decimal";
 export interface AdvancedOption { value: string; description: string }
 export interface AdvancedField {
   key: AdvancedKey;
@@ -33,28 +33,26 @@ export interface AdvancedField {
   hint: string;
   options?: readonly AdvancedOption[];
 }
-/** Every relevance knob except `pinned`, which stays on the headless pin/unpin commands. */
+/**
+ * Every relevance knob except `pinned`, which stays on the headless pin/unpin commands. The four picking
+ * controls come first (threshold, shard size, max added per round, cadence); safety limits follow.
+ */
 export const ADVANCED_FIELDS: readonly AdvancedField[] = [
   { key: "enabled", label: "Skill filtering", kind: "bool", hint: "Turn relevance scoring of skill advertisements on or off. The master switch on the main screen also applies." },
-  { key: "mode", label: "Scoring mode", kind: "choice", hint: "How skills are scored.", options: [
-    { value: "score", description: "Expected 0–2 relevance index per skill (default)." },
-    { value: "choice", description: "Pick one of irrelevant / related / directly relevant per skill." },
+  { key: "threshold", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A skill is added when its relevance score is at least this. 0.375 is the default; 1 keeps only perfect scores." },
+  { key: "chunkSize", label: "Shard size", kind: "int", hint: "1–50 skills per decision request; every shard of the remaining candidates is evaluated." },
+  { key: "maxSkills", label: "Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
+  { key: "cadence", label: "Run picker", kind: "options", hint: "When the picker looks for more skills to add. Skills are only ever added, never removed.", options: [
+    { value: "prompt", description: "On each submitted prompt, and for queued steering/follow-up messages (default)." },
+    { value: "tool-round", description: "Also after each completed tool round: adds the next-best skills for the same task. No tool names, arguments or results are sent." },
   ] },
-  { key: "minLabel", label: "Minimum relevance", kind: "choice", hint: "Lowest relevance that keeps a skill advertised.", options: [
-    { value: "related", description: "Keep related and directly relevant skills (uses the related threshold)." },
-    { value: "directly_relevant", description: "Keep only directly relevant skills (uses the direct threshold)." },
+  { key: "failMode", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
+    { value: "closed", description: "Add no new skills when scoring fails (default, recommended)." },
+    { value: "open", description: "WARNING: every remaining skill is added when scoring fails." },
   ] },
-  { key: "relatedThreshold", label: "Related threshold", kind: "decimal", hint: "Raw 0–2 score, inclusive. Must be ≤ the direct threshold." },
-  { key: "directThreshold", label: "Direct threshold", kind: "decimal", hint: "Raw 0–2 score, inclusive. Must be ≥ the related threshold." },
-  { key: "maxSkills", label: "Max skills kept", kind: "int", hint: "0–1000 scored skills advertised at most. Always-allowed skills do not count." },
-  { key: "minCandidates", label: "Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and all stay advertised." },
-  { key: "chunkSize", label: "Batch size", kind: "int", hint: "1–50 skills per decision request; every batch is evaluated." },
-  { key: "concurrency", label: "Concurrency", kind: "int", hint: "0–32. 0 sends every batch in parallel; 1–32 limits simultaneous batches." },
   { key: "timeoutMs", label: "Timeout (ms)", kind: "int", hint: "1–300000 milliseconds for the whole scoring pass." },
-  { key: "failMode", label: "On failure", kind: "choice", hint: "What happens when scoring fails.", options: [
-    { value: "closed", description: "Hide unverified skill advertisements (default, recommended)." },
-    { value: "open", description: "WARNING: every skill stays advertised when scoring fails." },
-  ] },
+  { key: "concurrency", label: "Concurrency", kind: "int", hint: "0–32. 0 sends every shard in parallel; 1–32 limits simultaneous shards." },
+  { key: "minCandidates", label: "Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and every skill stays advertised." },
   { key: "maxPromptChars", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
   { key: "maxDescriptionChars", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each skill description sent." },
 ];
@@ -63,7 +61,7 @@ export function advancedField(key: string): AdvancedField | undefined { return A
 export function advancedValueText(field: AdvancedField, settings: ContextDecisionsSettings): string {
   const value = settings.relevance[field.key];
   if (field.kind === "bool") return value ? "On" : "Off";
-  if (field.key === "concurrency") return value === 0 ? "0 (all batches parallel)" : String(value);
+  if (field.key === "concurrency") return value === 0 ? "0 (all shards parallel)" : String(value);
   return String(value);
 }
 

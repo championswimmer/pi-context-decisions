@@ -1,4 +1,6 @@
-import { applySkillAdvertisementFilter, filterSkills, type SkillAdvertisementResult } from "../apps/skill-filter.ts";
+import type { ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
+import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
+import { taskWithoutExpandedSkill } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
 import { allowlistedNames, toScopedSkills, type ScopedSkill } from "../apps/allowlist.ts";
 import { loadProjectAllowlist, saveProjectAllowlist } from "../project-allowlist.ts";
@@ -6,8 +8,10 @@ import { createBackend } from "../core/backends/factory.ts";
 import { createDecisionClient } from "../decision/api.ts";
 import { DecisionError } from "../decision/errors.ts";
 import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
+import type { ContextDecisionsSettings } from "../settings.ts";
 import { defaultSettings, loadSettings, parseSettings, saveSettings } from "../settings.ts";
 import { registerCommands } from "./commands.ts";
+import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type LedgerState } from "./skill-ledger.ts";
 import { selectionLabel, type Controller, type ExtensionDependencies, type ExtensionHost, type LastDecision } from "./contracts.ts";
 
 function sumUsage(responses: DecisionResponse[]): DecisionUsage | undefined {
@@ -32,6 +36,15 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let projectWriteQueue = Promise.resolve();
   let inventorySnapshot: ScopedSkill[] | undefined;
   const projectWarnings = new Set<string>();
+  /** Scores for the current task: later rounds for the same task add the next-best skills without a call. */
+  const scoreCache = new RelevanceScoreCache();
+  /** Full Pi skill objects from the latest before_agent_start; deltas need their canonical locations. */
+  let skillRefs = new Map<string, Skill>();
+  /** Latest bounded user task. Never assistant text, tool names, arguments or results. */
+  let runTask: string | undefined;
+  let failedKey: string | undefined;
+  const seenQueued = new Set<string>();
+  let busy = false;
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const load = async () => {
     const result = await (deps.load ?? loadSettings)(deps.settingsPath);
@@ -50,12 +63,12 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (inventorySnapshot) return structuredClone(inventorySnapshot);
       return toScopedSkills((pi.getCommands?.() ?? []).filter((command) => command.source === "skill" && command.name.startsWith("skill:")).map((command) => ({ name: command.name.slice(6), description: command.description ?? "", sourceInfo: { scope: command.sourceInfo?.scope } })));
     },
-    loadProjectAllowlist,
+    loadProjectAllowlist: (cwd) => (deps.loadProjectAllowlist ?? loadProjectAllowlist)(cwd),
     async saveProjectAllowlist(cwd, names) {
       const draft = [...names];
       const operation = projectWriteQueue.then(async () => {
         await saveProjectAllowlist(cwd, draft);
-        abortPending(); generation++; last = undefined;
+        abortPending(); generation++; last = undefined; scoreCache.clear();
       });
       projectWriteQueue = operation.catch(() => {});
       await operation;
@@ -66,7 +79,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         const next = parseSettings(change(structuredClone(settings)));
         await (deps.save ?? saveSettings)(next, deps.settingsPath);
         abortPending(); generation++;
-        settings = next; settingsError = undefined; warnings = []; last = undefined;
+        settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); failedKey = undefined;
       });
       writeQueue = operation.catch(() => {});
       await operation;
@@ -88,7 +101,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     setStatus(ctx) {
       if (!ctx.hasUI) return;
       const state = settingsError ? "settings error · repair with /decisions model" : !settings.enabled || !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions model" : last
-        ? `${last.reason} · ${last.kept}/${last.candidates} skills · ${last.latencyMs}ms${last.errorCode ? ` · ${last.errorCode}` : ""}`
+        ? `${last.reason} · +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : ` · ${last.advertised} advertised`}${last.cached ? " · cached" : ` · ${last.latencyMs}ms`}${last.errorCode ? ` · ${last.errorCode}` : ""}`
         : selectionLabel(settings.backend);
       ctx.ui.setStatus("context-decisions", state);
     },
@@ -97,6 +110,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   pi.on("session_start", async (_event, ctx) => {
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
+    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear();
     await projectWriteQueue;
     await writeQueue;
     await loading;
@@ -106,75 +120,218 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     for (const warning of warnings) controller.report(ctx, warning, "warning");
     controller.setStatus(ctx);
   });
+  pi.on("session_tree", () => {
+    // Navigating the session tree changes the active branch: an in-flight pass was computed against the old one.
+    // Everything branch-derived is re-read from the new branch at the next boundary; only transient state is dropped here.
+    abortPending(); generation++; last = undefined; scoreCache.clear(); runTask = undefined; failedKey = undefined; seenQueued.clear();
+  });
   pi.on("session_shutdown", (_event, ctx) => {
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
     // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
     commands.closeDialogs();
-    abortPending(); generation++; last = undefined;
+    abortPending(); generation++; last = undefined; scoreCache.clear();
     if (ctx.hasUI) ctx.ui.setStatus("context-decisions", undefined);
   });
-  pi.on("before_agent_start", async (event, ctx) => {
-    inventorySnapshot = toScopedSkills(event.systemPromptOptions.skills);
-    await controller.ensureLoaded();
-    const currentGeneration = generation;
-    const current = structuredClone(settings);
-    const abort = new AbortController();
-    pending.add(abort);
-    const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
-    const responses: DecisionResponse[] = [];
-    let client: RelevanceClient | null = null;
-    let configError = settingsError;
+  const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
+    const names = new Set<string>();
+    return skills.filter((skill) => !names.has(skill.name) && !!names.add(skill.name));
+  };
+  /** Newest queued steering/follow-up USER text; never assistant text, tool names, arguments or results. */
+  const queuedUserTask = (pending: readonly unknown[] | undefined): { id: string; text: string } | undefined => {
+    for (let index = (pending?.length ?? 0) - 1; index >= 0; index--) {
+      const message = pending![index] as { role?: unknown; content?: unknown; timestamp?: unknown } | undefined;
+      if (message?.role !== "user") continue;
+      const raw = typeof message.content === "string" ? message.content
+        : Array.isArray(message.content) ? message.content.flatMap((block: { type?: unknown; text?: unknown }) => block?.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n") : "";
+      const text = taskWithoutExpandedSkill(raw.slice(0, 100_000));
+      return text.trim() ? { id: `${String(message.timestamp ?? "")}\0${text}`, text } : undefined;
+    }
+    return undefined;
+  };
+  const ledgerFor = (ctx: ExtensionContext): LedgerState => {
+    try { return readLedger(ctx.sessionManager); }
+    catch { return { base: new Set(), added: new Set(), visible: new Set(), lost: [] }; }
+  };
+  const resolveClient = (ctx: ExtensionContext, current: ContextDecisionsSettings, responses: DecisionResponse[]): { client: RelevanceClient | null; error?: string } => {
+    if (settingsError) return { client: null, error: settingsError };
+    // Never construct/request a client when explicitly disabled or unconfigured.
+    if (!current.enabled || !current.relevance.enabled || !current.backend) return { client: null };
     try {
-      const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : { names: [], warnings: [] };
-      const pinned = [...new Set([...current.relevance.pinned, ...allowlistedNames(event.systemPromptOptions.skills, { global: current.globalAllowlist, project: project.names })])];
-      if (currentGeneration !== generation) {
-        // A settings/project/session change during file I/O must not start stale decisions.
-        event.systemPromptOptions.skills = filterSkills(event.systemPromptOptions.skills, null, { ...current.relevance, pinned, failMode: "closed" }).kept;
-        return;
-      }
+      if (current.backend.backend === "pi" && !ctx.modelRegistry.findOfType("classifier", current.backend.provider, current.backend.id)) throw new DecisionError("config", "Selected Pi classifier is not registered");
+      const decision = controller.createClient(current.backend, ctx);
+      const relevanceClient: RelevanceClient = decision;
+      return { client: { maxQuestions: relevanceClient.maxQuestions, async decide(request, options) { const response = await decision.decide(request, options); responses.push(response); return response; } } };
+    } catch { return { client: null, error: "Decision client configuration failed" }; }
+  };
+  const pinsFor = async (ctx: ExtensionContext, current: ContextDecisionsSettings, skills: readonly Skill[], reportWarnings: boolean): Promise<string[]> => {
+    const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : { names: [], warnings: [] as string[], error: undefined as string | undefined };
+    if (reportWarnings) {
       for (const warning of [...project.warnings, ...(project.error ? [project.error] : [])]) {
         const warningKey = `${ctx.cwd ?? ""}\0${warning}`;
         if (!projectWarnings.has(warningKey)) { projectWarnings.add(warningKey); controller.report(ctx, warning, "warning"); }
       }
-      // Never construct/request a client when explicitly disabled or unconfigured.
-      if (!configError && current.enabled && current.relevance.enabled && current.backend) {
-        try {
-          if (current.backend.backend === "pi" && !ctx.modelRegistry.findOfType("classifier", current.backend.provider, current.backend.id)) throw new DecisionError("config", "Selected Pi classifier is not registered");
-          const decision = controller.createClient(current.backend, ctx);
-          const relevanceClient: RelevanceClient = decision;
-          client = { maxQuestions: relevanceClient.maxQuestions, async decide(request, options) { const response = await decision.decide(request, options); responses.push(response); return response; } };
-        } catch { configError = "Decision client configuration failed"; }
+    }
+    return [...new Set([...current.relevance.pinned, ...allowlistedNames(skills, { global: current.globalAllowlist, project: project.names })])];
+  };
+  const cacheKey = (task: string, current: ContextDecisionsSettings) =>
+    JSON.stringify([task, current.backend, current.relevance.maxPromptChars, current.relevance.maxDescriptionChars]);
+  const record = (round: SkillAdditionResult<Skill> | undefined, fields: Omit<LastDecision, "latencyMs" | "usage"> & { latencyMs?: number }, responses: DecisionResponse[], started: number) => {
+    const usage = sumUsage(responses);
+    last = { ...fields, latencyMs: fields.latencyMs ?? round?.latencyMs ?? Date.now() - started, ...(usage ? { usage } : {}) };
+  };
+  /**
+   * Additive advertisement. The system prompt carries only a STABLE base (always-allowed skills, or the whole
+   * inventory once filtering was off/unconfigured/below minimum on this branch). New skills are appended as
+   * user-role custom messages built with Pi's public formatSkillsForPrompt, never removed, never re-scored.
+   */
+  pi.on("before_agent_start", async (event, ctx) => {
+    const inventory = uniqueByName(event.systemPromptOptions.skills);
+    inventorySnapshot = toScopedSkills(event.systemPromptOptions.skills);
+    skillRefs = new Map(inventory.map((skill) => [skill.name, skill]));
+    await controller.ensureLoaded();
+    // Runs started by a custom message (pi.sendMessage with triggerTurn) have no user prompt: base and re-delivery only.
+    const task = (event as { messageType?: unknown }).messageType === "custom" || typeof event.prompt !== "string" ? "" : taskWithoutExpandedSkill(event.prompt);
+    runTask = task.trim() ? task : undefined;
+    failedKey = undefined;
+    const currentGeneration = generation;
+    const current = structuredClone(settings);
+    const abort = new AbortController();
+    pending.add(abort);
+    busy = true;
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
+    const responses: DecisionResponse[] = [];
+    const started = Date.now();
+    try {
+      // Pi omits the skills section when neither `read` nor `bash` is declared, so nothing is exposed then:
+      // record no base at all (a later run with a reader must still score and advertise those skills).
+      const reader = skillReader(pi.getActiveTools());
+      const inventoryNames = new Set(inventory.map((skill) => skill.name));
+      const invocable = inventory.filter((skill) => !skill.disableModelInvocation);
+      const setSystemSkills = (names: ReadonlySet<string>) => {
+        if (!reader) return; // no section is rendered; leave Pi's array alone
+        const base = inventory.filter((skill) => skill.disableModelInvocation || names.has(skill.name));
+        // Nothing to hide: keep Pi's own array (and its prompt section) untouched.
+        if (base.length !== event.systemPromptOptions.skills.length) event.systemPromptOptions.skills = base;
+      };
+      const pinned = await pinsFor(ctx, current, event.systemPromptOptions.skills, true);
+      /**
+       * Nothing may be recorded or applied for a superseded pass (settings/allowlist save, session replacement,
+       * branch navigation) or a cancelled run: guard BEFORE any base mutation after an await. The system skills
+       * come from the CURRENT branch's base plus the effective always-allowed skills; no entry is appended, so
+       * nothing from the old pass can leak onto the new branch.
+       */
+      const superseded = () => currentGeneration !== generation || signal.aborted;
+      const supersededBase = () => new Set([...ledgerFor(ctx).base, ...pinned]);
+      const bail = () => {
+        setSystemSkills(supersededBase());
+        // A cancelled run (same generation) is still reported as aborted; a superseded one is silent.
+        if (currentGeneration !== generation) return;
+        record(undefined, { reason: "fail-closed", candidates: invocable.length, kept: 0, errorCode: "aborted", trigger: "prompt" }, responses, started);
+        controller.setStatus(ctx);
+      };
+      if (superseded()) { bail(); return; }
+      const ledger = ledgerFor(ctx);
+      const growBase = (names: Iterable<string>) => {
+        if (!reader) return;
+        const fresh = [...new Set(names)].filter((name) => inventoryNames.has(name) && !ledger.base.has(name));
+        if (!fresh.length) return;
+        pi.appendEntry(SKILLS_BASE_ENTRY, { v: 1, names: fresh });
+        for (const name of fresh) ledger.base.add(name);
+      };
+      const applyBase = () => setSystemSkills(ledger.base);
+      growBase(pinned); // allowlist removals never shrink the base: advertisements are only ever added
+      const lostSkills = reader ? ledger.lost.flatMap((name) => skillRefs.get(name) ?? []) : [];
+      const { client, error: configError } = resolveClient(ctx, current, responses);
+      let reason: LastDecision["reason"] = "skipped";
+      let errorCode: string | undefined;
+      let round: SkillAdditionResult<Skill> | undefined;
+      const pinnedSet = new Set(pinned);
+      if (configError) { reason = "fail-closed"; errorCode = "config"; }
+      else if (!current.enabled || !current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
+        // Today's semantics, made additive: disabled/unconfigured/below-minimum keep EVERYTHING advertised, and
+        // the branch remembers that, so enabling filtering later can never drop a skill the model already saw.
+        growBase(invocable.map((skill) => skill.name));
+      } else if (task.trim() && reader) {
+        const remaining = invocable.filter((skill) => !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
+        round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
+        reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
+        errorCode = round.errorCode;
+        if (round.errorCode && round.errorCode !== "aborted") failedKey = cacheKey(task, current);
       }
-      let result: SkillAdvertisementResult<(typeof event.systemPromptOptions.skills)[number]>;
-      if (configError) {
-        // Configuration failure must close ads before empty-task/expanded-skill skips.
-        const started = Date.now();
-        const skills = event.systemPromptOptions.skills;
-        const names = new Set<string>();
-        const candidates = skills.reduce((count, skill) => {
-          if (names.has(skill.name)) return count;
-          names.add(skill.name);
-          return count + (skill.disableModelInvocation ? 0 : 1);
-        }, 0);
-        const filtered = filterSkills(skills, null, { ...current.relevance, pinned, failMode: "closed" });
-        event.systemPromptOptions.skills = filtered.kept;
-        result = { ...filtered, candidates, errorCode: "config", latencyMs: Date.now() - started };
-      } else {
-        result = await applySkillAdvertisementFilter(event, client, {
-          ...current.relevance,
-          pinned,
-          enabled: current.enabled,
-          relevanceEnabled: current.relevance.enabled,
-          maxQuestions: 50, // app reduces the requested batch when a provider declares a lower cap
-          signal,
-        });
-      }
-      if (currentGeneration !== generation) return;
-      const usage = sumUsage(responses);
-      last = { reason: result.reason, candidates: result.candidates, kept: result.kept.filter((skill) => !skill.disableModelInvocation).length,
-        latencyMs: result.latencyMs, ...(result.errorCode ? { errorCode: result.errorCode } : {}), ...(usage ? { usage } : {}) };
+      if (superseded()) { bail(); return; }
+      applyBase();
+      // Re-check cancellation right before committing: cached scores or restoration must not slip past an abort.
+      const cancelled = signal.aborted;
+      const added = cancelled ? [] : round?.added ?? [];
+      const delta = reader && !cancelled ? buildSkillsDelta(added, lostSkills, reader) : undefined;
+      const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
+      record(round, {
+        reason, candidates: round?.candidates ?? invocable.length, kept: added.length,
+        advertised: invocable.filter((skill) => advertised.has(skill.name)).length, redelivered: delta?.details.redelivered.length ?? 0,
+        ...(round?.cached ? { cached: true } : {}), trigger: "prompt", ...(errorCode ? { errorCode } : {}),
+      }, responses, started);
       controller.setStatus(ctx);
-      if (result.errorCode && result.errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${result.reason} (${result.errorCode}); /decisions status`, "warning");
-    } finally { pending.delete(abort); }
+      if (errorCode && errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${reason} (${errorCode}); /decisions status`, "warning");
+      return delta ? { message: delta } : undefined;
+    } finally { pending.delete(abort); busy = false; }
+  });
+  /**
+   * Between model requests inside a run. Only adds: re-delivers skills that compaction/edits removed from model
+   * context (no scoring), and, for queued steering/follow-up user text or the opt-in `tool-round` cadence after
+   * completed tool calls, adds the next-best remaining skills. Nothing but the latest bounded user task and
+   * candidate names/descriptions is ever sent to the decision model, and the loop is never continued here.
+   */
+  pi.on("turn_end", async (event, ctx) => {
+    if (busy || event.outcome !== "completed" || event.context?.canContinue !== true) return;
+    const reader = skillReader(pi.getActiveTools());
+    if (!reader) return;
+    await controller.ensureLoaded();
+    const queued = queuedUserTask(event.context.pendingMessages);
+    const fresh = queued && !seenQueued.has(queued.id) ? queued : undefined;
+    const current = structuredClone(settings);
+    const toolRound = current.relevance.cadence === "tool-round" && event.toolResults.length > 0 && runTask !== undefined;
+    const ledger = ledgerFor(ctx);
+    const lostSkills = ledger.lost.flatMap((name) => skillRefs.get(name) ?? []);
+    if (fresh) { seenQueued.add(fresh.id); runTask = fresh.text; failedKey = undefined; }
+    const task = fresh?.text ?? (toolRound ? runTask : undefined);
+    if (!task && !lostSkills.length) return;
+    const currentGeneration = generation;
+    const abort = new AbortController();
+    pending.add(abort);
+    busy = true;
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
+    const responses: DecisionResponse[] = [];
+    const started = Date.now();
+    try {
+      let round: SkillAdditionResult<Skill> | undefined;
+      const key = task ? cacheKey(task, current) : undefined;
+      if (task && key !== undefined && (fresh || key !== failedKey)) {
+        const { client } = resolveClient(ctx, current, responses);
+        if (client) {
+          const skills = [...skillRefs.values()];
+          const pinnedSet = new Set(await pinsFor(ctx, current, skills, false));
+          if (currentGeneration !== generation || signal.aborted) return; // superseded while reading the allowlist: score nothing
+          const remaining = skills.filter((skill) => !skill.disableModelInvocation && !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
+          round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key });
+          if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
+        }
+      }
+      if (currentGeneration !== generation || signal.aborted) return; // stale or cancelled (even with cached scores): commit nothing
+      const added = round?.added ?? [];
+      const delta = buildSkillsDelta(added, lostSkills, reader);
+      if (round) {
+        const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
+        record(round, {
+          reason: round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered", candidates: round.candidates, kept: added.length,
+          advertised: [...skillRefs.values()].filter((skill) => !skill.disableModelInvocation && advertised.has(skill.name)).length,
+          redelivered: delta?.details.redelivered.length ?? 0, ...(round.cached ? { cached: true } : {}),
+          trigger: fresh ? "queued" : "tool-round", ...(round.errorCode ? { errorCode: round.errorCode } : {}),
+        }, responses, started);
+        controller.setStatus(ctx as unknown as Parameters<Controller["setStatus"]>[0]);
+      }
+      // Pi's boundary dispatch REPLACES the accumulated drafts with whatever a handler returns, so keep every
+      // earlier extension's custom/context_edit/compaction drafts and append ours.
+      return delta ? { entries: [...event.entries, { type: "custom_message" as const, ...delta }] } : undefined;
+    } finally { pending.delete(abort); busy = false; }
   });
 }

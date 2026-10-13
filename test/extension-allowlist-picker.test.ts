@@ -9,7 +9,7 @@ const theme: AllowlistTheme = { fg: (_token, value) => value, bg: (_token, value
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const keys = { down: "\x1b[B", up: "\x1b[A", esc: "\x1b", tab: "\t", rank: "\x12", save: "\x13", clear: "\x0b", enter: "\r", space: " " };
 const skill = (name: string, description = "", scope: "global" | "project" = "global"): ScopedSkill => ({ name, description, scope, disableModelInvocation: false });
-const item = (name: string, score: number): RelevanceItem => ({ name, score, normalized: score / 2, label: score >= 1.5 ? "directly_relevant" : score >= 0.75 ? "related" : "irrelevant" });
+const item = (name: string, score: number): RelevanceItem => ({ name, score, normalized: score / 2 });
 function harness(overrides: Partial<AllowlistPickerDeps> = {}) {
   const saved: string[][] = [], closed: boolean[] = [], reports: string[] = [];
   let renders = 0;
@@ -58,7 +58,7 @@ test("rank is explicit, semantic list is not fuzzy-filtered, and changing query 
   const h = harness({ rankLabel: "fixture provider · paid call", rank: async (query, skills) => { queries.push(query); return skills.map((s) => item(s.name, s.name === "zulu" ? 2 : 0)); } });
   h.input("Browser"); assert.deepEqual(queries, []); h.component.handleInput!(keys.rank); await tick();
   assert.deepEqual(queries, ["Browser"]); const text = h.rendered();
-  assert.ok(text.indexOf("[ ] zulu") < text.indexOf("[ ] alpha")); assert.match(text, /2.00\/2/); assert.match(text, /\[x\] not-loaded/);
+  assert.ok(text.indexOf("[ ] zulu") < text.indexOf("[ ] alpha")); assert.match(text, /1.00 relevance/); assert.match(text, /\[x\] not-loaded/);
   h.input("x"); assert.match(h.rendered(), /stale/); assert.deepEqual(h.saved, []); h.component.dispose();
 });
 test("a second ranking cancels the first, stale completion cannot overwrite, close cancels and never redraws", async () => {
@@ -94,7 +94,7 @@ test("400 scoped metadata skills rank in eight parallel batches; paths and bodie
   } });
   h.input("Search topics"); h.component.handleInput!(keys.rank); await tick();
   assert.deepEqual(batches, Array(8).fill(50)); for (const request of requests) assert.doesNotMatch(request, /PRIVATE_BODY|\/private\/fixture|filePath/);
-  finishes.reverse().forEach((finish) => finish()); await tick(); assert.match(h.rendered(), /1.80\/2/); assert.deepEqual(h.saved, []); h.component.dispose();
+  finishes.reverse().forEach((finish) => finish()); await tick(); assert.match(h.rendered(), /0.90 relevance/); assert.deepEqual(h.saved, []); h.component.dispose();
 });
 test("every rendered line fits 40/80/120 columns with Unicode, ANSI-like control input and expanded text", () => {
   const h = harness({ skills: [skill("界界😀a\x1b[31m", "漢字 emoji 😀 é \x1b]8;;https://evil\x07\n".repeat(30))], initial: [], locationLabel: "\x1b[31m/private/path" });

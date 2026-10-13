@@ -3,10 +3,12 @@ import { test } from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionCommandContext, ExtensionContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { advertised, deltaMessages, simHost } from "./helpers/pi-sim.ts";
+import { readLedger } from "../src/extension/skill-ledger.ts";
 import contextDecisions from "../src/extension.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
-import type { CommandContext, ExtensionDependencies, ExtensionRegistry, ExtensionHost } from "../src/extension/contracts.ts";
+import type { CommandContext, ExtensionDependencies, ExtensionRegistry } from "../src/extension/contracts.ts";
 import { pickerEntries } from "../src/extension/commands.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
@@ -14,20 +16,7 @@ import { DecisionError } from "../src/decision/errors.ts";
 import type { DecisionRequest, DecisionResponse } from "../src/decision/types.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
 
-type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
-function host() {
-  const handlers = new Map<string, Handler[]>();
-  const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
-  const pi: ExtensionHost = {
-    // The fake only implements the actual on/command registration contract used here.
-    on: ((event: string, handler: Handler) => { const list = handlers.get(event) ?? []; list.push(handler); handlers.set(event, list); return () => {}; }) as ExtensionAPI["on"],
-    registerCommand(name, command) { commands.set(name, command); },
-  };
-  return { pi, handlers, commands,
-    async emit(event: string, value: unknown, ctx: CommandContext) { for (const handler of handlers.get(event) ?? []) await handler(value, ctx as ExtensionContext); },
-    async command(args: string, ctx: CommandContext) { await commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext); },
-  };
-}
+const host = () => simHost();
 function answer(request: DecisionRequest): DecisionResponse {
   return { answers: Object.fromEntries(Object.entries(request.questions).map(([id, q]) => [id, q.type === "score" ? { type: "score", score: id === "s0" ? 2 : 0 } : q.type === "bool" ? { type: "bool", probability: 1 } : { type: "choice", choice: id === "s0" ? "directly_relevant" : "irrelevant" }])), usage: { inputTokens: 3 } };
 }
@@ -73,11 +62,11 @@ async function setup(t: { after(fn: () => Promise<void>): void }, deps: Partial<
   return { ...h, path, messages };
 }
 
-test("real entry factory registers one command and three hooks, no custom provider or tools", () => {
+test("real entry factory registers one command and five hooks, no custom provider or tools", () => {
   const h = host(); contextDecisions(h.pi as ExtensionAPI);
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
-  assert.deepEqual([...h.handlers.keys()], ["session_start", "session_shutdown", "before_agent_start"]);
+  assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "turn_end"]);
   assert.deepEqual(h.commands.get("decisions")!.getArgumentCompletions!("mo"), [{ value: "model", label: "model" }]);
 });
 test("real Pi context registry is type-compatible without a cast in production", () => {
@@ -90,7 +79,9 @@ test("startup defaults perform no auth or inference and do not mutate advertisem
   await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
   const e = event(); const original = e.systemPromptOptions.skills;
   await h.emit("before_agent_start", e, c.ctx);
-  assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original); assert.match(c.statuses[0]!, /select model/);
+  assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.match(c.statuses[0]!, /select model/);
+  assert.deepEqual(deltaMessages(h.session), [], "unconfigured advertises everything through the base: no delta");
+  assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "the branch remembers that every skill was advertised");
   await h.command("settings", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /"backend": null/);
 });
 test("headless native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
@@ -100,10 +91,14 @@ test("headless native selection persists, filters through real core, only skills
   let observed: unknown;
   h.pi.on("before_agent_start", (evt) => { observed = evt.systemPromptOptions.skills; });
   await h.emit("before_agent_start", e, c.ctx);
-  assert.equal(c.calls(), 1); assert.deepEqual(e.systemPromptOptions.skills, [original[0]]); assert.equal(observed, e.systemPromptOptions.skills);
+  assert.equal(c.calls(), 1); assert.equal(observed, e.systemPromptOptions.skills);
+  // The system prompt carries only the stable base (no pins); the selection arrives as an append-only delta.
+  assert.deepEqual(e.systemPromptOptions.skills, []);
+  assert.deepEqual(advertised(h, original, e.systemPromptOptions.skills), ["skill-0"]);
+  assert.equal(deltaMessages(h.session).length, 1);
   assert.equal(e.systemPrompt, "unchanged");
   for (const key of Object.keys(before).filter((key) => key !== "skills") as (keyof typeof before)[]) assert.equal(e.systemPromptOptions[key], before[key]);
-  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered, 1\/8 skills/); assert.match(h.messages.at(-1)!.text, /inputTokens/);
+  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered, \+1 of 8 candidates, 1 advertised/); assert.match(h.messages.at(-1)!.text, /inputTokens/);
 });
 test("30-skill hook respects persisted decimal thresholds and batch settings via real commands", async (t) => {
   const batches: number[] = [];
@@ -116,21 +111,24 @@ test("30-skill hook respects persisted decimal thresholds and batch settings via
   const c = context();
   await h.command("relevance chunkSize 5", c.ctx);
   await h.command("relevance maxSkills 30", c.ctx);
-  await h.command("relevance relatedThreshold 1.25", c.ctx);
+  await h.command("relevance threshold 0.625", c.ctx);
   const e = event(30); const original = e.systemPromptOptions.skills;
   await h.emit("before_agent_start", e, c.ctx);
   assert.deepEqual(batches, [5, 5, 5, 5, 5, 5]);
-  assert.deepEqual(e.systemPromptOptions.skills, original.filter((_, i) => i % 2 === 1));
-  assert.equal((await loadSettings(h.path)).settings.relevance.relatedThreshold, 1.25);
-  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /batch 5.*raw thresholds related 1.25\/direct 1.5/);
-  await h.command("relevance relatedThreshold 1.6", c.ctx);
+  assert.deepEqual(advertised(h, original, e.systemPromptOptions.skills), original.filter((_, i) => i % 2 === 1).map((skill) => skill.name));
+  assert.equal((await loadSettings(h.path)).settings.relevance.threshold, 0.625);
+  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /threshold 0.625 \(0–1\).*shard 5/s);
+  await h.command("relevance threshold 1.6", c.ctx);
   assert.equal(h.messages.at(-1)!.level, "error");
-  assert.equal((await loadSettings(h.path)).settings.relevance.relatedThreshold, 1.25);
+  assert.equal((await loadSettings(h.path)).settings.relevance.threshold, 0.625);
+  await h.command("relevance relatedThreshold 1.25", c.ctx);
+  assert.equal(h.messages.at(-1)!.level, "error"); assert.match(h.messages.at(-1)!.text, /Removed setting/);
 });
 test("disable, relevance-off, unconfigured, below-minimum and empty prompt make zero calls", async (t) => {
   const h = await setup(t, {}, true); const c = context();
   await h.command("disable", c.ctx); const disabled = event(); const original = disabled.systemPromptOptions.skills;
   await h.emit("before_agent_start", disabled, c.ctx); assert.equal(disabled.systemPromptOptions.skills, original);
+  assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "disabled advertises everything and the branch remembers it");
   await h.command("enable", c.ctx); await h.command("relevance enabled false", c.ctx); await h.emit("before_agent_start", event(), c.ctx);
   await h.command("relevance enabled true", c.ctx); await h.emit("before_agent_start", event(2), c.ctx);
   const empty = event(); empty.prompt = " "; await h.emit("before_agent_start", empty, c.ctx);
@@ -199,10 +197,12 @@ test("parallel settings updates serialize without dropping other changes", async
 });
 test("provider failure hides advertisements by default, explicitly configured open retains them", async (t) => {
   const h = await setup(t, { createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide() { throw new Error("SECRET-FIXTURE private prompt"); } }); } }, true);
-  const c = context({}, true); const closed = event(); await h.emit("before_agent_start", closed, c.ctx); assert.equal(closed.systemPromptOptions.skills.length, 0);
+  const c = context({}, true); const closed = event(); const closedInventory = closed.systemPromptOptions.skills;
+  await h.emit("before_agent_start", closed, c.ctx); assert.deepEqual(advertised(h, closedInventory, closed.systemPromptOptions.skills), []);
   assert.match(c.statuses.at(-1)!, /fail-closed.*network/); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE|private prompt/);
   await h.command("relevance failMode open", c.ctx); const open = event(); const original = open.systemPromptOptions.skills; await h.emit("before_agent_start", open, c.ctx);
-  assert.deepEqual(open.systemPromptOptions.skills, original); assert.match(c.statuses.at(-1)!, /fail-open/);
+  assert.deepEqual(advertised(h, original, open.systemPromptOptions.skills), original.map((skill) => skill.name), "fail-open adds every remaining skill, once"); assert.match(c.statuses.at(-1)!, /fail-open/);
+  assert.equal(deltaMessages(h.session).length, 1);
 });
 test("malformed decisions and missing current native registry entries fail closed", async (t) => {
   const h = await setup(t, {}, true); const c = context({ async classify() { return { answers: {}, stopReason: "stop" }; } }); const e = event();
@@ -247,7 +247,7 @@ for (const failure of ["invalid-persisted", "missing-native"] as const) {
     assert.equal(e.prompt, prompt); assert.equal(e.systemPrompt, "unchanged");
     for (const key of Object.keys(options).filter((key) => key !== "skills") as (keyof typeof options)[]) assert.equal(e.systemPromptOptions[key], options[key]);
     await h.command("status", c.ctx);
-    if (failure === "invalid-persisted") assert.match(h.messages.at(-1)!.text, /fail-closed, 0\/7 skills.*\(config\)/);
+    if (failure === "invalid-persisted") assert.match(h.messages.at(-1)!.text, /fail-closed, \+0 of 7 candidates.*\(config\)/);
   });
 }
 test("whole filter timeout hides ads with timeout status and shutdown cancels ignored signals", async (t) => {

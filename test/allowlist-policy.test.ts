@@ -111,10 +111,7 @@ test("default task request is unchanged; topic ranking changes only rubric instr
   assert.deepEqual(topic.request.state, expected[0].request.state);
   assert.deepEqual(topic.request.questions.s0.criteria, [...TOPIC_RELEVANCE_CRITERIA]);
   assert.match(topic.request.questions.s0.instructions, /topics in the search query/);
-  const choice = buildRelevanceRequests("query", skills, { rubric: "topic", mode: "choice" })[0].request.questions.s0;
-  assert.equal(choice.type, "choice");
-  if (choice.type !== "choice") assert.fail("expected choice question");
-  assert.deepEqual(Object.keys(choice.criteria), ["irrelevant", "related", "directly_relevant"]);
+  for (const request of [expected[0].request, topic.request]) assert.equal(request.questions.s0.type, "score", "ranking is score-only");
 });
 test("topic ranking evaluates 400 metadata-only skills in eight parallel 50-question batches", async () => {
   const skills = Array.from({ length: 400 }, (_, i) => ({ name: `skill-${i}`, description: "search topic", filePath: "/PRIVATE_PATH", body: "PRIVATE_BODY" }));

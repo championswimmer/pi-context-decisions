@@ -44,8 +44,8 @@ test("state budget splits escaped payload and refuses one oversized entry", () =
   assert.throws(() => buildRelevanceRequests("task", skills, { maxStateChars: 10 }), (e) => e instanceof RelevanceError && e.code === "invalid_request");
 });
 
-test("invalid metadata, bounds, threshold order, and inventory overflows reject without echoing data", () => {
-  for (const options of [{ maxPromptChars: 0 }, { chunkSize: -1 }, { concurrency: Infinity }, { relatedThreshold: 1.8, directThreshold: 1 }]) {
+test("invalid metadata, bounds, and inventory overflows reject without echoing data", () => {
+  for (const options of [{ maxPromptChars: 0 }, { chunkSize: -1 }, { concurrency: Infinity }]) {
     assert.throws(() => buildRelevanceRequests("private prompt", skills, options), RelevanceError);
   }
   assert.throws(() => buildRelevanceRequests("task", skills, { maxCandidates: 2 }), /inventory exceeds/);
@@ -54,25 +54,30 @@ test("invalid metadata, bounds, threshold order, and inventory overflows reject 
   });
 });
 
-test("fractional score is expectation, normalized by two, threshold labels are application policy", () => {
+test("fractional score is the expectation, normalized by two; there is no label or threshold at this layer", () => {
   const batches = buildRelevanceRequests("task", skills);
   const values = [0.74, 0.75, 1.49, 1.5, 2];
   const response = { answers: Object.fromEntries(values.map((score, i) => [`s${i}`, { type: "score" as const, score, confidence: 0.6 }])) };
   const items = interpretRelevance([response], batches);
-  assert.deepEqual(items.map((s) => s.label), ["irrelevant", "related", "related", "directly_relevant", "directly_relevant"]);
+  assert.deepEqual(items.map((s) => s.score), values);
   assert.equal(items[2].normalized, 1.49 / 2);
   assert.equal(items[0].confidence, 0.6);
-  assert.equal(interpretRelevance([response], batches, { relatedThreshold: 1, directThreshold: 2 })[1].label, "irrelevant");
+  assert.ok(items.every((item) => !("label" in item)));
 });
 
-test("choice gives exact label but probability expectation determines ranking", async () => {
-  const result = await rankSkills("task", skills.slice(0, 2), { decide: async () => ({ answers: {
+test("relevance is score-only: every question is a score question and removed policy keys are config errors", async () => {
+  const batches = buildRelevanceRequests("task", skills);
+  assert.ok(batches.every((batch) => Object.values(batch.request.questions).every((question) => question.type === "score")));
+  for (const removed of [{ mode: "choice" }, { mode: "score" }, { relatedThreshold: 0.75 }, { directThreshold: 1.5 }, { minLabel: "related" }]) {
+    assert.throws(() => buildRelevanceRequests("task", skills, removed as never), (error) => error instanceof RelevanceError && error.code === "config");
+    await assert.rejects(rankSkills("task", skills, client, removed as never), (error) => error instanceof RelevanceError && error.code === "config");
+  }
+});
+
+test("a choice answer to a score question is an invalid response, never reinterpreted", async () => {
+  await assert.rejects(rankSkills("task", skills.slice(0, 1), { decide: async () => ({ answers: {
     s0: { type: "choice", choice: "directly_relevant", probabilities: { irrelevant: 0.1, related: 0.3, directly_relevant: 0.6 } },
-    s1: { type: "choice", choice: "related" },
-  } }) }, { mode: "choice" });
-  assert.deepEqual(result.map(({ score, label }) => ({ score, label })), [
-    { score: 1.5, label: "directly_relevant" }, { score: 1, label: "related" },
-  ]);
+  } }) }), (error) => error instanceof RelevanceError && error.code === "invalid_response");
 });
 
 test("missing, extra, mismatched, NaN, and malformed answers are rejected", async () => {

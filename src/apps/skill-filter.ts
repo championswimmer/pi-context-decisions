@@ -1,8 +1,12 @@
-import { rankSkills, type RelevanceClient, type RelevanceItem, type RelevanceLabel, type RelevanceOptions } from "./relevance.ts";
+import { rankSkills, type RelevanceClient, type RelevanceItem, type RelevanceOptions } from "./relevance.ts";
 
 export interface AdvertisedSkill { name: string; description: string; disableModelInvocation?: boolean }
+/** Default relevance threshold on the normalized 0–1 scale (raw expected index 0.75 of 0–2). */
+export const DEFAULT_RELEVANCE_THRESHOLD = 0.375;
 export interface SkillFilterOptions {
-  minLabel?: "related" | "directly_relevant";
+  /** Normalized 0–1, inclusive: a skill qualifies when its 0–2 score is at least twice this value. */
+  threshold?: number;
+  /** Most skills kept (or, for additive picking, newly added per round) across all scoring batches. */
   maxSkills?: number;
   pinned?: readonly string[];
   /** Open explicitly retains unverified advertisements. Closed is the safe default. */
@@ -10,7 +14,16 @@ export interface SkillFilterOptions {
 }
 export type FilterReason = "filtered" | "fail-open" | "fail-closed" | "skipped";
 export interface SkillFilterResult<T> { kept: T[]; dropped: string[]; reason: FilterReason }
-const LABEL_RANK: Record<RelevanceLabel, number> = { irrelevant: 0, related: 1, directly_relevant: 2 };
+export function validThreshold(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+/** Qualifying items by descending score (inventory order breaks ties), capped globally across batches. */
+export function selectRelevant(items: readonly RelevanceItem[], threshold: number, maxSkills: number): { chosen: RelevanceItem[]; eligible: number } {
+  // Halving/doubling an IEEE-754 double is exact, so score >= 2t is the same as score / 2 >= t.
+  const eligible = items.map((item, index) => ({ item, index })).filter(({ item }) => item.score >= 2 * threshold)
+    .sort((a, b) => b.item.score - a.item.score || a.index - b.index);
+  return { chosen: eligible.slice(0, maxSkills).map(({ item }) => item), eligible: eligible.length };
+}
 function uniqueSkills<T extends { name: string }>(skills: readonly T[]): T[] {
   const names = new Set<string>();
   return skills.filter((skill) => {
@@ -19,13 +32,13 @@ function uniqueSkills<T extends { name: string }>(skills: readonly T[]): T[] {
     return true;
   });
 }
-function validItems(items: readonly RelevanceItem[], expected: Set<string>, pinned: Set<string>): boolean {
+export function validItems(items: readonly RelevanceItem[], expected: Set<string>, pinned: Set<string>): boolean {
   const seen = new Set<string>();
   for (const item of items) {
     // Earlier callers may still return decisions for pins; they never affect policy.
     if (item && pinned.has(item.name)) continue;
     if (!item || !expected.has(item.name) || seen.has(item.name)
-      || !Object.hasOwn(LABEL_RANK, item.label) || !Number.isFinite(item.score) || item.score < 0 || item.score > 2
+      || !Number.isFinite(item.score) || item.score < 0 || item.score > 2
       || !Number.isFinite(item.normalized) || Math.abs(item.normalized - item.score / 2) > 1e-9
       || (item.confidence !== undefined && (!Number.isFinite(item.confidence) || item.confidence < 0 || item.confidence > 1))) return false;
     seen.add(item.name);
@@ -39,9 +52,9 @@ export function filterSkills<T extends { name: string; disableModelInvocation?: 
   const inventory = uniqueSkills(skills);
   const pinned = new Set(options.pinned ?? []);
   const maxSkills = options.maxSkills ?? 12;
-  const minLabel = options.minLabel ?? "related";
-  const validPolicy = Number.isSafeInteger(maxSkills) && maxSkills >= 0
-    && (minLabel === "related" || minLabel === "directly_relevant")
+  const threshold = options.threshold ?? DEFAULT_RELEVANCE_THRESHOLD;
+  const validPolicy = Number.isSafeInteger(maxSkills) && maxSkills >= 0 && validThreshold(threshold)
+    && !Object.hasOwn(options, "minLabel")
     && (options.failMode === undefined || options.failMode === "closed" || options.failMode === "open");
   const candidates = inventory.filter((skill) => !skill.disableModelInvocation);
   const failed = !validPolicy || items === null || !validItems(items, new Set(candidates.filter((skill) => !pinned.has(skill.name)).map((skill) => skill.name)), pinned);
@@ -55,12 +68,8 @@ export function filterSkills<T extends { name: string; disableModelInvocation?: 
       kept = inventory.filter((skill) => skill.disableModelInvocation || pinned.has(skill.name)); reason = "fail-closed";
     }
   } else {
-    const eligible = (items as readonly RelevanceItem[])
-      .filter((item) => !pinned.has(item.name) && LABEL_RANK[item.label] >= LABEL_RANK[minLabel])
-      .map((item, index) => ({ item, index }))
-      .sort((a, b) => b.item.score - a.item.score || a.index - b.index)
-      .slice(0, maxSkills);
-    const names = new Set([...pinned, ...eligible.map(({ item }) => item.name)]);
+    const { chosen } = selectRelevant((items as readonly RelevanceItem[]).filter((item) => !pinned.has(item.name)), threshold, maxSkills);
+    const names = new Set([...pinned, ...chosen.map((item) => item.name)]);
     kept = inventory.filter((skill) => skill.disableModelInvocation || names.has(skill.name)); reason = "filtered";
   }
   const keptNames = new Set(kept.map((skill) => skill.name));
@@ -85,7 +94,7 @@ export interface SkillAdvertisementResult<T> extends SkillFilterResult<T> {
   /** Actual dispatched question counts, including provider/payload subdivisions; no metadata. */
   batchSizes?: number[];
 }
-function safeCode(error: unknown): string {
+export function safeCode(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && typeof error.code === "string"
     && ["config", "auth", "invalid_request", "invalid_response", "refusal", "rate_limit", "http", "timeout", "aborted", "network"].includes(error.code)) return error.code;
   return "decision-failed";
@@ -96,7 +105,7 @@ function safeCode(error: unknown): string {
  * Use the LAST closing tag: a skill body may itself contain a closing-tag example.
  * Malformed skill envelopes are not task text and must never be sent to a provider.
  */
-function taskWithoutExpandedSkill(prompt: string): string {
+export function taskWithoutExpandedSkill(prompt: string): string {
   if (!/^\s*<skill\b/u.test(prompt)) return prompt;
   const match = prompt.match(/^\s*<skill\b[^>]*>\r?\n[\s\S]*\r?\n<\/skill>(?:\r?\n\r?\n([\s\S]*))?$/u);
   return match?.[1]?.trim() ?? "";
@@ -106,7 +115,9 @@ function taskWithoutExpandedSkill(prompt: string): string {
  * Scores only bounded task and names/descriptions; never loads skill files or mutates
  * the caller's inventory. Returns original skill references, suitable for Pi's
  * systemPromptOptions.skills. Unlike the automatic hook, explicitly picking has no
- * inventory-size minimum by default. Raw score thresholds are on the 0–2 rubric.
+ * inventory-size minimum by default. The threshold is normalized 0–1 (score / 2).
+ * This stateless picker is score-only and has no advertisement ledger; the Pi extension
+ * layers additive, branch-aware picking on the same ranking and selection primitives.
  */
 export async function pickSkills<T extends AdvertisedSkill>(
   prompt: string, skills: readonly T[], client: RelevanceClient | null, options: SkillAdvertisementOptions = {},
@@ -114,7 +125,7 @@ export async function pickSkills<T extends AdvertisedSkill>(
   const event = { prompt, systemPromptOptions: { skills: [...skills] } };
   return applySkillAdvertisementFilter(event, client, { minCandidates: 0, ...options });
 }
-/** Call from the early before_agent_start hook. ONLY assigns systemPromptOptions.skills. */
+/** Stateless filter used by `pickSkills`: assigns event.systemPromptOptions.skills only. The Pi extension itself is additive and does not call this. */
 export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   event: SkillAdvertisementEvent<T>, client: RelevanceClient | null, options: SkillAdvertisementOptions = {},
 ): Promise<SkillAdvertisementResult<T>> {
@@ -132,7 +143,10 @@ export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
   let items: RelevanceItem[] | null = null;
   let errorCode: string | undefined;
   const batchSizes: number[] = [];
-  if (!Number.isSafeInteger(minCandidates) || minCandidates < 0) errorCode = "config";
+  const maxSkills = options.maxSkills ?? 12;
+  const policyValid = validThreshold(options.threshold ?? DEFAULT_RELEVANCE_THRESHOLD) && Number.isSafeInteger(maxSkills) && maxSkills >= 0;
+  // Invalid policy fails closed before any decision call.
+  if (!Number.isSafeInteger(minCandidates) || minCandidates < 0 || !policyValid) errorCode = "config";
   else if (candidates.length < minCandidates) return skip("below-minimum");
   else {
     try {
@@ -148,7 +162,8 @@ export async function applySkillAdvertisementFilter<T extends AdvertisedSkill>(
     }
     catch (error) { errorCode = safeCode(error); }
   }
-  const result = filterSkills(skills, items, options);
+  // A configuration error is never a reason to advertise everything, even when failMode is open.
+  const result = filterSkills(skills, items, errorCode === "config" ? { ...options, failMode: "closed" } : options);
   event.systemPromptOptions.skills = result.kept;
   return {
     ...result, candidates: candidates.length, batchSizes, ...(items === null ? {} : { items }),

@@ -1,0 +1,29 @@
+{
+  "note": "Single-labeler, author-assigned expectations for a SMALL benchmark. 'required' skills are those a reasonable engineer would call directly needed by the task; 'acceptable' skills are plausible adjacent help that is NOT counted as an off-topic selection. Every other skill is off-topic for that task. These are judgments, not ground truth, and 4 cases cannot support significance claims.",
+  "cases": [
+    {
+      "id": "react-signup",
+      "task": "Build an accessible React signup form with validation and browser tests.",
+      "required": ["react-components", "web-accessibility", "form-validation", "browser-testing"],
+      "acceptable": ["authentication", "typescript-types", "unit-testing", "css-layout", "product-copy", "security-review"]
+    },
+    {
+      "id": "payments-checkout",
+      "task": "Design payment checkout with idempotent webhooks and confirmation email.",
+      "required": ["payments", "email-delivery", "node-api"],
+      "acceptable": ["security-review", "api-contracts", "redis-cache", "authentication", "unit-testing"]
+    },
+    {
+      "id": "k8s-deploy",
+      "task": "Deploy Docker containers to Kubernetes with GitHub Actions CI and health metrics.",
+      "required": ["docker-containers", "kubernetes-deploy", "github-actions", "observability"],
+      "acceptable": ["terraform-infra", "incident-response", "git-workflows", "security-review"]
+    },
+    {
+      "id": "unrelated-eclipse",
+      "task": "Explain the difference between a lunar eclipse and a solar eclipse to a ten-year-old.",
+      "required": [],
+      "acceptable": []
+    }
+  ]
+}

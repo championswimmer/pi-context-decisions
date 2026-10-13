@@ -44,7 +44,7 @@ async function harness(t: { after(fn: () => Promise<void>): void }, configured =
   let customDriver: ((component: Component) => Promise<void>) | undefined;
   let key: string | undefined = configured ? "FIXTURE_API_KEY" : undefined;
   const pi: ExtensionHost = {
-    on: (() => () => {}) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); },
+    on: (() => () => {}) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); }, appendEntry() {}, getActiveTools: () => [],
     getCommands() { return [
       { name: "skill:alpha", description: "Browser testing", source: "skill", sourceInfo: { path: "/private/global/alpha", source: "fixture", scope: "user", origin: "top-level" } },
       { name: "skill:project-only", description: "Database querying", source: "skill", sourceInfo: { path: "/private/project/skill", source: "fixture", scope: "project", origin: "top-level" } },

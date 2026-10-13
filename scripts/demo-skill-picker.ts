@@ -201,8 +201,7 @@ export async function runDemo(input: Partial<DemoOptions> = {}, dependencies: De
   const observed: RelevanceClient = { async decide(request, opts) { batchSizes.push(Object.keys(request.questions).length); return client.decide(request, opts); } };
   const selection = await pickSkills(options.prompt, skills, observed, {
     chunkSize: options.batchSize, maxQuestions: 24, concurrency: options.concurrency, timeoutMs: options.timeoutMs,
-    relatedThreshold: 2 * options.threshold, directThreshold: 2,
-    maxSkills: options.maxSkills, minLabel: "related", failMode: "closed",
+    threshold: options.threshold, maxSkills: options.maxSkills, failMode: "closed",
   });
   if (selection.reason !== "filtered") throw Object.assign(new Error("Demo selection failed closed"), { code: selection.errorCode ?? "config" });
   const rankings = selection.items ?? [];

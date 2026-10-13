@@ -20,25 +20,40 @@ test("Advanced covers every relevance setting except legacy pins, and each field
   assert.equal(new Set(ADVANCED_FIELDS.map((field) => field.key)).size, ADVANCED_FIELDS.length);
   for (const field of ADVANCED_FIELDS) {
     assert.ok(field.hint.length > 10, `${field.key} needs a hint`);
-    if (field.kind === "choice") assert.ok((field.options?.length ?? 0) >= 2, `${field.key} choice needs options`);
+    if (field.kind === "options") assert.ok((field.options?.length ?? 0) >= 2, `${field.key} needs options`);
   }
   assert.equal(advancedRows(defaultSettings()).length, ADVANCED_FIELDS.length);
+});
+
+test("Advanced puts the four picking controls first, in order, and drops every choice-era row", () => {
+  assert.deepEqual(ADVANCED_FIELDS.slice(0, 5).map((field) => field.key), ["enabled", "threshold", "chunkSize", "maxSkills", "cadence"]);
+  assert.deepEqual(ADVANCED_FIELDS.slice(5).map((field) => field.key), ["failMode", "timeoutMs", "concurrency", "minCandidates", "maxPromptChars", "maxDescriptionChars"]);
+  const labels = ADVANCED_FIELDS.map((field) => field.label);
+  assert.deepEqual(labels.slice(1, 5), ["Relevance threshold", "Shard size", "Max added per round", "Run picker"]);
+  for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.ok(!ADVANCED_FIELDS.some((field) => field.key === removed), removed);
+  assert.ok(!ADVANCED_FIELDS.some((field) => field.kind === ("choice" as string)), "the option-list kind is not called choice");
+  const threshold = ADVANCED_FIELDS.find((field) => field.key === "threshold")!;
+  assert.equal(threshold.kind, "decimal"); assert.match(threshold.hint, /0–1/);
+  const cadence = ADVANCED_FIELDS.find((field) => field.key === "cadence")!;
+  assert.deepEqual(cadence.options!.map((option) => option.value), ["prompt", "tool-round"]);
+  assert.match(cadence.options![1].description, /No tool names, arguments or results are sent/);
+  assert.match(ADVANCED_FIELDS.find((field) => field.key === "maxSkills")!.hint, /already-added skills do not count/i);
 });
 
 test("failMode open option carries a visible warning and closed is listed first", () => {
   const field = ADVANCED_FIELDS.find((item) => item.key === "failMode")!;
   assert.equal(field.options![0].value, "closed");
-  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every skill stays advertised/i);
+  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every remaining skill is added/i);
 });
 
 test("value text: concurrency 0 explains all-parallel, booleans read On/Off", () => {
   const settings = defaultSettings();
   const field = (key: string) => ADVANCED_FIELDS.find((item) => item.key === key)!;
-  assert.equal(advancedValueText(field("concurrency"), settings), "0 (all batches parallel)");
+  assert.equal(advancedValueText(field("concurrency"), settings), "0 (all shards parallel)");
   settings.relevance.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
   assert.equal(advancedValueText(field("enabled"), settings), "On");
   settings.relevance.enabled = false; assert.equal(advancedValueText(field("enabled"), settings), "Off");
-  assert.equal(advancedValueText(field("relatedThreshold"), settings), "0.75");
+  assert.equal(advancedValueText(field("threshold"), settings), "0.375");
 });
 
 test("dialogHeightBudget matches an independent oracle for the overlay options", () => {

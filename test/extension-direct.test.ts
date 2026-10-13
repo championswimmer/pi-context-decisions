@@ -3,9 +3,10 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { ExtensionAPI, ExtensionContext, BeforeAgentStartEvent } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent } from "@earendil-works/pi-coding-agent";
+import { advertised, deltaMessages, simHost } from "./helpers/pi-sim.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
-import type { CommandContext, ExtensionRegistry, ExtensionHost } from "../src/extension/contracts.ts";
+import type { CommandContext, ExtensionRegistry } from "../src/extension/contracts.ts";
 import { defaultSettings, saveSettings } from "../src/settings.ts";
 import type { BackendSelection } from "../src/core/backends/factory.ts";
 
@@ -16,9 +17,8 @@ for (const [selection, url, provider] of [
 ] as const) test(`${provider} actual hook → factory → auth → codec → mock HTTP → filtered skills`, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "extension-direct-")); t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, "settings.json"); await saveSettings({ ...defaultSettings(), backend: selection satisfies BackendSelection }, path);
-  let before: ((event: unknown, ctx: ExtensionContext) => unknown) | undefined;
-  const pi: ExtensionHost = { on: ((name: string, callback: (event: unknown, ctx: ExtensionContext) => unknown) => { if (name === "before_agent_start") before = callback; return () => {}; }) as ExtensionAPI["on"], registerCommand() {} };
-  registerContextDecisions(pi, { settingsPath: path, env: { OPENROUTER_API_KEY: "env-fixture", OPENAI_API_KEY: "env-fixture", TYPESAFE_API_KEY: "env-fixture" }, report() {} });
+  const sim = simHost();
+  registerContextDecisions(sim.pi, { settingsPath: path, env: { OPENROUTER_API_KEY: "env-fixture", OPENAI_API_KEY: "env-fixture", TYPESAFE_API_KEY: "env-fixture" }, report() {} });
   const lookups: string[] = [];
   const registry: ExtensionRegistry = { async getApiKeyForProvider(id) { lookups.push(id); return "pi-fixture"; }, getModelsOfType(type) { return type === "chat" ? [{ provider: "openai", id: "chat" }] : []; }, findOfType() { return undefined; }, isUsingOAuth() { return false; }, async classify() { throw new Error("Native must not run for direct"); } };
   const ctx: CommandContext = { hasUI: false, mode: "print", modelRegistry: registry, ui: { async input() { throw new Error("No UI"); }, async select() { throw new Error("No UI"); }, notify() { throw new Error("No UI"); }, setStatus() { throw new Error("No UI"); } } };
@@ -40,8 +40,10 @@ for (const [selection, url, provider] of [
       ...(provider === "typesafe" ? { confidence: 1, probabilities: { "0": id === "s0" ? 0 : 1, "1": 0, "2": id === "s0" ? 1 : 0 }, legend: { "0": "Irrelevant", "1": "Related", "2": "Directly relevant" } } : {}),
     }])) });
   };
-  try { await before!(event, ctx as ExtensionContext); }
+  try { await sim.emit("before_agent_start", event, ctx); }
   finally { globalThis.fetch = original; }
-  assert.equal(calls, 1); assert.deepEqual(lookups, [provider]); assert.deepEqual(event.systemPromptOptions.skills, [skills[0]]);
+  assert.equal(calls, 1); assert.deepEqual(lookups, [provider]);
+  assert.deepEqual(advertised(sim, skills, event.systemPromptOptions.skills), ["fixture-0"]); assert.deepEqual(event.systemPromptOptions.skills, []);
+  const [delta] = deltaMessages(sim.session); assert.match(String(delta.content), /<name>fixture-0<\/name>/); assert.doesNotMatch(String(delta.content), /fixture-1/);
   assert.deepEqual(event.systemPromptOptions.selectedTools, ["read"]); assert.equal(event.systemPromptOptions.sections.mcp_servers, "unchanged"); assert.equal(event.systemPrompt, "Do not replace");
 });

@@ -66,24 +66,24 @@ const selections: BackendSelection[] = [
 ];
 for (const selection of selections) test(`${selection.backend} core selects the same relevant skills across all 30 metadata-only candidates`, async () => {
   const { client, batches, observed } = fixture(selection);
-  const result = await pickSkills(prompt, skills, client, { chunkSize: 7, maxQuestions: 5, concurrency: 2, relatedThreshold: 1.25, directThreshold: 1.5, maxSkills: 6 });
+  const result = await pickSkills(prompt, skills, client, { chunkSize: 7, maxQuestions: 5, concurrency: 2, threshold: 0.625, maxSkills: 6 });
   assert.equal(result.reason, "filtered"); assert.equal(result.candidates, 30); assert.equal(result.items!.length, 30);
   assert.deepEqual(batches, [5, 5, 5, 5, 5, 5]); assert.deepEqual(observed, skills.map((skill) => skill.name));
   assert.deepEqual(result.kept.map((skill) => skill.name), ["demo-skill-4", "demo-skill-5", "demo-skill-11", "demo-skill-17", "demo-skill-23", "demo-skill-29"]);
   assert.equal(result.kept[0], skills[4]); assert.equal(skills.length, 30);
 });
-test("explicit pick has no minimum inventory, honors inclusive raw threshold and batch-size changes", async () => {
+test("explicit pick has no minimum inventory, honors the inclusive normalized threshold and batch-size changes", async () => {
   const { client, batches } = fixture({ backend: "openai" });
-  const broad = await pickSkills(prompt, skills, client, { chunkSize: 8, relatedThreshold: 1.25, maxSkills: 30 });
+  const broad = await pickSkills(prompt, skills, client, { chunkSize: 8, threshold: 0.625, maxSkills: 30 });
   assert.deepEqual(batches, [8, 8, 8, 6]); assert.equal(broad.kept.length, 15);
-  const strict = await pickSkills(prompt, skills, client, { chunkSize: 3, relatedThreshold: 1.5, directThreshold: 1.5, maxSkills: 30 });
+  const strict = await pickSkills(prompt, skills, client, { chunkSize: 3, threshold: 0.75, maxSkills: 30 });
   assert.equal(strict.kept.length, 10); assert.deepEqual(batches.slice(4), Array(10).fill(3));
   const tiny = await pickSkills(prompt, skills.slice(4, 6), client, { maxSkills: 1 });
   assert.deepEqual(tiny.kept, [skills[5]]);
 });
 test("picker failures stay closed and malformed options never imply fail-open", async () => {
   const { client } = fixture({ backend: "openrouter", model: "typesafe/jev-1.13" });
-  const invalid = await pickSkills(prompt, skills, client, { relatedThreshold: 2.1 });
+  const invalid = await pickSkills(prompt, skills, client, { threshold: 1.5 });
   assert.equal(invalid.reason, "fail-closed"); assert.deepEqual(invalid.kept, []); assert.equal(invalid.errorCode, "config");
   const absent = await pickSkills(prompt, skills, null); assert.equal(absent.skipReason, "unconfigured");
   assert.deepEqual(absent.kept, skills);
@@ -96,7 +96,7 @@ for (const selection of selections) test(`${selection.backend} transport dispatc
   let release!: () => void;
   const pending = new Promise<void>((resolve) => { release = resolve; });
   const { client, batches, observed } = fixture(selection, () => pending);
-  const picking = pickSkills(prompt, largeSkills, client, { maxSkills: 400, relatedThreshold: 1.25 });
+  const picking = pickSkills(prompt, largeSkills, client, { maxSkills: 400, threshold: 0.625 });
   await new Promise<void>((resolve) => setImmediate(resolve));
   // The real adapter/codec sees all eight full endpoint requests before any succeeds.
   assert.deepEqual(batches, Array(8).fill(50));

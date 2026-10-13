@@ -36,7 +36,7 @@ The default evaluates **all 30** skills in **three batches of 10**, selects up t
 | `--model` | Backend-specific | Classifier model ID |
 | `--provider` | typesafe | Native Pi classifier provider; used only with `--backend pi` |
 
-The model rubric is `[irrelevant, related, directly relevant]`, with expected score 0–2. The demo converts normalized threshold `t` to raw threshold `2*t`. For example, demo `--threshold 0.75` corresponds to extension `relatedThreshold 1.5`. Results preserve inventory order after selecting the highest-scoring eligible entries. Zero threshold intentionally allows zero-score skills; use a positive threshold to exclude unrelated skills.
+The model rubric is `[irrelevant, related, directly relevant]`, with expected score 0–2. The demo passes the normalized threshold straight to the picker, exactly like the extension's single `relevance.threshold` setting (a skill qualifies when its 0–2 score is at least `2 × threshold`). For example, demo `--threshold 0.75` is extension `/decisions relevance threshold 0.75`. The demo is a stateless one-shot picker: it does not keep the extension's additive per-branch ledger. Results preserve inventory order after selecting the highest-scoring eligible entries. Zero threshold intentionally allows zero-score skills; use a positive threshold to exclude unrelated skills.
 
 `config/demo-options.json` illustrates programmatic `runDemo` options. It is not auto-loaded. `config/pi-context-decisions.example.json` illustrates a credential-free partial extension config. Configure the real extension with its commands rather than editing credential files.
 
@@ -67,9 +67,7 @@ Then choose a classifier using `/decisions model` and configure:
 
 ```text
 /decisions relevance chunkSize 10
-/decisions relevance relatedThreshold 1
-/decisions relevance directThreshold 1.5
-/decisions relevance minLabel related
+/decisions relevance threshold 0.5
 /decisions relevance maxSkills 6
 /decisions relevance minCandidates 0
 /decisions relevance concurrency 2

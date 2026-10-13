@@ -1,8 +1,8 @@
 # pi-context-decisions
 
-A [Pi](https://pi.dev) extension that uses decision/classifier models to filter **skill advertisements** for each prompt. Core adapters, the unified decision API, model picker, settings, and skill relevance filtering are implemented. **Tool and MCP visibility filtering is not implemented**; see the [MCP visibility plan](.agents/plans/mcp-visibility.md).
+A [Pi](https://pi.dev) extension that uses decision/classifier models to decide which **additional skills to advertise** as a session goes on. Skill picking is **score-only and additive**: relevant skills are added, nothing is ever dropped. Core adapters, the unified decision API, model picker, settings, and skill relevance picking are implemented. **Tool and MCP visibility filtering is not implemented**; see the [MCP visibility plan](.agents/plans/mcp-visibility.md).
 
-Requires Pi 1.1.0 APIs and Node 22.18+. Pre-alpha; TypeSafe, the eight retained OpenRouter models, and direct OpenAI Luna passed live `bool`/`choice`/`score` checks on 2026-10-12. Luna used Pi's saved `openai` API key with `OPENAI_API_KEY` absent. Native Pi inference remains unverified.
+Requires Pi 1.1.0 APIs and Node 22.18+. Pre-alpha; TypeSafe, the eight retained OpenRouter models, and direct OpenAI Luna passed live `bool`/`choice`/`score` primitive checks on 2026-10-12 (before skill picking became score-only; the additive picker has only offline tests). Luna used Pi's saved `openai` API key with `OPENAI_API_KEY` absent. Native Pi inference remains unverified.
 
 ## Load early
 
@@ -13,7 +13,18 @@ npm install
 pi -e ./src/extension.ts -e ./other-extension.ts
 ```
 
-Keep this extension first or near the start of your configured extensions/packages. Pi awaits handlers in load order. We filter the skills Pi supplies in `before_agent_start`; later handlers see the filtered array, but can overwrite it. There is no extension-priority guarantee.
+Keep this extension first or near the start of your configured extensions/packages. Pi awaits handlers in load order. In `before_agent_start` we set `systemPromptOptions.skills` to a **stable base** (always-allowed skills, or the whole inventory once filtering was off on this branch) and return new skills as a hidden custom message; later handlers see that base array and can overwrite it. There is no extension-priority guarantee.
+
+### How skills are added (additive picking)
+
+Every picking round scores **only skills that have not been advertised on this session branch yet**, keeps up to *max added per round* of those at or above the threshold, and **adds** them. Skills already added are never re-scored, and nothing is removed later: not by a lower threshold, a settings change, an allowlist change, a failed round or a model switch.
+
+- **Delivery.** New skills are appended as an **append-only custom message** (`context-decisions-skills`, hidden from the transcript) built with Pi's public `formatSkillsForPrompt`, so the chat model sees Pi's own `<available_skills>` block (name, description and file location) for just the new skills, introduced by one line saying previously listed skills remain available. Locations are needed by the chat model to load a skill; they are **never** sent to the decision model. Pi converts custom messages to **user-role** context. That is not a native system-prompt update: Anthropic's and OpenAI's mid-conversation *system* messages only exist on selected models, and rewriting the system skills section would invalidate the cached prompt prefix on the others. Appended messages work on every provider and keep earlier prompt-cache prefixes intact. OpenAI's own Skills feature likewise places skill metadata in user-priority context.
+- **Stable base.** Always-allowed skills (global/project allowlists and legacy pins) are the only skills in `systemPromptOptions.skills`, identical on every prompt, so Pi emits no prompt-section patch. If filtering is disabled, no model is configured or the inventory is below *Minimum inventory*, **every** skill stays advertised, and the branch remembers it: enabling filtering later never removes a skill the model already saw.
+- **Per-branch ledger.** What was advertised is derived from the active session branch (base records plus the delta messages Pi actually persisted), so new sessions start empty, forks inherit, `/tree` navigation follows the active branch and `/resume` or `/reload` rebuild it. A model switch changes nothing.
+- **Compaction.** Compaction can summarize a delta message away. Skills whose text is no longer in model-visible context are **re-delivered** (names and descriptions only, no decision call, never re-scored) at the next prompt, or at the next `turn_end` if compaction happened inside a run. Known limitations: the request issued immediately after a mid-run compaction, including overflow recovery's retry, can lack those skills until then; a skill deleted by `/reload` stays mentioned in older messages; with neither `read` nor `bash` active nothing can be delivered, so nothing is scored or recorded.
+- **When it runs.** *Run picker* **prompt** (default): on every submitted prompt, plus steering/follow-up user text queued during a run (seen at `turn_end`). **tool-round** (opt-in): also after each completed tool round (`turn_end` with tool results; assistant-only turns and aborted or failed turns never trigger it). Tool-round picking is **progressive addition for the same task, not subtask inference**: the decision model still receives only the latest bounded user text plus candidate names/descriptions, never assistant text, tool names, arguments or results. Because *max added per round* caps each round, the next round adds the next-best remaining skills; scores for the same task are cached, so it makes no extra decision call. Neither cadence ever sets `continue`, so the extension never creates an extra model request.
+- **Pi cannot** change the system prompt's skills between tool rounds through a public API, and the extension does not rewrite provider payloads or use `context`/`context_with_system`; that is why deltas are custom messages.
 
 For a local package install, `pi install /absolute/path/to/pi-context-decisions` is supported; ensure package ordering remains appropriate. The package ships TypeScript sources that Pi loads directly; it requires Node >= 22.18 and the Pi peer packages (`@earendil-works/pi-coding-agent`, `pi-ai`, `pi-tui`).
 
@@ -31,7 +42,7 @@ Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **float
 | **Status…** | Credentials source, last decision and allowlist counts. Makes no inference calls. |
 | **Close** | Closes the dialog. |
 
-**Advanced…** holds skill filtering on/off, scoring mode, minimum relevance, related/direct thresholds, max skills kept, minimum inventory, batch size, concurrency, timeout, failure mode and the prompt/description size limits. Selecting a row edits it inline with validation (the same rules as `/decisions relevance <key> <value>`); **On failure** is a choice list where `open` carries a visible warning and is never reached by cycling. Legacy `pin`/`unpin` names stay on the text commands. This is the extension's only command; headless use supports the same actions through arguments.
+**Advanced…** lists, in order: **Skill filtering** on/off; **Relevance threshold** (0–1, inclusive; default 0.375); **Shard size** (skills per decision request, 1–50); **Max added per round** (new skills per picking round, ranked across all shards; always-allowed and already-added skills do not count); **Run picker** (`prompt` or `tool-round`); then the safety limits **On failure**, **Timeout**, **Concurrency**, **Minimum inventory** and the **prompt/description size** limits. Selecting a row edits it inline with validation (the same rules as `/decisions relevance <key> <value>`); **Run picker** and **On failure** are option lists where `open` carries a visible warning and is never reached by cycling. Legacy `pin`/`unpin` names stay on the text commands. This is the extension's only command; headless use supports the same actions through arguments.
 
 Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on/off rows, **Esc** goes back (and closes from the main screen). While the dialog has focus, **Esc and Ctrl+C act on the dialog, not on the running agent**: close it to interrupt or type a prompt. Running `/decisions` again while it is open focuses the existing dialog instead of opening a second one. Reloading or shutting down the session closes the dialog and cancels its in-flight work. RPC clients get the same grouping (Advanced is a sub-menu) through select/input requests; print/JSON use the text commands.
 
@@ -92,17 +103,15 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 /decisions settings enabled false
 /decisions enable
 /decisions disable
-/decisions relevance mode choice
-/decisions relevance maxSkills 12
+/decisions relevance threshold 0.375          # normalized 0–1, inclusive (default 0.375)
+/decisions relevance chunkSize 50              # shard size: skills per decision request, 1–50
+/decisions relevance maxSkills 12              # most NEW skills added per picking round
+/decisions relevance cadence prompt            # or tool-round: also after completed tool rounds
 /decisions relevance minCandidates 8
-/decisions relevance minLabel directly_relevant
-/decisions relevance chunkSize 50              # scoring batch size, 1–50
-/decisions relevance relatedThreshold 1.25     # raw 0–2, inclusive
-/decisions relevance directThreshold 1.75      # must be >= relatedThreshold
-/decisions relevance concurrency 0            # all batches parallel (default)
-/decisions relevance concurrency 2            # optional concurrent-batch cap, 1–32
+/decisions relevance concurrency 0            # all shards parallel (default)
+/decisions relevance concurrency 2            # optional concurrent-shard cap, 1–32
 /decisions relevance timeoutMs 8000
-/decisions relevance failMode open             # explicit full-inventory fallback on failure
+/decisions relevance failMode open             # explicit: add every remaining skill when scoring fails
 /decisions pin typescript
 /decisions unpin typescript
 /decisions test                                # explicit synthetic bool call; may incur cost
@@ -110,18 +119,19 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 
 Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically written with mode `0600`. Defaults:
 
-- Relevance enabled, `score` mode; skips fewer than **8 unique automatic skills** and empty prompts.
-- Score rubric: **irrelevant → related → directly relevant** (indices 0–2). Fractional scores are expected rubric indices, not class probabilities. Default policy labels: score ≥1.5 directly relevant, ≥0.75 related, otherwise irrelevant; normalized score = score/2. Persisted `relatedThreshold` and `directThreshold` accept decimals in [0, 2], ordered lowest first. `minLabel` chooses which inclusive threshold selects skills. Choice mode instead uses the model's categorical label; the numeric thresholds apply only to score mode.
-- Keep related or better, cap **12 unpinned** selections; pinned and scoped always-allowed names bypass scoring/cap/threshold. Original skill order and object references are preserved. Manual-only skills are not sent for classification.
-- **Fail closed**: decision failures hide unverified automatic advertisements, retaining pinned/manual-only entries. `failMode open` explicitly retains the full inventory on failure; status labels that fallback.
-- Whole filtering deadline **8000ms**, requested batches of **50 skills**. Concurrency **0** means every batch starts in parallel: 300 skills use six batches; 400 use eight. Set concurrency 1–32 to limit simultaneous batches. A lower declared provider/client question limit reduces effective batch size, without omitting candidates.
+- Relevance enabled, **score-only**; skips fewer than **8 unique automatic skills** (everything stays advertised) and empty prompts (no picks).
+- Score rubric: **irrelevant → related → directly relevant** (indices 0–2). A skill's score is an expected rubric index, not a class probability or confidence; normalized score = score/2. The single **threshold** is that normalized score in [0, 1], inclusive: a skill qualifies when its 0–2 score is at least `2 × threshold`. The default **0.375** equals the previous raw 0.75 ("related"). There is no choice mode, minimum label or second threshold: the decision `choice` primitive still exists in the library, but skill picking does not use it.
+- Add up to **12 new** skills per round (*max added per round*, best first across all shards); pinned and scoped always-allowed names bypass scoring/cap/threshold. There is no session-total cap. Original skill references are preserved. Manual-only skills are not sent for classification.
+- **Fail closed**: a failed round adds nothing; already-advertised skills stay. `failMode open` explicitly adds every remaining candidate once; status labels that fallback.
+- **Upgrading:** old settings files load unchanged. `threshold` becomes `relatedThreshold / 2`, or `directThreshold / 2` when `minLabel` was `directly_relevant` (exact; no warning). `mode: "choice"` migrates the same way with one warning. An explicit `threshold` wins over legacy keys with a warning. Invalid legacy values stay settings errors and fail closed. Loading never rewrites the file; the next save writes only the new keys.
+- Whole round deadline **8000ms**, requested shards of **50 skills**. Concurrency **0** means every shard starts in parallel: 300 candidates use six shards; 400 use eight. Set concurrency 1–32 to limit simultaneous shards. A lower declared provider/client question limit reduces effective shard size, without omitting candidates.
 - Configurable prompt ≤4000 characters and each description ≤400; names ≤64, JSON state ≤65536 characters per batch, inventory ≤1000 unique candidates. These are local safety bounds, not provider token-limit guarantees.
 
 Invalid persisted settings are reported explicitly and advertisements fail closed until repaired with commands or a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
 
 ### Global and project skill allowlists
 
-From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the main screen. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the selection cap, and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
+From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the main screen. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the per-round cap, join the stable base (so removing an entry never withdraws a skill already advertised on the branch) and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
 
 - **Global** names are stored as `globalAllowlist` in the user settings file.
 - **Project** names are stored in `<cwd>/.pi/pi-context-decisions.json` as `{ "alwaysAllowed": ["skill-name"] }`. It can be shared in the repository; this is scoped to Pi's working directory, so starting in different subdirectories uses different lists. A malformed project list is warned about and treated as empty, not a full-inventory fallback.
@@ -182,7 +192,7 @@ This host-only adapter uses public `ModelRuntime`/`ModelRegistry`, respects Pi's
 
 ### Reusable skill picker
 
-`pickSkills` works with any of the four core backends through the same decision client. It evaluates **every** unique automatic candidate in bounded batches, ranks by expected relevance, applies threshold/cap/pins, and returns the original skill objects in inventory order. Names and descriptions are the only skill information transmitted; file paths are retained locally for Pi's selected advertisements. It does not read or attach full skill bodies.
+`pickSkills` works with any of the four core backends through the same decision client. It is a **stateless, score-only** helper: it evaluates **every** unique automatic candidate in bounded batches, ranks by expected relevance, applies threshold/cap/pins, and returns the original skill objects in inventory order. The extension builds its additive, branch-aware behavior on the same ranking and selection primitives (`scoreAdditions`, `RelevanceScoreCache`) but keeps a ledger; `pickSkills` does not. Names and descriptions are the only skill information transmitted; file paths are retained locally for Pi's selected advertisements. It does not read or attach full skill bodies.
 
 ```typescript
 import { createBackend, createDecisionClient, pickSkills } from "pi-context-decisions";
@@ -193,16 +203,15 @@ const client = createDecisionClient(createBackend(selection, {
 }));
 const picked = await pickSkills(prompt, thirtySkills, client, {
   chunkSize: 50, maxQuestions: 50, concurrency: 0, // all scoring batches in parallel
-  relatedThreshold: 1.25, directThreshold: 1.75, // raw rubric indices in [0, 2]
-  minLabel: "related", maxSkills: 6, timeoutMs: 8000,
+  threshold: 0.625,            // normalized 0–1, inclusive (raw expected index >= 1.25)
+  maxSkills: 6, timeoutMs: 8000,
 });
 // picked.items: scored (non-pinned) candidate scores; picked.kept: selected original objects.
-// An explicit picker has minCandidates: 0 by default; the automatic hook defaults to 8.
-// Inside an early before_agent_start handler:
-// event.systemPromptOptions.skills = picked.kept;
+// An explicit picker has minCandidates: 0 by default; the extension's automatic path defaults to 8.
+// Passing the removed mode/minLabel/relatedThreshold/directThreshold options is a config error (fails closed).
 ```
 
-Passing `null` as the client intentionally skips filtering without calls. Active errors return `fail-closed` and a safe error code; retaining the inventory on errors requires explicit `failMode: "open"`. Use `maxQuestions` to impose a lower provider limit; effective batch size is the smaller of `chunkSize` and `maxQuestions`. The extension requests batches up to 50 and respects a lower limit declared by the selected client. Configure `minCandidates` to change the automatic inventory-size gate. Disabled, unconfigured, or below-minimum prompts make no decision calls. The existing early hook already attaches the selected advertisements for each eligible prompt; no second hook or provider-specific application logic is needed.
+Passing `null` as the client intentionally skips filtering without calls. Active errors return `fail-closed` and a safe error code; retaining the inventory on errors requires explicit `failMode: "open"`. Use `maxQuestions` to impose a lower provider limit; effective batch size is the smaller of `chunkSize` and `maxQuestions`. The extension requests batches up to 50 and respects a lower limit declared by the selected client. Configure `minCandidates` to change the automatic inventory-size gate. Disabled, unconfigured, or below-minimum prompts make no decision calls. The extension's hooks already add the picked skills for you; no second hook or provider-specific application logic is needed.
 
 ## Development
 
@@ -213,7 +222,7 @@ npm run typecheck
 npm pack --dry-run --ignore-scripts
 ```
 
-Offline tests include provider fixtures, credential precedence/OAuth, malformed responses, deadlines, batching, real extension registration mocks, picker/headless commands, persistence, and lifecycle skill-array mutations. Live TypeSafe/OpenRouter and direct Luna checks passed; a terminal visual check has not been performed. Explicitly opt into billable public-fact checks (never part of `npm test`):
+Offline tests include provider fixtures, credential precedence/OAuth, malformed responses, deadlines, batching, real extension registration mocks, picker/headless commands, persistence, and the additive ledger lifecycle against an offline stand-in for Pi sessions (branches, compaction, context edits, queued messages, tool rounds), not a live Pi run. Live TypeSafe/OpenRouter and direct Luna checks passed; a terminal visual check has not been performed. Explicitly opt into billable public-fact checks (never part of `npm test`):
 
 ```bash
 # Only Luna; Pi's saved openai API key works without an env key.

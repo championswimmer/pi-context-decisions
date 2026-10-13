@@ -35,7 +35,7 @@ async function fixture(t: { after(fn: () => Promise<void>): void }, options: { u
     notify(message) { messages.push(message); }, setStatus() {},
   } };
   const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
-  const pi: ExtensionHost = { on: (() => () => {}) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); } };
+  const pi: ExtensionHost = { on: (() => () => {}) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); }, appendEntry() {}, getActiveTools: () => [] };
   registerContextDecisions(pi, { settingsPath: path, env: options.env ?? {}, report(_ctx, message) { messages.push(message); } });
   const command = async (args: string) => commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext);
   return { path, messages, dialogs, picks, inputs, lookups, commands, ctx, command, inference: () => inference };
@@ -54,7 +54,7 @@ test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits
   assert.equal(h.dialogs[0].options.filter((label) => label.startsWith("relevance.")).length, 0, "main menu carries no relevance knobs");
   const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!;
   assert.ok(advanced.options.includes("relevance.chunkSize: 50"));
-  assert.ok(advanced.options.includes("relevance.concurrency: 0 (all batches parallel)"));
+  assert.ok(advanced.options.includes("relevance.concurrency: 0 (all shards parallel)"));
   assert.ok(advanced.options.every((label) => !label.startsWith("relevance.pinned")));
   assert.equal((await loadSettings(h.path)).settings.enabled, false);
   assert.equal(h.inputs.length, 0); assert.equal(h.inference(), 0);
@@ -71,14 +71,14 @@ test("RPC /decisions relevance opens Advanced directly and edits validate", asyn
 test("headless enable/disable, batch size and all-parallel settings persist with bounds", async (t) => {
   const h = await fixture(t);
   await h.command("disable"); await h.command("relevance chunkSize 50"); await h.command("relevance concurrency 0");
-  await h.command("relevance relatedThreshold 1.25");
+  await h.command("relevance threshold 0.625");
   let settings = (await loadSettings(h.path)).settings;
   assert.equal(settings.enabled, false); assert.equal(settings.relevance.chunkSize, 50); assert.equal(settings.relevance.concurrency, 0);
-  assert.equal(settings.relevance.relatedThreshold, 1.25);
+  assert.equal(settings.relevance.threshold, 0.625);
   await h.command("relevance chunkSize 51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
   await h.command("relevance concurrency 33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
   await h.command("enable"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.enabled, true);
-  await h.command("status"); assert.match(h.messages.at(-1)!, /all batches parallel/); assert.equal(h.inference(), 0);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /all shards parallel/); assert.equal(h.inference(), 0);
 });
 
 for (const [provider, model, variable] of [
@@ -169,4 +169,30 @@ test("request-time Pi key is honoured when the cached OAuth inventory is empty o
   assert.match(h.messages.at(-1)!, /Credentials: Pi-resolved/);
   assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openai", model: "gpt-6-luna" });
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
+});
+
+test("RPC Advanced edits the four picking controls; cadence is a select, not free text, and legacy keys are refused", async (t) => {
+  const h = await fixture(t, { ui: true });
+  h.picks.push(
+    (choices) => choices.find((label) => label.startsWith("relevance.threshold:")),
+    (choices) => choices.find((label) => label.startsWith("relevance.cadence:")),
+    (choices) => choices.find((label) => label.startsWith("tool-round")),
+    "Back",
+  );
+  h.inputs.push("0.625");
+  await h.command("relevance");
+  const advanced = h.dialogs[0].options;
+  assert.deepEqual(advanced.slice(0, 5).map((label) => label.split(":")[0]), ["relevance.enabled", "relevance.threshold", "relevance.chunkSize", "relevance.maxSkills", "relevance.cadence"]);
+  assert.ok(advanced.includes("relevance.threshold: 0.375")); assert.ok(advanced.includes("relevance.cadence: prompt"));
+  const settings = (await loadSettings(h.path)).settings;
+  assert.equal(settings.relevance.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
+  assert.ok(h.dialogs.some((dialog) => /Run picker/.test(dialog.title) && dialog.options.some((option) => option.startsWith("prompt")) && dialog.options.some((option) => option.startsWith("tool-round"))));
+  for (const legacy of ["mode choice", "minLabel directly_relevant", "relatedThreshold 1", "directThreshold 1.5"]) {
+    await h.command(`relevance ${legacy}`); assert.match(h.messages.at(-1)!, /Removed setting.*threshold/);
+  }
+  assert.equal((await loadSettings(h.path)).settings.relevance.threshold, 0.625);
+  await h.command("relevance cadence every-token"); assert.match(h.messages.at(-1)!, /Invalid relevance.cadence/);
+  await h.command("relevance maxSkills 3"); await h.command("relevance chunkSize 10");
+  assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 10);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /threshold 0.625 \(0–1\), picker tool-round.*max 3 added per round/s);
 });

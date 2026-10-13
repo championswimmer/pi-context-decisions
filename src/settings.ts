@@ -4,15 +4,19 @@ import { dirname } from "node:path";
 import type { BackendSelection } from "./core/backends/factory.ts";
 import { isAllowedOpenRouterModel } from "./catalog/openrouter-models.ts";
 import { normalizeAllowlist } from "./apps/allowlist.ts";
+import { DEFAULT_RELEVANCE_THRESHOLD, validThreshold } from "./apps/skill-filter.ts";
 
+/** When the additive picker runs. Both values only ever ADD skills for the same bounded user task. */
+export type PickerCadence = "prompt" | "tool-round";
+export const PICKER_CADENCES: readonly PickerCadence[] = ["prompt", "tool-round"];
 export interface RelevanceSettings {
   enabled: boolean;
-  mode: "score" | "choice";
-  minLabel: "related" | "directly_relevant";
-  /** Raw 0–2 expected rubric-index thresholds; selection uses minLabel. */
-  relatedThreshold: number;
-  directThreshold: number;
+  /** Normalized 0–1, inclusive: a skill qualifies when its 0–2 score is at least 2 × threshold. */
+  threshold: number;
+  /** Most NEW skills added by one picking round, ranked across all shards. Already-added skills never count. */
   maxSkills: number;
+  /** `prompt`: every submitted prompt (and queued steering/follow-up user text). `tool-round`: also after each completed tool round. */
+  cadence: PickerCadence;
   minCandidates: number;
   failMode: "open" | "closed";
   timeoutMs: number;
@@ -31,8 +35,7 @@ export interface ContextDecisionsSettings {
 }
 export function defaultSettings(): ContextDecisionsSettings {
   return { enabled: true, backend: null, globalAllowlist: [], relevance: {
-    enabled: true, mode: "score", minLabel: "related", relatedThreshold: 0.75, directThreshold: 1.5,
-    maxSkills: 12, minCandidates: 8,
+    enabled: true, threshold: DEFAULT_RELEVANCE_THRESHOLD, maxSkills: 12, cadence: "prompt", minCandidates: 8,
     failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000, maxDescriptionChars: 400,
     chunkSize: 50, concurrency: 0, pinned: [],
   } };
@@ -84,6 +87,28 @@ export function validateBackendSelection(value: unknown): BackendSelection | nul
   }
   throw new SettingsError("Unknown decision backend");
 }
+/** Pre-0.3 keys. Read on load only; the next save writes the normalized `threshold` instead. */
+const LEGACY_RELEVANCE_KEYS = ["mode", "minLabel", "relatedThreshold", "directThreshold"] as const;
+/**
+ * Validates the legacy keys with their ORIGINAL rules (an invalid file stays a visible settings error and
+ * fails closed), then maps them losslessly: threshold = (direct or related raw 0–2 threshold) / 2.
+ */
+function migrateLegacyThreshold(input: Record<string, unknown>, warnings?: string[]): number | undefined {
+  if (!LEGACY_RELEVANCE_KEYS.some((key) => input[key] !== undefined)) return undefined;
+  if (input.mode !== undefined && input.mode !== "score" && input.mode !== "choice") throw new SettingsError("Invalid relevance.mode");
+  if (input.minLabel !== undefined && input.minLabel !== "related" && input.minLabel !== "directly_relevant") throw new SettingsError("Invalid relevance.minLabel");
+  const raw = { relatedThreshold: 0.75, directThreshold: 1.5 };
+  for (const key of ["relatedThreshold", "directThreshold"] as const) {
+    const number = input[key];
+    if (number === undefined) continue;
+    if (typeof number !== "number" || !Number.isFinite(number) || number < 0 || number > 2) throw new SettingsError(`relevance.${key} must be finite in [0, 2]`);
+    raw[key] = number;
+  }
+  if (raw.relatedThreshold > raw.directThreshold) throw new SettingsError("Relevance thresholds must be ordered: relatedThreshold <= directThreshold");
+  if (input.threshold !== undefined) warnings?.push("Legacy relevance settings were ignored because relevance.threshold is set");
+  else if (input.mode === "choice") warnings?.push("Choice scoring was removed; skill picking now uses relevance scores with the migrated threshold");
+  return (input.minLabel === "directly_relevant" ? raw.directThreshold : raw.relatedThreshold) / 2;
+}
 const NUMERIC_BOUNDS = {
   maxSkills: [0, 1000], minCandidates: [0, 1000], timeoutMs: [1, 300000],
   maxPromptChars: [1, 4000], maxDescriptionChars: [1, 400], chunkSize: [1, 50], concurrency: [0, 32],
@@ -106,12 +131,12 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
   if (value.relevance === undefined) return result;
   if (!object(value.relevance)) throw new SettingsError("relevance must be an object");
   const input = value.relevance;
-  keys(input, Object.keys(result.relevance), warnings);
+  keys(input, [...Object.keys(result.relevance), ...LEGACY_RELEVANCE_KEYS], warnings);
   if (input.enabled !== undefined) {
     if (typeof input.enabled !== "boolean") throw new SettingsError("relevance.enabled must be a boolean");
     result.relevance.enabled = input.enabled;
   }
-  const enums = { mode: ["score", "choice"], minLabel: ["related", "directly_relevant"], failMode: ["open", "closed"] } as const;
+  const enums = { failMode: ["open", "closed"], cadence: PICKER_CADENCES } as const;
   for (const key of Object.keys(enums) as (keyof typeof enums)[]) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== "string" || !(enums[key] as readonly string[]).includes(input[key])) throw new SettingsError(`Invalid relevance.${key}`);
@@ -125,13 +150,11 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
     if (typeof number !== "number" || !Number.isSafeInteger(number) || number < min || number > max) throw new SettingsError(`relevance.${key} must be an integer in [${min}, ${max}]`);
     result.relevance[key] = number;
   }
-  for (const key of ["relatedThreshold", "directThreshold"] as const) {
-    const number = input[key];
-    if (number === undefined) continue;
-    if (typeof number !== "number" || !Number.isFinite(number) || number < 0 || number > 2) throw new SettingsError(`relevance.${key} must be finite in [0, 2]`);
-    result.relevance[key] = number;
-  }
-  if (result.relevance.relatedThreshold > result.relevance.directThreshold) throw new SettingsError("Relevance thresholds must be ordered: relatedThreshold <= directThreshold");
+  const migrated = migrateLegacyThreshold(input, warnings);
+  if (input.threshold !== undefined) {
+    if (!validThreshold(input.threshold)) throw new SettingsError("relevance.threshold must be finite in [0, 1]");
+    result.relevance.threshold = input.threshold;
+  } else if (migrated !== undefined) result.relevance.threshold = migrated;
   if (input.pinned !== undefined) {
     if (!Array.isArray(input.pinned) || input.pinned.length > 1000 || input.pinned.some((name) => !identifier(name) || name.length > 64)) throw new SettingsError("Pinned skill names must be nonempty, bounded identifiers");
     result.relevance.pinned = [...new Set(input.pinned as string[])];
@@ -176,13 +199,16 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
   if (key === "enabled") { target = next as unknown as Record<string, unknown>; field = key; }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else throw new SettingsError("Use enabled or a relevance setting; use model to choose a backend");
+  if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
+    throw new SettingsError("Removed setting: skill picking is score-only. Use relevance threshold <0–1>");
+  }
   if (!Object.hasOwn(target, field) || field === "pinned") throw new SettingsError("Unknown setting; use pin/unpin for pinned skills");
   if (typeof target[field] === "boolean") {
     if (text !== "true" && text !== "false") throw new SettingsError("Boolean setting requires true or false");
     target[field] = text === "true";
   } else if (typeof target[field] === "number") {
-    const threshold = field === "relatedThreshold" || field === "directThreshold";
-    if (!(threshold ? /^(?:\d+(?:\.\d+)?|\.\d+)$/u : /^\d+$/u).test(text)) throw new SettingsError(threshold ? "Threshold requires a nonnegative decimal in [0, 2]" : "Numeric setting requires a nonnegative integer");
+    const threshold = field === "threshold";
+    if (!(threshold ? /^(?:\d+(?:\.\d+)?|\.\d+)$/u : /^\d+$/u).test(text)) throw new SettingsError(threshold ? "Threshold requires a decimal in [0, 1]" : "Numeric setting requires a nonnegative integer");
     target[field] = Number(text);
   } else target[field] = text;
   return parseSettings(next);

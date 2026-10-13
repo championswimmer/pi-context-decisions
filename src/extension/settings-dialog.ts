@@ -23,7 +23,7 @@ export const SETTINGS_OVERLAY_OPTIONS = {
 export type SettingsRoute =
   | { kind: "main" } | { kind: "advanced" } | { kind: "provider" }
   | { kind: "model"; filter?: { backend: BackendSelection["backend"]; provider?: string } }
-  | { kind: "edit"; key: AdvancedKey } | { kind: "choice"; key: AdvancedKey }
+  | { kind: "edit"; key: AdvancedKey } | { kind: "options"; key: AdvancedKey }
   | { kind: "status" } | { kind: "allowlist"; scope: AllowlistScope };
 export type InitialRoute = "main" | "advanced" | "provider" | "model" | { allowlist: AllowlistScope };
 export type DialogResult = "closed" | "shutdown";
@@ -237,7 +237,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         description: project.warning ?? "Skills always advertised for this working directory only. Not a restriction list.",
         ...(snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." }),
         run: () => push({ kind: "allowlist", scope: "project" }) },
-      { label: "Advanced…", description: "Thresholds, batching, concurrency, timeout, failure mode and size limits.", run: () => push({ kind: "advanced" }) },
+      { label: "Advanced…", description: "Relevance threshold, shard size, max added per round, picker cadence and safety limits.", run: () => push({ kind: "advanced" }) },
       { label: "Status…", description: "Credentials, last decision and allowlist counts. Makes no inference calls.", run: () => push({ kind: "status" }) },
       { label: "Close", run: () => close("closed") },
     ];
@@ -246,7 +246,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       ...(field.key === "failMode" && settings.relevance.failMode === "open" ? { tone: "warn" as const } : {}),
       run: () => {
         if (field.kind === "bool") mutate(frame, () => ops.updateSetting(`relevance.${field.key}`, String(!settings.relevance[field.key])), () => ok(frame, "Saved"));
-        else if (field.kind === "choice") push({ kind: "choice", key: field.key });
+        else if (field.kind === "options") push({ kind: "options", key: field.key });
         else push({ kind: "edit", key: field.key });
       },
     }));
@@ -278,7 +278,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         },
       }));
     }
-    if (route.kind === "choice") {
+    if (route.kind === "options") {
       const field = advancedField(route.key);
       return (field?.options ?? []).map((option) => ({
         label: option.value, value: String(settings.relevance[route.key]) === option.value ? "current" : "",
@@ -296,7 +296,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "advanced": return "Decisions › Advanced";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "edit": case "choice": return `Decisions › Advanced › ${advancedField(route.key)?.label ?? route.key}`;
+      case "edit": case "options": return `Decisions › Advanced › ${advancedField(route.key)?.label ?? route.key}`;
       case "status": return "Decisions › Status";
       case "allowlist": return `Decisions › Always allowed · ${route.scope === "global" ? "Global" : "Project"}`;
     }

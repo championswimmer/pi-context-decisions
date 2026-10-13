@@ -1,14 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { applySkillAdvertisementFilter, filterSkills } from "../src/apps/skill-filter.ts";
+import { applySkillAdvertisementFilter, DEFAULT_RELEVANCE_THRESHOLD, filterSkills, selectRelevant, validThreshold } from "../src/apps/skill-filter.ts";
 import type { RelevanceClient, RelevanceItem } from "../src/apps/relevance.ts";
-import { decodeSystemOne } from "../src/core/codecs/system-one.ts";
 
 const skills = ["alpha", "beta", "gamma", "delta"].map((name) => ({ name, description: `${name} description`, filePath: `/${name}/SKILL.md` }));
-function item(name: string, score: number, label: RelevanceItem["label"] = "related"): RelevanceItem {
-  return { name, score, normalized: score / 2, label };
+function item(name: string, score: number): RelevanceItem {
+  return { name, score, normalized: score / 2 };
 }
-const items = [item("alpha", 1), item("beta", 2, "directly_relevant"), item("gamma", 0, "irrelevant"), item("delta", 1.5, "directly_relevant")];
+const items = [item("alpha", 1), item("beta", 2), item("gamma", 0), item("delta", 1.5)];
 const client: RelevanceClient = { decide: async (req) => ({ answers: Object.fromEntries(Object.keys(req.questions).map((id, index) => [id, { type: "score", score: index % 2 ? 2 : 0 }])) }) };
 
 // Exact wrapper emitted by Pi 1.1.0 agent-session._expandSkillCommand.
@@ -39,15 +38,43 @@ test("expanded skills without remaining task and malformed wrappers make no call
     assert.equal(event.systemPromptOptions.skills, skills);
   }
 });
-test("contradictory TypeSafe choice answers fail closed instead of advertising irrelevant skills", async () => {
-  const contradictory: RelevanceClient = { decide: async (request) => decodeSystemOne(request, { answers: Object.fromEntries(
-    Object.keys(request.questions).map((id) => [id, { type: "choice", choice: "directly_relevant", probabilities: { irrelevant: 1, related: 0, directly_relevant: 0 }, confidence: 1 }]),
-  ) }, { strictMetadata: true }) };
+test("a choice answer to a skill-picker question fails closed instead of advertising anything", async () => {
+  const choosing: RelevanceClient = { decide: async (request) => ({ answers: Object.fromEntries(
+    Object.keys(request.questions).map((id) => [id, { type: "choice", choice: "directly_relevant", probabilities: { irrelevant: 0, related: 0, directly_relevant: 1 }, confidence: 1 }]),
+  ) }) };
   const event = { prompt: "Write tests", systemPromptOptions: { skills } };
-  const result = await applySkillAdvertisementFilter(event, contradictory, { mode: "choice", minCandidates: 1 });
+  const result = await applySkillAdvertisementFilter(event, choosing, { minCandidates: 1 });
   assert.equal(result.reason, "fail-closed");
   assert.equal(result.errorCode, "invalid_response");
   assert.deepEqual(result.kept, []);
+});
+test("removed policy keys from untyped callers fail closed, even when failMode is open", async () => {
+  for (const removed of [{ mode: "choice" }, { minLabel: "related" }, { relatedThreshold: 0.75 }, { directThreshold: 1.5 }]) {
+    const event = { prompt: "Write tests", systemPromptOptions: { skills } };
+    const result = await applySkillAdvertisementFilter(event, client, { minCandidates: 1, failMode: "open", ...removed } as never);
+    assert.notEqual(result.reason, "filtered");
+    assert.notEqual(result.reason, "fail-open", `${Object.keys(removed)[0]} must never opt in to fail-open`);
+  }
+  assert.equal(filterSkills(skills, items, { minLabel: "related" } as never).reason, "fail-closed");
+});
+test("normalized threshold: inclusive, default 0.375 equals the old raw 0.75, 0 and 1 are the extremes", () => {
+  assert.equal(DEFAULT_RELEVANCE_THRESHOLD, 0.375);
+  const scored = [item("a", 0.74), item("b", 0.75), item("c", 1.5), item("d", 2), item("e", 0)];
+  assert.deepEqual(selectRelevant(scored, 0.375, 10).chosen.map((i) => i.name), ["d", "c", "b"]);
+  assert.deepEqual(selectRelevant(scored, 0.375, 10).eligible, 3);
+  assert.deepEqual(selectRelevant(scored, 0, 10).chosen.map((i) => i.name), ["d", "c", "b", "a", "e"]);
+  assert.deepEqual(selectRelevant(scored, 1, 10).chosen.map((i) => i.name), ["d"]);
+  assert.deepEqual(selectRelevant([...scored, item("f", 1.75)], 0.875, 10).chosen.map((i) => i.name), ["d", "f"], "0.875 is exactly raw 1.75");
+  assert.deepEqual(selectRelevant(scored, 0.75, 10).chosen.map((i) => i.name), ["d", "c"], "0.75 is exactly raw 1.5");
+  assert.equal(selectRelevant([item("x", 1.5)], 0.75, 1).chosen.length, 1, "inclusive at the boundary");
+  for (const bad of [-0.01, 1.01, NaN, Infinity, "0.5", undefined, null]) assert.equal(validThreshold(bad), false);
+  for (const good of [0, 0.375, 1]) assert.equal(validThreshold(good), true);
+});
+test("invalid threshold fails closed and never opts in to fail-open", () => {
+  for (const threshold of [-0.5, 1.5, NaN]) {
+    assert.equal(filterSkills(skills, items, { threshold }).reason, "fail-closed");
+    assert.equal(filterSkills(skills, items, { threshold, failMode: "open" }).reason, "fail-closed");
+  }
 });
 
 test("filter selects highest scores with cap and preserves original order/references", () => {
@@ -56,7 +83,9 @@ test("filter selects highest scores with cap and preserves original order/refere
   assert.equal(result.kept[0], skills[1]);
   assert.deepEqual(result.dropped, ["alpha", "gamma"]);
   assert.equal(result.reason, "filtered");
-  assert.deepEqual(filterSkills(skills, items, { minLabel: "directly_relevant" }).kept, [skills[1], skills[3]]);
+  assert.deepEqual(filterSkills(skills, items, { threshold: 0.75 }).kept, [skills[1], skills[3]]);
+  assert.deepEqual(filterSkills(skills, items, { threshold: 0.9 }).kept, [skills[1]]);
+  assert.deepEqual(filterSkills(skills, items, { maxSkills: 12 }).kept, [skills[0], skills[1], skills[3]], "default threshold 0.375 keeps raw >= 0.75");
 });
 
 test("explicit pins bypass threshold/cap, duplicate names first-win, manual-only skills remain untouched", () => {
