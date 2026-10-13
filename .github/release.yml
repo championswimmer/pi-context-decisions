@@ -1,0 +1,6 @@
+# GitHub generated notes include every PR, regardless of author or labels.
+changelog:
+  categories:
+    - title: Merged pull requests
+      labels:
+        - "*"

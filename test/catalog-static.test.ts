@@ -4,7 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { OPENROUTER_DECISION_MODELS, OPENROUTER_DECISION_SNAPSHOT, getOpenRouterDecisionModel, isAllowedOpenRouterModel } from "../src/catalog/openrouter-models.ts";
 import { buildPickerEntries, type PickerSelection } from "../src/catalog/picker-models.ts";
 
-// Provenance: research .agents/plans/openrouter-weekly-popularity.md, verified
+// Provenance: research .agents/research/openrouter-weekly-popularity.md, verified
 // 2026-10-12 UTC. Expected values intentionally independent of implementation.
 const EXPECTED = [
   ["typesafe/jev-1.13", "3359670383787"],
