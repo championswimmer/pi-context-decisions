@@ -1,7 +1,7 @@
 // Pure data and layout helpers for the floating /decisions dialog.
 // No Pi or pi-tui imports: everything here is unit-testable without a terminal.
 import { DecisionError } from "../decision/errors.ts";
-import { SettingsError, type ContextDecisionsSettings, type RelevanceSettings } from "../settings.ts";
+import { SettingsError, type ContextDecisionsSettings, type RelevanceSettings, type ToolFilterSettings } from "../settings.ts";
 import { selectionLabel } from "./contracts.ts";
 
 /** Strip control and format characters (ANSI introducers, bidi overrides) and bound the length. */
@@ -24,10 +24,14 @@ export function dialogHeightBudget(rows: number | undefined): number {
 }
 
 export type AdvancedKey = Exclude<keyof RelevanceSettings, "pinned">;
+export type ToolKey = Exclude<keyof ToolFilterSettings, "alwaysAllowedTools" | "alwaysAllowedMcpServers">;
+/** Which settings object a field edits: `relevance.*` (skills) or `tools.*` (opt-in tool/MCP filtering). */
+export type SettingsGroup = "relevance" | "tools";
 export type AdvancedKind = "bool" | "options" | "int" | "decimal";
 export interface AdvancedOption { value: string; description: string }
 export interface AdvancedField {
-  key: AdvancedKey;
+  key: AdvancedKey | ToolKey;
+  group: SettingsGroup;
   label: string;
   kind: AdvancedKind;
   hint: string;
@@ -38,28 +42,55 @@ export interface AdvancedField {
  * controls come first (threshold, shard size, max added per round, cadence); safety limits follow.
  */
 export const ADVANCED_FIELDS: readonly AdvancedField[] = [
-  { key: "enabled", label: "Skill filtering", kind: "bool", hint: "Turn relevance scoring of skill advertisements on or off. The master switch on the main screen also applies." },
-  { key: "threshold", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A skill is added when its relevance score is at least this. 0.375 is the default; 1 keeps only perfect scores." },
-  { key: "chunkSize", label: "Shard size", kind: "int", hint: "1–50 skills per decision request; every shard of the remaining candidates is evaluated." },
-  { key: "maxSkills", label: "Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
-  { key: "cadence", label: "Run picker", kind: "options", hint: "When the picker looks for more skills to add. Skills are only ever added, never removed.", options: [
+  { key: "enabled", group: "relevance", label: "Skill filtering", kind: "bool", hint: "Turn relevance scoring of skill advertisements on or off. The master switch on the main screen also applies." },
+  { key: "threshold", group: "relevance", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A skill is added when its relevance score is at least this. 0.375 is the default; 1 keeps only perfect scores." },
+  { key: "chunkSize", group: "relevance", label: "Shard size", kind: "int", hint: "1–50 skills per decision request; every shard of the remaining candidates is evaluated." },
+  { key: "maxSkills", group: "relevance", label: "Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
+  { key: "cadence", group: "relevance", label: "Run picker", kind: "options", hint: "When the picker looks for more skills to add. Skills are only ever added, never removed.", options: [
     { value: "prompt", description: "On each submitted prompt, and for queued steering/follow-up messages (default)." },
     { value: "tool-round", description: "Also after each completed tool round: adds the next-best skills for the same task. No tool names, arguments or results are sent." },
   ] },
-  { key: "failMode", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
+  { key: "failMode", group: "relevance", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
     { value: "closed", description: "Add no new skills when scoring fails (default, recommended)." },
     { value: "open", description: "WARNING: every remaining skill is added when scoring fails." },
   ] },
-  { key: "timeoutMs", label: "Timeout (ms)", kind: "int", hint: "1–300000 milliseconds for the whole scoring pass." },
-  { key: "concurrency", label: "Concurrency", kind: "int", hint: "0–32. 0 sends every shard in parallel; 1–32 limits simultaneous shards." },
-  { key: "minCandidates", label: "Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and every skill stays advertised." },
-  { key: "maxPromptChars", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
-  { key: "maxDescriptionChars", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each skill description sent." },
+  { key: "timeoutMs", group: "relevance", label: "Timeout (ms)", kind: "int", hint: "1–300000 milliseconds for the whole scoring pass." },
+  { key: "concurrency", group: "relevance", label: "Concurrency", kind: "int", hint: "0–32. 0 sends every shard in parallel; 1–32 limits simultaneous shards." },
+  { key: "minCandidates", group: "relevance", label: "Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and every skill stays advertised." },
+  { key: "maxPromptChars", group: "relevance", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
+  { key: "maxDescriptionChars", group: "relevance", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each skill description sent." },
 ];
 export function advancedField(key: string): AdvancedField | undefined { return ADVANCED_FIELDS.find((field) => field.key === key); }
+/**
+ * Opt-in tool and MCP filtering (default off). It is separate from skill filtering: only the master switch, the decision model and the
+ * shared scoring limits (timeout, shard size, concurrency, prompt size) are common.
+ */
+export const TOOL_FIELDS: readonly AdvancedField[] = [
+  { key: "enabled", group: "tools", label: "Tool filtering", kind: "bool", hint: "Off by default and independent of skill filtering. When on, external tools or MCP servers are made available per prompt by the decision model; Pi's built-in tools are never filtered. Calls to unavailable tools are blocked. This is not a sandbox." },
+  { key: "mode", group: "tools", label: "Mode", kind: "options", hint: "What is decided.", options: [
+    { value: "tools", description: "Every external tool is decided on its own, whichever MCP server or extension it comes from (default)." },
+    { value: "mcp", description: "Whole MCP servers are on or off. Other extension tools are never filtered." },
+  ] },
+  { key: "cadence", group: "tools", label: "Run picker", kind: "options", hint: "When more tools or servers are added. They are only ever added, never removed.", options: [
+    { value: "initial", description: "Pick once from your first prompt; later tools are scored against that first prompt only." },
+    { value: "prompt", description: "On each new user prompt, including queued steering/follow-up messages (default)." },
+    { value: "tool-round", description: "Also after each completed tool round: adds the next-best candidates for the same task from cached scores. The decision model only ever receives your bounded user text plus tool/server names and descriptions; never arguments, results or assistant text." },
+  ] },
+  { key: "threshold", group: "tools", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A tool or server is added when its relevance score is at least this. 0.375 is the default." },
+  { key: "maxAdded", group: "tools", label: "Max added per round", kind: "int", hint: "0–1000 new tools (or servers) added by one round, best first. Allowlisted and already-available ones do not count." },
+  { key: "minCandidates", group: "tools", label: "Minimum candidates", kind: "int", hint: "0–1000. Below this many candidates nothing is scored and all of them stay available." },
+  { key: "failMode", group: "tools", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
+    { value: "closed", description: "Add nothing when scoring fails (default, recommended)." },
+    { value: "open", description: "WARNING: every remaining tool or server is made available when scoring fails." },
+  ] },
+  { key: "maxDescriptionChars", group: "tools", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each tool or server description sent to the decision model." },
+];
+export function fieldFor(group: SettingsGroup, key: string): AdvancedField | undefined { return (group === "tools" ? TOOL_FIELDS : ADVANCED_FIELDS).find((field) => field.key === key); }
+export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown { return (settings[group] as unknown as Record<string, unknown>)[key]; }
+export function toolsSummary(settings: ContextDecisionsSettings): string { return settings.tools.enabled ? `On · ${settings.tools.mode} · ${settings.tools.cadence}` : "Off"; }
 
 export function advancedValueText(field: AdvancedField, settings: ContextDecisionsSettings): string {
-  const value = settings.relevance[field.key];
+  const value = fieldValue(settings, field.group, field.key);
   if (field.kind === "bool") return value ? "On" : "Off";
   if (field.key === "concurrency") return value === 0 ? "0 (all shards parallel)" : String(value);
   return String(value);

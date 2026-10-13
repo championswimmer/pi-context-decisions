@@ -1,3 +1,4 @@
+import { canonicalServerKey } from "./tool-inventory.ts";
 /** Always-included advertisements, not a permission/restriction list. */
 export type AllowlistScope = "global" | "project";
 export interface ScopedSkill { name: string; description: string; scope: AllowlistScope; disableModelInvocation: boolean }
@@ -36,3 +37,23 @@ export function toScopedSkills<T extends { name: string; description?: string; s
     seen.add(skill.name); return true;
   }).map((skill) => ({ name: skill.name, description: skill.description ?? "", scope: scopeOf(skill.sourceInfo?.scope), disableModelInvocation: skill.disableModelInvocation === true }));
 }
+/** Tool allowlist names: 1–128 characters, no whitespace or control characters. */
+export function isToolAllowlistName(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\s\p{Cc}\p{Cf}]/u.test(value);
+}
+/** MCP server names (or `mcp__` namespace keys): `[A-Za-z0-9_-]{1,64}`. */
+export function isServerAllowlistName(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/u.test(value);
+}
+function normalizeBy(names: Iterable<unknown>, valid: (value: unknown) => value is string, key: (name: string) => string): string[] {
+  const unique = new Map<string, string>();
+  let count = 0;
+  for (const name of names) {
+    if (++count > 1000 || !valid(name)) throw new AllowlistError();
+    if (!unique.has(key(name))) unique.set(key(name), name);
+  }
+  return [...unique.values()].sort();
+}
+export function normalizeToolAllowlist(names: Iterable<unknown>): string[] { return normalizeBy(names, isToolAllowlistName, (name) => name); }
+/** `dev-radius` and `dev_radius` are the same MCP server in Pi: keep one. A `mcp__` prefix marks a canonical namespace key exclusively. */
+export function normalizeServerAllowlist(names: Iterable<unknown>): string[] { return normalizeBy(names, isServerAllowlistName, canonicalServerKey); }

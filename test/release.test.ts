@@ -34,7 +34,7 @@ test("Pi host packages are peers with * ranges, never runtime dependencies", () 
 });
 
 test("published file list ships sources and excludes tests, demos and scripts", () => {
-  assert.deepEqual(pkg.files, ["src/", "README.md", "CHANGELOG.md", "LICENSE", ".agents/plans/mcp-visibility.md"]);
+  assert.deepEqual(pkg.files, ["src/", "README.md", "CHANGELOG.md", "LICENSE"]);
   const out = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { encoding: "utf8", cwd: new URL("..", import.meta.url) }));
   const paths: string[] = out[0].files.map((file: { path: string }) => file.path);
   for (const required of ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "src/extension.ts", "src/index.ts", "src/host/pi-credentials.ts"]) assert.ok(paths.includes(required), required);

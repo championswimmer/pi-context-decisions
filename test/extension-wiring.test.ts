@@ -62,11 +62,11 @@ async function setup(t: { after(fn: () => Promise<void>): void }, deps: Partial<
   return { ...h, path, messages };
 }
 
-test("real entry factory registers one command and five hooks, no custom provider or tools", () => {
+test("real entry factory registers one command and seven hooks (two for opt-in tool filtering), no custom provider or tools", () => {
   const h = host(); contextDecisions(h.pi as ExtensionAPI);
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
-  assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "turn_end"]);
+  assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "turn_end", "tool_call", "agent_end"]);
   assert.deepEqual(h.commands.get("decisions")!.getArgumentCompletions!("mo"), [{ value: "model", label: "model" }]);
 });
 test("real Pi context registry is type-compatible without a cast in production", () => {

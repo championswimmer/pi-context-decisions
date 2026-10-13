@@ -1,6 +1,6 @@
 # pi-context-decisions
 
-A [Pi](https://pi.dev) extension that uses decision/classifier models to decide which **additional skills to advertise** as a session goes on. Skill picking is **score-only and additive**: relevant skills are added, nothing is ever dropped. Core adapters, the unified decision API, model picker, settings, and skill relevance picking are implemented. **Tool and MCP visibility filtering is not implemented**; see the [MCP visibility plan](.agents/plans/mcp-visibility.md).
+A [Pi](https://pi.dev) extension that uses decision/classifier models to decide which **additional skills to advertise** as a session goes on. Skill picking is **score-only and additive**: relevant skills are added, nothing is ever dropped. Core adapters, the unified decision API, model picker, settings, and skill relevance picking are implemented. **Tool and MCP filtering is available as a separate opt-in feature (off by default)**: see [Tool & MCP filtering](#tool--mcp-filtering-opt-in). It hides and blocks through Pi's public APIs and is not a sandbox.
 
 Requires Pi 1.1.0 APIs and Node 22.18+. Pre-alpha; TypeSafe, the eight retained OpenRouter models, and direct OpenAI Luna passed live `bool`/`choice`/`score` primitive checks on 2026-10-12 (before skill picking became score-only; the additive picker has only offline tests). Luna used Pi's saved `openai` API key with `OPENAI_API_KEY` absent. Native Pi inference remains unverified.
 
@@ -39,6 +39,7 @@ Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **float
 | **Model** | The decision model. Providers without a key are labelled **missing key**. |
 | **Always allowed · Global / Project** | The searchable allowlist editors (see below). |
 | **Advanced…** | Every relevance fine-tuning knob (see below). |
+| **Tools & MCP…** | Opt-in tool/MCP filtering: its own on/off, mode, picker cadence, limits and four allowlist editors (see [Tool & MCP filtering](#tool--mcp-filtering-opt-in)). |
 | **Status…** | Credentials source, last decision and allowlist counts. Makes no inference calls. |
 | **Close** | Closes the dialog. |
 
@@ -155,9 +156,63 @@ Before the first prompt the editor uses Pi's loaded skill commands. Afterward it
 
 ### Privacy and scope
 
-Each eligible prompt sends **bounded prompt text plus skill names/descriptions** to the selected endpoint. Untrusted task/metadata stays in state, not classifier instructions. No skill bodies, file paths, images, transcripts, tool results, or MCP inventory are sent. Nothing is retained per turn beyond the latest bounded diagnostic summary (latency, counts, safe error code, optional usage).
+Each eligible prompt sends **bounded prompt text plus skill names/descriptions** to the selected endpoint. Untrusted task/metadata stays in state, not classifier instructions. No skill bodies, file paths, images, transcripts, or tool results are sent. (Tool/MCP filtering has its own payload, below.) Nothing is retained per turn beyond the latest bounded diagnostic summary (latency, counts, safe error code, optional usage).
 
-This changes **advertisements, not permissions**: explicit `/skill:name`, reading skill files, and already loaded instructions remain possible. Tools and MCP servers are untouched. Cancellation/shutdown aborts in-flight filtering; subsequent prompts use Pi's fresh supplied inventory.
+This changes **advertisements, not permissions**: explicit `/skill:name`, reading skill files, and already loaded instructions remain possible. Skill filtering never touches tools or MCP servers; that is the separate opt-in feature below. Cancellation/shutdown aborts in-flight filtering; subsequent prompts use Pi's fresh supplied inventory.
+
+## Tool & MCP filtering (opt-in)
+
+**Off by default and independent of skill filtering.** It has its own switch (`/decisions tools on`, or **Tools & MCP…** in the dialog); only the master `enabled` switch, the selected decision model and the shared scoring limits (timeout, shard size, concurrency, prompt size) are common. Turning it on never selects a model (without one, every tool simply stays available), and selecting a model never turns it on. While it is off the extension never calls `getAllTools`/`setActiveTools`, writes no entries and lets every call through.
+
+**Modes** (`tools.mode`):
+
+- `tools` (default): every **external** tool is its own candidate, regardless of which extension or MCP server provides it.
+- `mcp`: each **MCP server** is switched on or off as a whole; other extension tools are never filtered. Servers are identified only by Pi's public namespace (`mcp__<server>`, `-` folded to `_`), never by parsing tool names, reading `mcp.json` or guessing an npm package. Third-party MCP adapters that do not set an `mcp__` namespace are not grouped and count as ordinary extension tools. Allowlisting a single tool of a server in this mode **promotes the whole server**, so a server is never half-on.
+
+**Internal tools are always allowed**: Pi's built-in tools and built-in extensions (`read`, `bash`, `codemode`, `tool_search`, the MCP resource tools, ...) are recognised by Pi-assigned provenance (`builtin:` source), **never by name**. An extension that registers a tool called `read`, an SDK host tool, or a tool with unknown provenance is external and can be filtered; allowlist it if needed. Built-in MCP provenance does not make server tools internal.
+
+**Picker cadence** (`tools.cadence`):
+
+- `initial`: one pick, from your **first user prompt** after filtering became active on the branch (custom-message runs never supply it; a failed pick is retried at the next prompt). Tools or servers that appear later are scored against that first prompt only, never re-picking what was already considered, also after `/reload`.
+- `prompt` (default): on each new user prompt, including queued steering/follow-up text.
+- `tool-round`: also after completed tool rounds, adding the next-best candidates from cached scores for the same task (no extra call).
+
+With no decision model selected, or fewer candidates than *Minimum candidates*, nothing is scored at ANY boundary and late arrivals stay available (and are recorded). Turning filtering off mid-run restores the tools it withheld at the next continuing boundary. Ledger records are split into chunks of at most 1000 names per list, so large inventories lose nothing.
+
+Candidates that register later (an MCP server connecting late, a new tool) are scored when first met, at the next boundary or lazily when called, and **availability is additive per branch**: once a tool or server is available on a branch it stays available; later rounds only add. Removing an allowlist entry never takes availability away. State lives in non-context `context-decisions-tools` entries derived from the active branch, so `/tree`, fork, resume and `/reload` follow it.
+
+**Allowlists** (both modes, global in `settings.json`, project in `<cwd>/.pi/pi-context-decisions.json` as `alwaysAllowedTools`/`alwaysAllowedMcpServers`; the file still always contains `alwaysAllowed` for older readers): always-available tools and always-available MCP servers, never scored. Scope means where the list applies, not where a tool came from (that is not observable). Tool names are 1-128 characters without whitespace; server names are `[A-Za-z0-9_-]{1,64}` (`dev-radius` and `dev_radius` are the same server). An entry that starts with `mcp__` is **exclusively a canonical namespace key** (`mcp__prod` is the server `prod`); a raw server literally named `mcp__prod` has the namespace `mcp__mcp__prod` and must be allowlisted by that key.
+
+```text
+/decisions tools                          # dialog (TUI), settings menu (RPC), status (headless)
+/decisions tools on|off
+/decisions tools mode tools|mcp
+/decisions tools cadence initial|prompt|tool-round
+/decisions tools threshold|maxAdded|minCandidates|failMode|maxDescriptionChars <value>
+/decisions tools list                     # local names-only inventory and availability
+/decisions tools allow <global|project> list|add <tool...>|remove <tool...>|clear
+/decisions mcp list
+/decisions mcp allow <global|project> list|add <server...>|remove <server...>|clear
+```
+
+**How it works**, using only public Pi APIs: undecided *declared* tools (direct/model-only) are removed from Pi's active set with `pi.setActiveTools` before the request (only ever removing tools this extension decided against, and restoring only tools it removed); `selectedTools`, `context_with_system` and provider payloads are never touched. Codemode/deferred tools stay callable and discoverable in Pi whether or not they are active, so **every call is also gated in `tool_call`**, including calls nested in codemode scripts; a blocked call returns a short reason naming the allowlist command. A tool nobody has scored yet is scored once (shared by parallel calls) before the verdict. A hidden names-only notice tells the model which *indirect* (codemode/tool-search) MCP servers and tools are available, and says that directly declared, built-in and unfiltered extension tools are unaffected. The MCP resource tools stay internal (always declared) but are **routed by their `server` argument**: reading a server that is not available is blocked, and **listing resources without naming a server is always blocked while filtering is on**, because the complete server inventory (resource-only and disconnected servers) cannot be verified. A server that exposes only resources is unobservable and must be allowlisted; an allowlisted server is also recorded by canonical key on the branch, so removing the entry later never revokes access that was already available.
+
+**Privacy.** The decision model receives the latest bounded user text plus, in `tools` mode, tool names, bounded descriptions and the MCP server label, or in `mcp` mode the namespace key, server label, namespace description and bounded tool names. Never parameter schemas, annotations, namespace instructions, provenance paths, server configs, arguments, results, assistant text or transcripts. Names and descriptions are third-party data and are sent as data, not instructions. Diagnostics carry counts and safe codes.
+
+**Limits, stated plainly.**
+
+- **Not a sandbox.** `bash`, other processes, the `mcp_servers` prompt section, codemode `searchTools`/`ALL_TOOLS`, `tool_search` results and the connections of MCP servers are unaffected: Pi has no public hook to filter discovery or disable file-configured servers. Filtering is relevance gating through Pi's tool pipeline.
+- **First-prompt gap.** Direct-exposure MCP tools that finish connecting during Pi's startup wait can be declared for the first request; calls to them are still gated and the next boundary withholds them.
+- **Enabling mid-session** keeps every tool already registered on that branch available (the model may have seen them); filtering then affects tools registered later and new sessions.
+- **Ownership.** If another extension, `tool_search` or `--tools` re-activates a filtered tool it is removed again at the next boundary and calls are blocked meanwhile; allowlist it to resolve the conflict. An explicit `selectedTools` edit by another extension wins for that run.
+- **Unreadable registry or branch.** If Pi's tool registry cannot be read at call time, the gate falls back to the last provenance-classified snapshot: verified internal tools pass, known external tools follow the ledger and allowlists, anything unknown is blocked, and with no snapshot every call is blocked until the registry recovers (fail closed). A throwing project-allowlist read keeps the last good cache, else only the global lists apply. If the session branch cannot be read the gate still fails closed (allowlisted names and internal tools pass) and no boundary writes, grants or reconciles anything.
+- **Superseded rounds.** A round overtaken by a settings or allowlist save, a disable, a mode change or a branch change commits and reconciles nothing; a run that is merely cancelled reconciles only from what the branch already committed.
+- **Unreadable settings** never silently drop filtering a branch already has: it keeps enforcing its ledger and adds nothing.
+- **Fail closed.** A failed or cancelled round adds nothing; `failMode: open` adds the remaining candidates but never for configuration errors or cancellation.
+- **SDK embedders.** Codemode, `tool_search` or MCP added as plain extension factories get `<inline:...>` provenance and are therefore treated as external (and filtered); register them as built-in extensions (`{ builtin: true }`) or allowlist them (`/decisions tools allow global add codemode`).
+- **Server labels.** Pi's public namespace has no original-name alias, so a server `dev-radius` is labelled `dev_radius` in reasons and lists; allowlisting accepts either spelling.
+- **Handler order.** Pi runs file/package extensions before its built-in MCP/codemode extensions; an SDK-inline instance runs after them. `turn_start` cannot close the first-prompt gap because the first request's declarations are fixed before it.
+- **Not covered by compaction re-delivery.** The availability notice is not re-delivered if compaction summarizes it away (calls stay gated).
 
 ## Application/core API
 

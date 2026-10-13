@@ -83,24 +83,25 @@ function mount(fixture: OpsFixture, options: { rows?: number; initialRoute?: Ini
   };
   return { component, results, press, text, until, tui, get renders() { return renders; }, closedHooks };
 }
-/** Main rows: 0 toggle, 1 provider, 2 model, 3 global, 4 project, 5 advanced, 6 status, 7 close. */
+/** Main rows: 0 toggle, 1 provider, 2 model, 3 global, 4 project, 5 advanced, 6 tools & MCP, 7 status, 8 close. */
 const toRow = (h: ReturnType<typeof mount>, row: number) => { h.press(...Array(row).fill(KEY.down)); };
 
-test("main screen shows exactly the eight concise rows; relevance knobs are not on it", async () => {
+test("main screen shows exactly the nine concise rows; relevance knobs are not on it", async () => {
   const f = fakeOps(); const h = mount(f); await h.until(/Always allowed · Project\s+3/);
-  const labels = ["Context decisions", "Provider / execution", "Model", "Always allowed · Global", "Always allowed · Project", "Advanced…", "Status…", "Close"];
+  const labels = ["Context decisions", "Provider / execution", "Model", "Always allowed · Global", "Always allowed · Project", "Advanced…", "Tools & MCP…", "Status…", "Close"];
   const text = h.text(100); let at = -1;
   for (const label of labels) { const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next; }
   assert.doesNotMatch(text, /threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode/i);
   assert.equal(h.results.length, 0); h.component.dispose();
 });
 
-test("the description yields to the list: all eight rows incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
+test("the description yields to the list: all nine rows incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
   const f = fakeOps(); const h = mount(f, { rows: 16 });
   const text = h.text(100); assert.match(text, /Status…/); assert.match(text, /Close/);
   assert.ok(h.component.render(100).length <= dialogHeightBudget(16));
-  assert.match(text, /Immediately enables or disables/, "a one-line description still fits");
-  const small = mount(fakeOps(), { rows: 8 }); small.press(...Array(7).fill(KEY.down));
+  assert.doesNotMatch(text, /Immediately enables or disables/, "with every row visible and no spare line, the description yields completely");
+  assert.match(mount(fakeOps(), { rows: 18 }).text(100), /Immediately enables or disables/, "a one-line description fits when a line is spare");
+  const small = mount(fakeOps(), { rows: 8 }); small.press(...Array(8).fill(KEY.down));
   assert.match(small.text(100), /❯ Close/); assert.ok(small.component.render(100).length <= dialogHeightBudget(8));
   h.component.dispose(); small.component.dispose();
 });
@@ -338,11 +339,11 @@ test("focus reaches the edit Input only in the edit route", async () => {
 });
 
 test("status route loads lines, scrolls and refreshes; errors render inline", async () => {
-  const f = fakeOps(); const h = mount(f); toRow(h, 6); h.press(KEY.enter);
+  const f = fakeOps(); const h = mount(f); toRow(h, 7); h.press(KEY.enter);
   await h.until(/Credentials: environment/); h.press(KEY.enter); await tick(); assert.equal(f.calls.filter((call) => call === "statusLines").length, 2);
   h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › Status/); h.component.dispose();
   const g = fakeOps({ statusLines: async () => { throw new SettingsError("Repair settings first"); } });
-  const k = mount(g, { initialRoute: "main" }); toRow(k, 6); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
+  const k = mount(g, { initialRoute: "main" }); toRow(k, 7); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
 });
 
 test("allowlist route embeds the editor within the dialog budget; Esc from search pops to main and cancels ranking", async () => {
@@ -434,7 +435,7 @@ test("rendered frame fits width and height at every size for every route, with h
   const routes: [string, (h: ReturnType<typeof mount>) => void][] = [
     ["main", () => {}], ["advanced", (h) => h.component.navigate("advanced")], ["provider", (h) => h.component.navigate("provider")],
     ["model", (h) => h.component.navigate("model")], ["allowlist", (h) => h.component.navigate({ allowlist: "global" })],
-    ["status", (h) => { toRow(h, 6); h.press(KEY.enter); }],
+    ["status", (h) => { toRow(h, 7); h.press(KEY.enter); }],
     ["edit", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.enter); }],
     ["options", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter); }],
   ];
@@ -493,4 +494,40 @@ test("manager: one dialog at a time, second open focuses the first; closeAll res
   manager.closeAll(); manager.closeAll();
   assert.equal(await first, "shutdown"); assert.equal(isOpen!(), false); assert.equal(manager.isOpen(), false);
   doneFn = undefined;
+});
+
+test("Tools & MCP route: fields in order, bool toggles, options and inline edit save through tools.* keys, and the four tool/MCP allowlist rows open their editors", async () => {
+  const f = fakeOps({ async toolAllowlist(list, scope, signal) { f.calls.push(`toolAllowlist:${list}:${scope}`); void signal; return { ...allowlistDeps(scope), noun: list === "tools" ? "tool" : "MCP server", skills: [{ ...skill("ext_a"), scope }] }; } });
+  const h = mount(f, { rows: 40 }); await h.until(/Tools & MCP…\s+Off/); toRow(h, 6); h.press(KEY.enter);
+  const text = await h.until(/Decisions › Tools & MCP/);
+  let at = -1;
+  for (const label of ["Tool filtering", "Mode", "Run picker", "Relevance threshold", "Max added per round", "Minimum candidates", "On failure", "Description size", "Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers · Global", "Always allowed MCP servers · Project"]) {
+    const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next;
+  }
+  assert.match(text, /Tool filtering\s+Off/);
+  h.press(KEY.space); await tick(); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:tools.enabled=true"]);
+  assert.equal(f.settings.tools.enabled, true); assert.match(h.text(), /Tool filtering\s+On/);
+  h.press(KEY.down, KEY.enter); assert.match(h.text(), /Decisions › Tools & MCP › Mode/);
+  h.press(KEY.down, KEY.enter); await tick(); assert.equal(f.settings.tools.mode, "mcp"); assert.match(h.text(), /Decisions › Tools & MCP/); assert.match(h.text(), /Mode\s+mcp/);
+  h.press(KEY.down, KEY.down, KEY.enter); assert.match(h.text(), /Value: 0\.375/);
+  h.press(KEY.backspace, KEY.backspace, KEY.backspace, KEY.backspace, KEY.backspace, "9"); h.press(KEY.enter); await tick();
+  assert.match(h.text(), /threshold must be/, "invalid values stay inline"); assert.equal(f.settings.tools.threshold, 0.375);
+  h.press(KEY.esc);
+  h.press(...Array(5).fill(KEY.down), KEY.enter); await h.until(/Always allowed tools · Global/); await h.until(/Search:/);
+  assert.ok(f.calls.includes("toolAllowlist:tools:global")); assert.match(h.text(), /ext_a/);
+  h.press(KEY.esc);
+  h.component.dispose();
+});
+test("Tools & MCP route fits the height budget at every size and survives hostile text; Esc returns to main", () => {
+  for (const rows of [10, 14, 20, 24, 40]) {
+    const f = fakeOps(); const h = mount(f, { rows, initialRoute: "tools" });
+    const budget = dialogHeightBudget(rows);
+    for (let i = 0; i < 14; i++) {
+      const lines = h.component.render(60);
+      assert.ok(lines.length <= budget, `${rows} rows: ${lines.length} > ${budget}`);
+      for (const line of lines) assert.ok(visibleWidth(line) <= 60, line);
+      h.press(KEY.down);
+    }
+    h.press(KEY.esc); assert.match(h.text(), /Decisions\s/); h.component.dispose();
+  }
 });

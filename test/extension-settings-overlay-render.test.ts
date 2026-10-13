@@ -53,7 +53,7 @@ function fakeOps(): SettingsDialogOps {
     async statusLines() { return ["status"]; }, async allowlist(scope) { return { scope, skills: [], initial: [], locationLabel: "x", async save() {} }; },
   };
 }
-async function scenario(rows: number, appendCount: number) {
+async function scenario(rows: number, appendCount: number, initialRoute?: "tools") {
   const terminal = new EmulatedTerminal(80, rows);
   const tui = new TuiMainScreen(terminal, false);
   const transcript = new Lines(); const editor = new Input({ prompt: "> " });
@@ -64,7 +64,7 @@ async function scenario(rows: number, appendCount: number) {
   tui.renderNow(); await terminal.flush();
   const results: DialogResult[] = [];
   let handle!: ReturnType<typeof tui.showOverlay>;
-  const dialog = createSettingsDialogComponent(tui, theme, (result) => { results.push(result); tui.hideOverlay(); }, fakeOps());
+  const dialog = createSettingsDialogComponent(tui, theme, (result) => { results.push(result); tui.hideOverlay(); }, fakeOps(), { initialRoute });
   handle = tui.showOverlay(dialog, SETTINGS_OVERLAY_OPTIONS);
   tui.renderNow(); await terminal.flush();
   return { terminal, tui, transcript, editor, dialog, handle, results, append, appendCount };
@@ -129,4 +129,13 @@ test("real renderer: keyboard input reaches the dialog while it owns focus, not 
   assert.match(viewport, /❯ Model/);
   s.dialog.close("closed"); s.tui.renderNow();
   s.tui.getFocusedComponent()!.handleInput!("x"); assert.equal(s.editor.getValue(), "x");
+});
+
+test("real renderer 80x24: the Tools & MCP route renders inside the overlay bounds", async () => {
+  const s = await scenario(24, 0, "tools");
+  const { lines, viewportTop } = s.terminal.snapshot();
+  const viewport = lines.slice(viewportTop, viewportTop + 24);
+  assert.ok(viewport.some((line) => /Decisions › Tools & MCP/.test(line)), viewport.join("\n"));
+  assert.ok(viewport.some((line) => /Tool filtering\s+Off/.test(line)));
+  s.dialog.dispose();
 });

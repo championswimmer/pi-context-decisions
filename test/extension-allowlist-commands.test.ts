@@ -22,7 +22,7 @@ async function until(component: Component, pattern: RegExp, width = 120): Promis
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }
-/** Main-screen rows in dialog order: toggle, provider, model, global, project, Advanced, Status, Close. */
+/** Main-screen rows in dialog order: toggle, provider, model, global, project, Advanced, Tools & MCP, Status, Close. */
 function openAllowlistRow(component: Component, row: "global" | "project") {
   for (let i = 0; i < (row === "global" ? 3 : 4); i++) component.handleInput!(keys.down);
   component.handleInput!(keys.enter);

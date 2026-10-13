@@ -10,8 +10,8 @@ import type { ContextDecisionsSettings } from "../settings.ts";
 import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext } from "./contracts.ts";
 import {
-  ADVANCED_FIELDS, advancedField, advancedValueText, backendLabel, describeError, dialogHeightBudget, layoutMenu, modelLabel,
-  sanitizeTerminalText, type AdvancedKey,
+  ADVANCED_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
+  sanitizeTerminalText, toolsSummary, type SettingsGroup,
 } from "./settings-model.ts";
 
 /** Percent sizes are resolved by Pi on every render; the options object itself is read once. */
@@ -20,12 +20,14 @@ export const SETTINGS_OVERLAY_OPTIONS = {
   margin: { top: 1, right: 1, bottom: 1, left: 1 },
 } as const satisfies OverlayOptions;
 
+/** Which always-allowed list an allowlist route edits. Omitted means skills. */
+export type AllowlistKind = "skills" | "tools" | "mcp";
 export type SettingsRoute =
-  | { kind: "main" } | { kind: "advanced" } | { kind: "provider" }
+  | { kind: "main" } | { kind: "advanced" } | { kind: "tools" } | { kind: "provider" }
   | { kind: "model"; filter?: { backend: BackendSelection["backend"]; provider?: string } }
-  | { kind: "edit"; key: AdvancedKey } | { kind: "options"; key: AdvancedKey }
-  | { kind: "status" } | { kind: "allowlist"; scope: AllowlistScope };
-export type InitialRoute = "main" | "advanced" | "provider" | "model" | { allowlist: AllowlistScope };
+  | { kind: "edit"; key: string; group?: SettingsGroup } | { kind: "options"; key: string; group?: SettingsGroup }
+  | { kind: "status" } | { kind: "allowlist"; scope: AllowlistScope; list?: AllowlistKind };
+export type InitialRoute = "main" | "advanced" | "tools" | "provider" | "model" | { allowlist: AllowlistScope; list?: AllowlistKind };
 export type DialogResult = "closed" | "shutdown";
 
 export interface DialogSnapshot { settings: ContextDecisionsSettings; settingsError?: string; hasCwd: boolean }
@@ -34,7 +36,8 @@ export interface ModelRow { id: string; label: string; selection: BackendSelecti
 /** Built in commands.ts. No ctx crosses this boundary; every async method receives a dialog-owned signal. */
 export interface SettingsDialogOps {
   snapshot(): DialogSnapshot;
-  projectCount(signal: AbortSignal): Promise<{ count: number; warning?: string }>;
+  /** `count` is the project skill list; `tools`/`mcpServers` are the project tool and MCP server lists (when known). */
+  projectCount(signal: AbortSignal): Promise<{ count: number; tools?: number; mcpServers?: number; warning?: string }>;
   toggleEnabled(): Promise<void>;
   updateSetting(key: string, text: string): Promise<void>;
   listProviders(signal: AbortSignal): Promise<ProviderRow[]>;
@@ -42,6 +45,8 @@ export interface SettingsDialogOps {
   selectModel(selection: BackendSelection | null, signal: AbortSignal): Promise<{ message: string }>;
   statusLines(signal: AbortSignal): Promise<string[]>;
   allowlist(scope: AllowlistScope, signal: AbortSignal): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">>;
+  /** Editors for the tool and MCP server allowlists. Absent in hosts without tool filtering. */
+  toolAllowlist?(list: Exclude<AllowlistKind, "skills">, scope: AllowlistScope, signal: AbortSignal): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">>;
 }
 export interface DialogTui { requestRender(): void; terminal?: { readonly rows: number } }
 export type DialogTheme = Pick<Theme, "fg" | "bg">;
@@ -85,7 +90,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   let focused = false;
   let busy = false;
   let snap: DialogSnapshot = ops.snapshot();
-  let project: { count?: number; warning?: string; loading: boolean } = { loading: false };
+  let project: { count?: number; tools?: number; mcpServers?: number; warning?: string; loading: boolean } = { loading: false };
   let projectOp: AbortController | undefined;
   const kb = () => getKeybindings();
   const redraw = () => { if (!closed) tui.requestRender(); };
@@ -161,24 +166,27 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     projectOp = controller; project = { ...project, loading: true };
     const signal = AbortSignal.any([lifetime.signal, controller.signal]);
     const settle = (next: typeof project) => { if (closed || projectOp !== controller || signal.aborted) return; projectOp = undefined; project = next; redraw(); };
-    (async () => ops.projectCount(signal))().then((result) => settle({ count: result.count, warning: result.warning, loading: false }),
+    (async () => ops.projectCount(signal))().then((result) => settle({ count: result.count, tools: result.tools, mcpServers: result.mcpServers, warning: result.warning, loading: false }),
       () => settle({ loading: false, warning: "Project list unavailable" }));
   };
 
   const enter = (frame: Frame) => {
     refreshSnapshot();
     const route = frame.route;
-    if (route.kind === "main") loadProject();
+    if (route.kind === "main" || route.kind === "tools") loadProject();
     else if (route.kind === "provider") load(frame, (signal) => ops.listProviders(signal), (rows) => { frame.providers = rows; frame.selected = 0; });
     else if (route.kind === "model") load(frame, (signal) => ops.listModels(route.filter, signal), (rows) => { frame.models = rows; frame.selected = 0; });
     else if (route.kind === "status") load(frame, (signal) => ops.statusLines(signal), (lines) => { frame.lines = lines.map((line) => sanitizeTerminalText(line, 800)); frame.scroll = 0; });
     else if (route.kind === "edit") {
       const input = new Input({ prompt: "Value: " });
-      input.setValue(String(snap.settings.relevance[route.key]));
+      input.setValue(String(fieldValue(snap.settings, route.group ?? "relevance", route.key)));
       input.handleInput("\x05"); // Ctrl+E: start editing at the end of the current value
       frame.input = input;
     } else if (route.kind === "allowlist") {
-      load(frame, (signal) => ops.allowlist(route.scope, signal), (deps) => {
+      const list = route.list ?? "skills";
+      load(frame, (signal) => list === "skills" ? ops.allowlist(route.scope, signal)
+        : ops.toolAllowlist ? ops.toolAllowlist(list, route.scope, signal) : Promise.reject(new Error("Tool filtering is unavailable in this host"))
+      , (deps) => {
         let lastReport: string | undefined;
         const child = createAllowlistComponent({ requestRender: redraw }, theme, (saved) => {
           if (closed || frame.child !== child) return;
@@ -211,7 +219,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     refreshSnapshot(); applyFocus();
   };
   const toRoute = (route: InitialRoute): SettingsRoute => route === "main" ? { kind: "main" }
-    : typeof route === "object" ? { kind: "allowlist", scope: route.allowlist } : { kind: route };
+    : typeof route === "object" ? { kind: "allowlist", scope: route.allowlist, ...(route.list ? { list: route.list } : {}) } : { kind: route };
   const navigate = (route: InitialRoute) => {
     if (closed) return;
     while (stack.length) leave(stack.pop()!);
@@ -238,16 +246,42 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         ...(snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." }),
         run: () => push({ kind: "allowlist", scope: "project" }) },
       { label: "Advanced…", description: "Relevance threshold, shard size, max added per round, picker cadence and safety limits.", run: () => push({ kind: "advanced" }) },
+      { label: "Tools & MCP…", value: toolsSummary(settings), tone: settings.tools.enabled ? "ok" : "muted",
+        description: "Opt-in filtering of external tools and MCP servers, separate from skill filtering. Off by default; not a sandbox.", run: () => push({ kind: "tools" }) },
       { label: "Status…", description: "Credentials, last decision and allowlist counts. Makes no inference calls.", run: () => push({ kind: "status" }) },
       { label: "Close", run: () => close("closed") },
     ];
+    if (route.kind === "tools") {
+      const projectValue = (n: number | undefined) => !snap.hasCwd ? "n/a" : project.loading ? "…" : `${n ?? "?"}${project.warning ? " ⚠" : ""}`;
+      const noCwd = snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." };
+      const lists: { label: string; value: string; description: string; list: Exclude<AllowlistKind, "skills">; scope: AllowlistScope }[] = [
+        { label: "Always allowed tools · Global", value: String(settings.tools.alwaysAllowedTools.length), description: "External tools always available in every project, never scored. Applies in both modes.", list: "tools", scope: "global" },
+        { label: "Always allowed tools · Project", value: projectValue(project.tools), description: project.warning ?? "External tools always available for this working directory only.", list: "tools", scope: "project" },
+        { label: "Always allowed MCP servers · Global", value: String(settings.tools.alwaysAllowedMcpServers.length), description: "MCP servers always available in every project (all their tools), never scored. Applies in both modes.", list: "mcp", scope: "global" },
+        { label: "Always allowed MCP servers · Project", value: projectValue(project.mcpServers), description: project.warning ?? "MCP servers always available for this working directory only.", list: "mcp", scope: "project" },
+      ];
+      return [
+        ...TOOL_FIELDS.map((field): Item => ({
+          label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
+          ...(field.key === "failMode" && settings.tools.failMode === "open" ? { tone: "warn" as const } : {}),
+          ...(field.key === "enabled" ? { tone: settings.tools.enabled ? "ok" as const : "muted" as const } : {}),
+          run: () => {
+            if (field.kind === "bool") mutate(frame, () => ops.updateSetting(`tools.${field.key}`, String(!settings.tools.enabled)), () => ok(frame, `Tool filtering ${snap.settings.tools.enabled ? "enabled" : "disabled"}`));
+            else if (field.kind === "options") push({ kind: "options", group: "tools", key: field.key });
+            else push({ kind: "edit", group: "tools", key: field.key });
+          },
+        })),
+        ...lists.map((row): Item => ({ label: row.label, value: row.value, description: row.description, ...(row.scope === "project" ? noCwd : {}), ...(row.scope === "project" && project.warning ? { tone: "warn" as const } : {}),
+          run: () => push({ kind: "allowlist", scope: row.scope, list: row.list }) })),
+      ];
+    }
     if (route.kind === "advanced") return ADVANCED_FIELDS.map((field) => ({
       label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
       ...(field.key === "failMode" && settings.relevance.failMode === "open" ? { tone: "warn" as const } : {}),
       run: () => {
-        if (field.kind === "bool") mutate(frame, () => ops.updateSetting(`relevance.${field.key}`, String(!settings.relevance[field.key])), () => ok(frame, "Saved"));
-        else if (field.kind === "options") push({ kind: "options", key: field.key });
-        else push({ kind: "edit", key: field.key });
+        if (field.kind === "bool") mutate(frame, () => ops.updateSetting(`relevance.${field.key}`, String(!fieldValue(settings, "relevance", field.key))), () => ok(frame, "Saved"));
+        else if (field.kind === "options") push({ kind: "options", group: "relevance", key: field.key });
+        else push({ kind: "edit", group: "relevance", key: field.key });
       },
     }));
     if (route.kind === "provider") {
@@ -279,11 +313,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       }));
     }
     if (route.kind === "options") {
-      const field = advancedField(route.key);
+      const group = route.group ?? "relevance";
+      const field = fieldFor(group, route.key);
       return (field?.options ?? []).map((option) => ({
-        label: option.value, value: String(settings.relevance[route.key]) === option.value ? "current" : "",
+        label: option.value, value: String(fieldValue(settings, group, route.key)) === option.value ? "current" : "",
         tone: route.key === "failMode" && option.value === "open" ? "warn" as const : undefined, description: option.description,
-        run: () => mutate(frame, () => ops.updateSetting(`relevance.${route.key}`, option.value), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
+        run: () => mutate(frame, () => ops.updateSetting(`${group}.${route.key}`, option.value), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
       }));
     }
     return [];
@@ -294,11 +329,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     switch (route.kind) {
       case "main": return "Decisions";
       case "advanced": return "Decisions › Advanced";
+      case "tools": return "Decisions › Tools & MCP";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "edit": case "options": return `Decisions › Advanced › ${advancedField(route.key)?.label ?? route.key}`;
+      case "edit": case "options": return `Decisions › ${route.group === "tools" ? "Tools & MCP" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
-      case "allowlist": return `Decisions › Always allowed · ${route.scope === "global" ? "Global" : "Project"}`;
+      case "allowlist": return `Decisions › Always allowed${route.list === "tools" ? " tools" : route.list === "mcp" ? " MCP servers" : ""} · ${route.scope === "global" ? "Global" : "Project"}`;
     }
   };
   const hint = (frame: Frame): string => {
@@ -361,7 +397,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     const descSource = selected?.disabled ?? selected?.description ?? "";
     // The description yields to the list: it only takes lines the full list does not need (one line minimum).
     const spare = bodyBudget - bannerCount - items.length;
-    const wantDesc = bodyBudget >= 8 && descSource ? Math.max(1, Math.min(2, spare)) : 0;
+    const wantDesc = bodyBudget >= 8 && descSource && spare >= 1 ? Math.min(2, spare) : 0;
     const descLines = wantDesc === 0 ? [] : wantDesc === 1
       ? [theme.fg("muted", truncateToWidth(sanitizeTerminalText(descSource, 1200), inner, "…"))]
       : wrap(descSource, inner, 2).map((line) => theme.fg("muted", line));
@@ -402,7 +438,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       if (route.kind === "allowlist" && frame.child) body = frame.child.render(inner).slice(0, bodyBudget);
       else if (route.kind === "allowlist") body = fit(bodyBudget, [{ lines: [theme.fg("muted", frame.loading ? "Loading skill inventory…" : "Nothing to show")], min: 1 }, { lines: bannerLines(frame, inner), min: 1 }]);
       else if (route.kind === "edit" && frame.input) {
-        const field = advancedField(route.key);
+        const field = fieldFor(route.group ?? "relevance", route.key);
         body = fit(bodyBudget, [
           { lines: [theme.fg("accent", sanitizeTerminalText(field?.label ?? route.key, 120))], min: 1 },
           { lines: wrap(field?.hint ?? "", inner, 3).map((line) => theme.fg("muted", line)), min: 0 },
@@ -433,7 +469,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
           const route = frame.route;
           if (route.kind === "edit") {
             const text = frame.input.getValue().trim();
-            mutate(frame, () => ops.updateSetting(`relevance.${route.key}`, text), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); });
+            mutate(frame, () => ops.updateSetting(`${route.group ?? "relevance"}.${route.key}`, text), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); });
           }
           return;
         }

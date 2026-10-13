@@ -9,6 +9,8 @@ export interface AllowlistPickerDeps {
   initial: readonly string[];
   locationLabel: string;
   save(names: string[]): Promise<void>;
+  /** What the list holds; drives labels and messages. Defaults to `skill`. Tool and MCP items are passed with `scope` set to this list's scope. */
+  noun?: "skill" | "tool" | "MCP server";
   rank?: (query: string, skills: ScopedSkill[], signal: AbortSignal) => Promise<RelevanceItem[]>;
   unavailable?: string;
   rankLabel?: string;
@@ -54,7 +56,8 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
   let abort: AbortController | undefined;
   let scores = new Map<string, RelevanceItem>();
   let rankedQuery: string | undefined;
-  const input = new Input({ prompt: "Search: ", placeholder: "skill name or description" });
+  const noun = deps.noun ?? "skill";
+  const input = new Input({ prompt: "Search: ", placeholder: `${noun} name or description` });
   const redraw = () => { if (!closed) tui.requestRender(); };
   const dirty = () => draft.size !== savedNames.size || [...draft].some((name) => !savedNames.has(name));
   const searchFocus = () => { listFocused = false; input.focused = focused; };
@@ -70,7 +73,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
     const query = input.getValue().trim();
     if (!query) { message = "Type a search term to rank"; redraw(); return; }
     if (!deps.rank) { message = deps.unavailable ?? "Select a decision model in /decisions to enable ranking"; redraw(); return; }
-    if (!skills.length) { message = "No loaded skills in this scope to rank"; redraw(); return; }
+    if (!skills.length) { message = `No loaded ${noun}s in this scope to rank`; redraw(); return; }
     abort = new AbortController();
     const signal = abort.signal;
     const current = generation;
@@ -100,7 +103,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
     try {
       await deps.save(snapshot);
       if (closed) return;
-      savedNames = new Set(snapshot); savedEver = true; message = "Always-allowed skills saved";
+      savedNames = new Set(snapshot); savedEver = true; message = `Always-allowed ${noun}s saved`;
       deps.report(`Always-allowed ${deps.scope} list saved (${snapshot.length})`);
     } catch (error) { if (!closed) message = `Could not save allowlist (${errorCode(error)})`; }
     finally { saving = false; redraw(); }
@@ -114,7 +117,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       const w = Math.max(1, Math.floor(width));
       const items = ordered(); index = Math.min(index, Math.max(0, items.length - 1));
       const tab = (text: string, active: boolean) => active ? theme.bg("selectedBg", theme.fg("text", ` ${text} `)) : ` ${text} `;
-      const title = theme.fg("accent", `Always allowed · ${deps.scope === "global" ? "Global" : "Project"}${dirty() ? " ●" : ""}`);
+      const title = theme.fg("accent", `Always allowed${noun === "skill" ? "" : ` ${noun}s`} · ${deps.scope === "global" ? "Global" : "Project"}${dirty() ? " ●" : ""}`);
       const tabs = `${tab("A-Z", mode === "az")} ${tab("Relevance", mode === "relevance")}${loading ? " ranking…" : ""}${saving ? " saving…" : ""}`;
       const state = message ?? (mode === "relevance" && rankedQuery !== undefined && rankedQuery !== input.getValue().trim()
         ? "stale — Ctrl+R to re-rank" : deps.unavailable ?? deps.rankLabel ?? "Ranking unavailable");
@@ -125,7 +128,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
         `${draft.size} selected · ${items.length} results · always included, not a restriction list`,
         ...wrapTextWithAnsi(display(deps.rankLabel ?? deps.unavailable ?? "Ranking unavailable"), w).slice(0, 6),
         mode === "az" ? "A-Z: local fuzzy name/description search (no calls)" : rankedQuery !== undefined && rankedQuery !== input.getValue().trim()
-          ? "stale — Ctrl+R to re-rank" : "Relevance: Ctrl+R explicitly ranks all scoped skills (paid call)",
+          ? "stale — Ctrl+R to re-rank" : `Relevance: Ctrl+R explicitly ranks all scoped ${noun}s (paid call)`,
         ...input.render(w), ...(message ? wrapTextWithAnsi(display(message), w).slice(0, 6).map((line) => theme.fg("warning", line)) : [])];
       let footer = [`${Math.min(index + 1, items.length)}/${items.length}`, "Type search · ↓ list · ↑↓ move · Space toggle · Enter description",
         "Ctrl+S save · Ctrl+R rank · Tab tabs · Ctrl+K clear",
@@ -171,7 +174,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
         if (body.length + lines.length > bodyBudget) break;
         body.push(...lines);
       }
-      if (!items.length) body.push("No matching skills");
+      if (!items.length) body.push(`No matching ${noun}s`);
       return [...headers, ...body, ...footer].map((line) => truncateToWidth(line, w));
     },
     handleInput(data: string) {

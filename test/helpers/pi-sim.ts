@@ -82,23 +82,60 @@ export interface SimHost {
   /** Replace to simulate a new session/branch; the next emit hands it to the extension. */
   session: SimSession;
   tools: { active: string[] };
+  /** Registered tool inventory returned by `getAllTools`, and call counters for the "off means untouched" checks. */
+  registry: SimToolInfo[];
+  registerTool(info: SimToolInfo, options?: { activate?: boolean }): void;
+  calls: { getAllTools: number; setActiveTools: number };
+  /** Dispatches `tool_call` like Pi: handlers run in order and the first `{ block: true }` wins. */
+  toolCall(toolName: string, input: unknown, ctx: CommandContext, eventExtra?: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined>;
   appended: { customType: string; data: unknown }[];
   emit(event: string, value: unknown, ctx: CommandContext): Promise<unknown[]>;
   command(args: string, ctx: CommandContext): Promise<void>;
 }
+export interface SimToolInfo {
+  name: string; description?: string; exposure?: "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+  namespace?: { name: string; description?: string; instructions?: string; aliases?: string[] };
+  sourceInfo?: { path: string; source: string; scope?: string; origin?: string };
+  parameters?: unknown; promptGuidelines?: string[]; annotations?: unknown; reachesTools?: boolean;
+}
+/** Pi core/builtin provenance, as Pi's loader assigns it. */
+export const builtinSource = (name: string) => ({ path: `builtin:${name}`, source: "builtin", scope: "temporary", origin: "top-level" });
+export const extensionSource = (name: string) => ({ path: `/ext/${name}.ts`, source: "extension", scope: "user", origin: "top-level" });
 export function simHost(session = new SimSession(), tools: string[] = ["read", "bash"]): SimHost {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
   const appended: { customType: string; data: unknown }[] = [];
   const state = { active: tools };
+  const registry: SimToolInfo[] = tools.map((name) => ({ name, description: `core ${name}`, sourceInfo: builtinSource(name) }));
+  const calls = { getAllTools: 0, setActiveTools: 0 };
   const pi: ExtensionHost = {
+    getAllTools: (() => { calls.getAllTools++; return registry.map((info) => structuredClone(info)); }) as ExtensionAPI["getAllTools"],
+    setActiveTools: ((names: string[]) => {
+      calls.setActiveTools++;
+      // Pi ignores unknown and hidden names.
+      state.active = names.filter((name, index) => names.indexOf(name) === index && registry.some((info) => info.name === name && info.exposure !== "hidden"));
+    }) as ExtensionAPI["setActiveTools"],
     on: ((event: string, handler: Handler) => { const list = handlers.get(event) ?? []; list.push(handler); handlers.set(event, list); return () => {}; }) as ExtensionAPI["on"],
     registerCommand(name, command) { commands.set(name, command); },
     appendEntry(customType: string, data?: unknown) { appended.push({ customType, data }); session.appendCustom(customType, data); },
     getActiveTools: () => [...state.active],
   };
   const host: SimHost = {
-    pi, handlers, commands, session, tools: state, appended,
+    pi, handlers, commands, session, tools: state, appended, registry, calls,
+    registerTool(info, options) {
+      registry.push(info);
+      // Pi activates late direct/model-only registrations; other exposures are never activated.
+      const exposure = info.exposure ?? "direct";
+      if (options?.activate !== false && (exposure === "direct" || exposure === "model-only")) state.active = [...state.active, info.name];
+    },
+    async toolCall(toolName, input, ctx, eventExtra = {}) {
+      (ctx as unknown as { sessionManager?: unknown }).sessionManager = host.session;
+      for (const handler of handlers.get("tool_call") ?? []) {
+        const result = await handler({ type: "tool_call", toolName, toolCallId: "t1", input, ...eventExtra }, ctx as ExtensionContext) as { block?: boolean; reason?: string } | undefined;
+        if (result?.block) return result as { block: true; reason: string };
+      }
+      return undefined;
+    },
     async emit(event, value, ctx) {
       (ctx as unknown as { sessionManager?: unknown }).sessionManager = host.session;
       const results: unknown[] = [];
@@ -143,7 +180,10 @@ export async function turnEnd(host: SimHost, ctx: CommandContext, options: TurnE
     if (result?.entries !== undefined) entries = result.entries;
     if (result?.continue) continued = true;
   }
-  for (const draft of entries) if (draft.type === "custom_message") host.session.appendCustomMessage(draft);
+  for (const draft of entries) {
+    if (draft.type === "custom_message") host.session.appendCustomMessage(draft);
+    else if (draft.type === "custom" && draft.customType) host.session.appendCustom(draft.customType, draft.data);
+  }
   const drafts = entries.filter((draft) => draft.type === "custom_message" && draft.customType === SKILLS_MESSAGE_TYPE);
   const all = entries;
   return { drafts, continued, all };

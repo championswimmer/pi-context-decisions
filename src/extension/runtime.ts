@@ -1,9 +1,9 @@
-import type { ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEvent, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
 import { taskWithoutExpandedSkill } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
 import { allowlistedNames, toScopedSkills, type ScopedSkill } from "../apps/allowlist.ts";
-import { loadProjectAllowlist, saveProjectAllowlist } from "../project-allowlist.ts";
+import { loadProjectAllowlist, saveProjectAllowlist, type ProjectAllowlistLists } from "../project-allowlist.ts";
 import { createBackend } from "../core/backends/factory.ts";
 import { createDecisionClient } from "../decision/api.ts";
 import { DecisionError } from "../decision/errors.ts";
@@ -11,8 +11,10 @@ import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
 import type { ContextDecisionsSettings } from "../settings.ts";
 import { defaultSettings, loadSettings, parseSettings, saveSettings } from "../settings.ts";
 import { registerCommands } from "./commands.ts";
-import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type LedgerState } from "./skill-ledger.ts";
+import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type LedgerState, type SkillsDelta } from "./skill-ledger.ts";
 import { selectionLabel, type Controller, type ExtensionDependencies, type ExtensionHost, type LastDecision } from "./contracts.ts";
+import { queuedUserTask } from "./queued-task.ts";
+import { createToolFilter } from "./tool-filter.ts";
 
 function sumUsage(responses: DecisionResponse[]): DecisionUsage | undefined {
   if (!responses.length) return undefined;
@@ -45,7 +47,15 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let failedKey: string | undefined;
   const seenQueued = new Set<string>();
   let busy = false;
+  let toolsStatusShown = false;
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
+  const toolFilter = createToolFilter({
+    pi, ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
+    beginOperation: () => controller.beginOperation(),
+    resolveClient: (ctx, current, responses) => resolveClient(ctx, current, responses, "tools"),
+    loadProjectAllowlist: (cwd) => controller.loadProjectAllowlist(cwd), sumUsage,
+    changed: (ctx) => { try { controller.setStatus(ctx as unknown as Parameters<Controller["setStatus"]>[0]); } catch { /* cosmetic */ } },
+  });
   const load = async () => {
     const result = await (deps.load ?? loadSettings)(deps.settingsPath);
     settings = result.settings; settingsError = result.error; warnings = result.warnings; loaded = true;
@@ -59,16 +69,20 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     getSettings: () => structuredClone(settings),
     getSettingsError: () => settingsError,
     getLastDecision: () => last ? structuredClone(last) : undefined,
+    getLastToolDecision: () => toolFilter.last(),
+    describeTools: (ctx) => toolFilter.describe(ctx),
     getInventory() {
       if (inventorySnapshot) return structuredClone(inventorySnapshot);
       return toScopedSkills((pi.getCommands?.() ?? []).filter((command) => command.source === "skill" && command.name.startsWith("skill:")).map((command) => ({ name: command.name.slice(6), description: command.description ?? "", sourceInfo: { scope: command.sourceInfo?.scope } })));
     },
     loadProjectAllowlist: (cwd) => (deps.loadProjectAllowlist ?? loadProjectAllowlist)(cwd),
-    async saveProjectAllowlist(cwd, names) {
-      const draft = [...names];
+    async saveProjectAllowlist(cwd, lists) {
+      // Copy now: the caller's iterables must not change under a queued write.
+      const draft: ProjectAllowlistLists = Symbol.iterator in Object(lists) ? { skills: [...(lists as Iterable<string>)] }
+        : Object.fromEntries(Object.entries(lists as ProjectAllowlistLists).map(([key, value]) => [key, [...(value as Iterable<string>)]]));
       const operation = projectWriteQueue.then(async () => {
         await saveProjectAllowlist(cwd, draft);
-        abortPending(); generation++; last = undefined; scoreCache.clear();
+        abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.invalidate();
       });
       projectWriteQueue = operation.catch(() => {});
       await operation;
@@ -79,7 +93,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         const next = parseSettings(change(structuredClone(settings)));
         await (deps.save ?? saveSettings)(next, deps.settingsPath);
         abortPending(); generation++;
-        settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); failedKey = undefined;
+        settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); failedKey = undefined; toolFilter.invalidate();
       });
       writeQueue = operation.catch(() => {});
       await operation;
@@ -104,13 +118,16 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         ? `${last.reason} · +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : ` · ${last.advertised} advertised`}${last.cached ? " · cached" : ` · ${last.latencyMs}ms`}${last.errorCode ? ` · ${last.errorCode}` : ""}`
         : selectionLabel(settings.backend);
       ctx.ui.setStatus("context-decisions", state);
+      // Tool filtering is opt-in: while it is off (the default) nothing extra is ever written to the status bar.
+      const toolsText = toolFilter.status();
+      if (toolsText !== undefined || toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", toolsText); toolsStatusShown = toolsText !== undefined; }
     },
   };
   const commands = registerCommands(pi, controller, deps.env);
   pi.on("session_start", async (_event, ctx) => {
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
-    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear();
+    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset();
     await projectWriteQueue;
     await writeQueue;
     await loading;
@@ -123,46 +140,35 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   pi.on("session_tree", () => {
     // Navigating the session tree changes the active branch: an in-flight pass was computed against the old one.
     // Everything branch-derived is re-read from the new branch at the next boundary; only transient state is dropped here.
-    abortPending(); generation++; last = undefined; scoreCache.clear(); runTask = undefined; failedKey = undefined; seenQueued.clear();
+    abortPending(); generation++; last = undefined; scoreCache.clear(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset();
   });
   pi.on("session_shutdown", (_event, ctx) => {
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
     // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
     commands.closeDialogs();
-    abortPending(); generation++; last = undefined; scoreCache.clear();
-    if (ctx.hasUI) ctx.ui.setStatus("context-decisions", undefined);
+    abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset();
+    if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
   });
   const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
     const names = new Set<string>();
     return skills.filter((skill) => !names.has(skill.name) && !!names.add(skill.name));
   };
-  /** Newest queued steering/follow-up USER text; never assistant text, tool names, arguments or results. */
-  const queuedUserTask = (pending: readonly unknown[] | undefined): { id: string; text: string } | undefined => {
-    for (let index = (pending?.length ?? 0) - 1; index >= 0; index--) {
-      const message = pending![index] as { role?: unknown; content?: unknown; timestamp?: unknown } | undefined;
-      if (message?.role !== "user") continue;
-      const raw = typeof message.content === "string" ? message.content
-        : Array.isArray(message.content) ? message.content.flatMap((block: { type?: unknown; text?: unknown }) => block?.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n") : "";
-      const text = taskWithoutExpandedSkill(raw.slice(0, 100_000));
-      return text.trim() ? { id: `${String(message.timestamp ?? "")}\0${text}`, text } : undefined;
-    }
-    return undefined;
-  };
   const ledgerFor = (ctx: ExtensionContext): LedgerState => {
     try { return readLedger(ctx.sessionManager); }
     catch { return { base: new Set(), added: new Set(), visible: new Set(), lost: [] }; }
   };
-  const resolveClient = (ctx: ExtensionContext, current: ContextDecisionsSettings, responses: DecisionResponse[]): { client: RelevanceClient | null; error?: string } => {
+  /** `skills` is gated by the skill switch, `tools` by the tool-filtering switch: the two features are independent. */
+  function resolveClient(ctx: ExtensionContext, current: ContextDecisionsSettings, responses: DecisionResponse[], feature: "skills" | "tools" = "skills"): { client: RelevanceClient | null; error?: string } {
     if (settingsError) return { client: null, error: settingsError };
     // Never construct/request a client when explicitly disabled or unconfigured.
-    if (!current.enabled || !current.relevance.enabled || !current.backend) return { client: null };
+    if (!current.enabled || !(feature === "skills" ? current.relevance.enabled : current.tools.enabled) || !current.backend) return { client: null };
     try {
       if (current.backend.backend === "pi" && !ctx.modelRegistry.findOfType("classifier", current.backend.provider, current.backend.id)) throw new DecisionError("config", "Selected Pi classifier is not registered");
       const decision = controller.createClient(current.backend, ctx);
       const relevanceClient: RelevanceClient = decision;
       return { client: { maxQuestions: relevanceClient.maxQuestions, async decide(request, options) { const response = await decision.decide(request, options); responses.push(response); return response; } } };
     } catch { return { client: null, error: "Decision client configuration failed" }; }
-  };
+  }
   const pinsFor = async (ctx: ExtensionContext, current: ContextDecisionsSettings, skills: readonly Skill[], reportWarnings: boolean): Promise<string[]> => {
     const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : { names: [], warnings: [] as string[], error: undefined as string | undefined };
     if (reportWarnings) {
@@ -184,7 +190,26 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
    * inventory once filtering was off/unconfigured/below minimum on this branch). New skills are appended as
    * user-role custom messages built with Pi's public formatSkillsForPrompt, never removed, never re-scored.
    */
+  /**
+   * The tool handler is registered FIRST and starts the skill pass before awaiting its own, so both decision calls are in flight
+   * together (two handlers are needed for two hidden messages). The skill handler then awaits that same promise.
+   */
+  let skillPass: Promise<{ message: SkillsDelta } | undefined> | undefined;
+  const toolsActive = () => settings.enabled && settings.tools.enabled;
   pi.on("before_agent_start", async (event, ctx) => {
+    skillPass = undefined;
+    await controller.ensureLoaded();
+    if (toolsActive() || settingsError) {
+      skillPass = skillBeforeAgentStart(event, ctx);
+      skillPass.catch(() => {}); // surfaced by the skill handler below; never an unhandled rejection here
+    }
+    return toolFilter.beforeAgentStart(event as never, ctx);
+  });
+  pi.on("before_agent_start", async (event, ctx) => {
+    const started = skillPass; skillPass = undefined;
+    return started ?? skillBeforeAgentStart(event, ctx);
+  });
+  async function skillBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<{ message: SkillsDelta } | undefined> {
     const inventory = uniqueByName(event.systemPromptOptions.skills);
     inventorySnapshot = toScopedSkills(event.systemPromptOptions.skills);
     skillRefs = new Map(inventory.map((skill) => [skill.name, skill]));
@@ -274,7 +299,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (errorCode && errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${reason} (${errorCode}); /decisions status`, "warning");
       return delta ? { message: delta } : undefined;
     } finally { pending.delete(abort); busy = false; }
-  });
+  }
   /**
    * Between model requests inside a run. Only adds: re-delivers skills that compaction/edits removed from model
    * context (no scoring), and, for queued steering/follow-up user text or the opt-in `tool-round` cadence after
@@ -334,4 +359,11 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       return delta ? { entries: [...event.entries, { type: "custom_message" as const, ...delta }] } : undefined;
     } finally { pending.delete(abort); busy = false; }
   });
+  /**
+   * Tool/MCP filtering at the turn boundary. Registered AFTER the skill handler: Pi hands each handler the drafts accumulated so far, so
+   * this one appends to `event.entries` (the skill delta and any other extension's drafts stay).
+   */
+  pi.on("turn_end", async (event, ctx) => (await toolFilter.turnEnd(event as never, ctx)) as never);
+  pi.on("tool_call", async (event, ctx) => toolFilter.toolCall(event as never, ctx));
+  pi.on("agent_end", (_event, ctx) => { toolFilter.agentEnd(ctx); });
 }

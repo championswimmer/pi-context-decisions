@@ -38,7 +38,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, options: Optio
   const signals: AbortSignal[] = [];
   const inventory = options.skills ?? makeSkills();
   registerContextDecisions(sim.pi, { settingsPath: path, env: {}, report(_ctx, message) { messages.push(message); },
-    async loadProjectAllowlist() { if (behavior.allowlistGate) await behavior.allowlistGate; return { names: ["skill-11"], warnings: [] }; }, // skill-11 is the project-scoped fixture skill
+    async loadProjectAllowlist() { if (behavior.allowlistGate) await behavior.allowlistGate; return { names: ["skill-11"], tools: [], mcpServers: [], warnings: [] }; }, // skill-11 is the project-scoped fixture skill
     createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide(request, decide) {
       requests.push(request); if (decide?.signal) signals.push(decide.signal);
       assert.doesNotMatch(JSON.stringify(request), /private|SKILL\.md|filePath|baseDir|sourceInfo|<available_skills>|Additional skills/);
@@ -272,7 +272,7 @@ test("a delta is only 'added' once Pi persisted it: an uncommitted message leave
   const h = await setup(t);
   const e = h.event("task");
   const results = await Promise.all((h.sim.handlers.get("before_agent_start") ?? []).map((handler) => handler(e, Object.assign(h.ctx, { sessionManager: h.sim.session }) as never)));
-  assert.equal((results[0] as { message?: unknown }).message !== undefined, true, "the hook returned a message");
+  assert.equal((results.at(-1) as { message?: unknown }).message !== undefined, true, "the skill hook returned a message");
   assert.deepEqual([...readLedger(h.sim.session).added], [], "but nothing is recorded until Pi commits it");
   const calls = h.requests.length;
   await h.start("retry");
@@ -407,9 +407,9 @@ test("below the minimum inventory every skill stays advertised even for an empty
   assert.equal(run.shown().length, COUNT); assert.equal(h.requests.length, 0);
   assert.equal(readLedger(h.sim.session).base.size, COUNT);
 });
-test("the hook set is exactly session_start/session_tree/session_shutdown/before_agent_start/turn_end; no model_select or compaction handler is needed", async (t) => {
+test("the hook set is session_start/session_tree/session_shutdown/before_agent_start/turn_end plus tool_call/agent_end for opt-in tool filtering; no model_select or compaction handler is needed", async (t) => {
   const h = await setup(t);
-  assert.deepEqual([...h.sim.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "session_tree", "turn_end"]);
+  assert.deepEqual([...h.sim.handlers.keys()].sort(), ["agent_end", "before_agent_start", "session_shutdown", "session_start", "session_tree", "tool_call", "turn_end"]);
 });
 
 test("turn_end keeps every earlier extension's boundary draft: Pi REPLACES accumulated entries with the returned ones", async (t) => {

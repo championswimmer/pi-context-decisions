@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { defaultSettings, loadSettings, parseSettings, saveSettings, SettingsError, updateSetting, validateBackendSelection } from "../src/settings.ts";
+import { defaultSettings, defaultToolSettings, loadSettings, parseSettings, saveSettings, SettingsError, TOOL_CADENCES, TOOL_FILTER_MODES, updateSetting, validateBackendSelection } from "../src/settings.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
 
 async function directory(t: { after(fn: () => Promise<void>): void }) {
@@ -185,4 +185,87 @@ test("the shipped example config parses without warnings and uses only the new s
   const parsed = parseSettings(JSON.parse(text), warnings);
   assert.deepEqual(warnings, []); assert.equal(parsed.relevance.threshold, 0.5); assert.equal(parsed.relevance.cadence, "prompt");
   for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.doesNotMatch(text, new RegExp(`"${removed}"`));
+});
+
+// ---- Opt-in tool/MCP filtering settings (`tools` block) ----
+
+test("tools block defaults: off, tools mode, prompt cadence, fail closed, empty allowlists, independent per call", () => {
+  const { tools } = defaultSettings();
+  assert.deepEqual(tools, { enabled: false, mode: "tools", cadence: "prompt", threshold: 0.375, maxAdded: 8, minCandidates: 0, failMode: "closed", maxDescriptionChars: 400, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
+  assert.equal(defaultSettings().relevance.enabled, true, "skill filtering default is untouched");
+  const a = defaultToolSettings(); a.alwaysAllowedTools.push("x"); assert.deepEqual(defaultToolSettings().alwaysAllowedTools, []);
+  assert.deepEqual([...TOOL_FILTER_MODES], ["tools", "mcp"]); assert.deepEqual([...TOOL_CADENCES], ["initial", "prompt", "tool-round"]);
+});
+test("a settings file without `tools` loads identically, is never rewritten, and a partial block takes defaults", async (t) => {
+  const path = join(await directory(t), "settings.json");
+  const { tools: _omit, ...old } = defaultSettings();
+  const text = JSON.stringify(old, null, 2) + "\n"; await writeFile(path, text);
+  const loaded = await loadSettings(path);
+  assert.equal(loaded.error, undefined); assert.deepEqual(loaded.warnings, []); assert.deepEqual(loaded.settings, defaultSettings());
+  assert.equal(await readFile(path, "utf8"), text, "loading never rewrites the file");
+  const partial = parseSettings({ tools: { enabled: true } });
+  assert.deepEqual(partial.tools, { ...defaultToolSettings(), enabled: true });
+  assert.deepEqual(parseSettings({ tools: {} }).tools, defaultToolSettings());
+});
+test("a saved tools block roundtrips with sorted, de-duplicated allowlists", async (t) => {
+  const path = join(await directory(t), "settings.json");
+  const settings = parseSettings({ ...defaultSettings(), tools: { ...defaultToolSettings(), enabled: true, mode: "mcp", cadence: "tool-round", threshold: 0.5, maxAdded: 3, alwaysAllowedTools: ["z_tool", "a_tool", "z_tool"], alwaysAllowedMcpServers: ["dev-radius", "docs"] } });
+  await saveSettings(settings, path);
+  const back = (await loadSettings(path)).settings;
+  assert.deepEqual(back, settings);
+  assert.deepEqual(back.tools.alwaysAllowedTools, ["a_tool", "z_tool"]); assert.deepEqual(back.tools.alwaysAllowedMcpServers, ["dev-radius", "docs"]);
+});
+test("every tools bound, enum and type is rejected when invalid", () => {
+  const bad: Record<string, unknown[]> = {
+    enabled: ["true", 1, null], mode: ["server", "", true, "TOOLS"], cadence: ["always", "tool_round", 3], failMode: ["maybe", true],
+    threshold: [NaN, Infinity, -0.01, 1.01, "0.5", null, true], maxAdded: [-1, 1001, 1.5, NaN, "8"], minCandidates: [-1, 1001, 0.5, "0"], maxDescriptionChars: [0, 401, -1, 1.5, "400"],
+    alwaysAllowedTools: ["x", 4, { a: 1 }], alwaysAllowedMcpServers: ["x", null],
+  };
+  for (const [key, values] of Object.entries(bad)) for (const value of values) assert.throws(() => parseSettings({ tools: { [key]: value } }), SettingsError, `${key}=${String(value)}`);
+  for (const value of [null, [], "on", 1]) assert.throws(() => parseSettings({ tools: value }), SettingsError, "tools must be an object");
+  for (const ok of [{ maxAdded: 0 }, { maxAdded: 1000 }, { minCandidates: 1000 }, { maxDescriptionChars: 1 }, { maxDescriptionChars: 400 }, { threshold: 0 }, { threshold: 1 }, ...TOOL_CADENCES.map((cadence) => ({ cadence })), ...TOOL_FILTER_MODES.map((mode) => ({ mode })), { failMode: "open" }]) {
+    assert.doesNotThrow(() => parseSettings({ tools: ok }), JSON.stringify(ok));
+  }
+});
+test("unknown tools keys warn on read and are rejected on write; credentials in the block are rejected without echo", () => {
+  const warnings: string[] = [];
+  assert.equal(parseSettings({ tools: { mystery: 1 } }, warnings).tools.enabled, false); assert.equal(warnings.length, 1);
+  assert.throws(() => parseSettings({ tools: { ...defaultToolSettings(), mystery: 1 } }), SettingsError);
+  assert.throws(() => parseSettings({ tools: { token: "SECRET-FIXTURE" } }), (error: unknown) => error instanceof SettingsError && !/SECRET-FIXTURE/.test(error.message));
+});
+test("tool allowlist names: 1-128 chars, no whitespace/control/format characters, at most 1000", () => {
+  const parse = (names: unknown) => parseSettings({ tools: { alwaysAllowedTools: names } }).tools.alwaysAllowedTools;
+  assert.deepEqual(parse(["mcp__srv__do-thing.v2", "a".repeat(128), "ünï"]), ["a".repeat(128), "mcp__srv__do-thing.v2", "ünï"]);
+  for (const name of ["", "a".repeat(129), "a b", "a\tb", "a\nb", "a\u0000b", "a\u200bb", "a\u202eb", 4, null]) assert.throws(() => parse([name]), /Tool allowlist names/, JSON.stringify(name));
+  assert.throws(() => parse(Array.from({ length: 1001 }, (_, i) => `t${i}`)), /Tool allowlist names/);
+  assert.equal(parse(Array.from({ length: 1000 }, (_, i) => `t${i}`)).length, 1000);
+});
+test("MCP server allowlist names match [A-Za-z0-9_-]{1,64}; `-` and `_` spellings are one server", () => {
+  const parse = (names: unknown) => parseSettings({ tools: { alwaysAllowedMcpServers: names } }).tools.alwaysAllowedMcpServers;
+  assert.deepEqual(parse(["docs", "dev-radius", "dev_radius", "mcp__dev_radius", "A1"]), ["A1", "dev-radius", "docs"], "dev_radius and the canonical mcp__dev_radius fold into the first spelling");
+  assert.deepEqual(parse(["dev_radius", "dev-radius"]), ["dev_radius"]);
+  assert.equal(parse(["a".repeat(64)]).length, 1);
+  for (const name of ["", "a".repeat(65), "a b", "a.b", "a/b", "a\nb", "ünï", "a:b", 3]) assert.throws(() => parse([name]), /MCP server allowlist names/, JSON.stringify(name));
+});
+test("updateSetting edits tools scalars through the same validation; allowlist arrays are rejected", () => {
+  const settings = defaultSettings();
+  assert.equal(updateSetting(settings, "tools.mode", "mcp").tools.mode, "mcp");
+  assert.equal(updateSetting(settings, "tools.enabled", "true").tools.enabled, true);
+  assert.equal(updateSetting(settings, "tools.cadence", "initial").tools.cadence, "initial");
+  assert.equal(updateSetting(settings, "tools.threshold", ".25").tools.threshold, 0.25);
+  assert.equal(updateSetting(settings, "tools.maxAdded", "0").tools.maxAdded, 0);
+  assert.equal(updateSetting(settings, "tools.failMode", "open").tools.failMode, "open");
+  assert.equal(settings.tools.mode, "tools", "the input is never mutated");
+  for (const [key, value] of [["tools.mode", "server"], ["tools.cadence", "sometimes"], ["tools.enabled", "yes"], ["tools.threshold", "1.5"], ["tools.maxAdded", "-1"], ["tools.maxAdded", "1001"], ["tools.maxDescriptionChars", "0"], ["tools.nope", "1"]]) {
+    assert.throws(() => updateSetting(settings, key, value), SettingsError, `${key}=${value}`);
+  }
+  for (const key of ["tools.alwaysAllowedTools", "tools.alwaysAllowedMcpServers"]) assert.throws(() => updateSetting(settings, key, "x"), /allowlists/);
+  assert.throws(() => updateSetting(settings, "tools", "x"), SettingsError);
+});
+test("changing a tools setting leaves skill settings and the master switch alone", () => {
+  const before = defaultSettings();
+  const after = updateSetting(before, "tools.enabled", "true");
+  assert.deepEqual({ ...after, tools: before.tools }, before);
+  const skills = updateSetting(after, "relevance.enabled", "false");
+  assert.equal(skills.tools.enabled, true); assert.equal(skills.relevance.enabled, false);
 });
