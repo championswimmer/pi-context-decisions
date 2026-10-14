@@ -45,7 +45,7 @@ test("global lists migrate absent config, validate, normalize and roundtrip atom
   assert.deepEqual((await loadSettings(path)).settings.globalAllowlist, ["a", "z"]);
   for (const list of ["a", ["bad name"], Array(1001).fill("a")]) assert.throws(() => parseSettings({ globalAllowlist: list }));
   assert.throws(() => parseSettings({ globalAllowlist: { token: "SECRET_FIXTURE" } }), /Credentials/);
-  assert.throws(() => updateSetting(settings, "globalAllowlist", "x"), /decisions allow global/);
+  assert.throws(() => updateSetting(settings, "globalAllowlist", "x"), /decisions dialog/);
   const other = defaultSettings(); other.globalAllowlist.push("one"); assert.deepEqual(defaultSettings().globalAllowlist, []);
 });
 test("project file missing is empty; atomic names-only write sorts, keeps permissions and cleans up", async (t) => {

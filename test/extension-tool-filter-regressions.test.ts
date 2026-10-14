@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { readToolLedger } from "../src/extension/tool-ledger.ts";
 import { CORE, extTool, mcpTool, resourceTools, toolSetup, type ToolHarness } from "./helpers/tool-fixture.ts";
 import { loadSettings, saveSettings } from "../src/settings.ts";
+import { normalizeServerAllowlist } from "../src/apps/allowlist.ts";
 
 const A = extTool("ext_a"), B = extTool("ext_b");
 const BLOCKED = /is unavailable|could not be verified/;
@@ -55,13 +56,17 @@ test("a throwing project allowlist read never loosens the gate: the last good ca
 });
 
 test("stale generation: removing a pin, disabling or changing the mode mid-round leaves NO ledger record, marker, base or declaration change", async (t) => {
-  for (const change of ["tools allow global remove ext_p", "tools off", "tools mode mcp"]) {
+  const changes: [string, (h: Awaited<ReturnType<typeof toolSetup>>) => Promise<void>][] = [
+    ["removing a pin", (h) => h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "ext_p" })],
+    ["disabling", (h) => h.set("tools.enabled")], ["changing the mode", (h) => h.set("tools.mode", "mcp")],
+  ];
+  for (const [change, apply] of changes) {
     const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_p"] }, extra: [A, extTool("ext_p"), mcpTool("srv", "x", "direct")], scores: { ext_a: 2 } });
     const before = h.active();
     let release!: () => void; h.behavior.gate = new Promise<void>((resolve) => { release = resolve; });
     const running = h.start("task");
     await until(() => h.requests.length === 1, "the decision call");
-    await h.command(change);
+    await apply(h);
     release(); await running;
     assert.deepEqual(h.ledger(), [], `${change}: nothing recorded`); assert.equal(h.sim.calls.setActiveTools, 0, `${change}: nothing reconciled`);
     assert.deepEqual(h.active(), before); assert.equal(h.notices().length, 0);
@@ -119,7 +124,7 @@ test("turning filtering off mid-run restores withheld tools at the next continui
   const h = await toolSetup(t, { extra: [A, B], scores: { ext_a: 2 } });
   await h.start("task");
   assert.deepEqual(h.active(), [...CORE, "ext_a"]);
-  await h.command("tools off");
+  await h.set("tools.enabled");
   const { all } = await h.end({ toolResults: [{}] });
   assert.deepEqual(h.active(), [...CORE, "ext_a", "ext_b"], "restored at turn_end");
   assert.ok(all.some((draft) => (draft as { data?: { released?: string[] } }).data?.released?.includes("ext_b")));
@@ -158,11 +163,8 @@ test("allowlist entries: a `mcp__` prefix is EXCLUSIVELY a canonical key; a raw 
     assert.equal(await h.gate(allowed.name), undefined, `${entry} allows its own server`); assert.match((await h.gate(blocked.name))!.reason, BLOCKED, `${entry} does not allow the other`);
     assert.deepEqual(readToolLedger(h.sim.session).groups.has(allowed.namespace!.name), true);
   }
-  const h = await toolSetup(t, { tools: { enabled: false } });
-  await h.command("mcp allow global add mcp__prod prod mcp__mcp__prod");
-  assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, ["mcp__mcp__prod", "mcp__prod"]);
-  await h.command("mcp allow global remove prod");
-  assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, ["mcp__mcp__prod"]);
+  // `prod` and `mcp__prod` are one server; a raw `mcp__prod` server is spelled by its namespace key. The editors persist through this normalizer.
+  assert.deepEqual(normalizeServerAllowlist(["mcp__prod", "prod", "mcp__mcp__prod"]), ["mcp__mcp__prod", "mcp__prod"]);
 });
 test("notice scope: it speaks only about indirect (codemode/deferred) candidates and says directly declared and unfiltered tools are unaffected", async (t) => {
   const h = await toolSetup(t, { extra: [A, extTool("lazy", "codemode"), mcpTool("srv", "x", "codemode")], scores: { ext_a: 2, lazy: 2 } });
@@ -218,7 +220,7 @@ test("settings save during a boundary: the stale pass takes back only ITS additi
   const release = holdRound(h);
   const running = h.start("task");
   await until(() => h.requests.length === 1, "the decision call");
-  await h.command("relevance threshold 0.5");
+  await h.set("relevance.threshold", "0.5");
   release(); await running;
   await h.agentEnd();
   const ledger = readToolLedger(h.sim.session);
@@ -230,14 +232,16 @@ test("settings save during a boundary: the stale pass takes back only ITS additi
 test("gate: removing the global pin while the project allowlist read is pending re-evaluates with the CURRENT settings (blocked, not granted)", async (t) => {
   let hold: Promise<void> | undefined; let reads = 0;
   const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_x"] }, extra: [extTool("ext_x")],
-    async loadProjectAllowlist() { reads++; await hold; return { names: [], tools: [], mcpServers: [], warnings: [] }; } });
+    // Only the gate's own read is held: the dialog that saves the allowlist reads the project list too.
+    async loadProjectAllowlist() { const mine = reads++ === 0; if (mine) await hold; return { names: [], tools: [], mcpServers: [], warnings: [] }; } });
   let release!: () => void; hold = new Promise<void>((resolve) => { release = resolve; });
   const call = h.gate("ext_x");
   await until(() => reads === 1, "the project read");
-  await h.command("tools allow global remove ext_x");
+  await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "ext_x" });
+  const readsAfterSave = reads;
   hold = undefined; release();
   assert.match((await call)!.reason, BLOCKED, "the verdict computed from the old pin was discarded");
-  assert.ok(reads >= 2, "the allowlists were re-read for the re-evaluation");
+  assert.ok(reads > readsAfterSave, "the allowlists were re-read for the re-evaluation");
   assert.equal(readToolLedger(h.sim.session).tools.has("ext_x"), false, "and nothing was recorded for it");
 });
 test("gate: a mode change during lazy scoring discards the old-mode verdict and its additions", async (t) => {
@@ -247,7 +251,7 @@ test("gate: a mode change during lazy scoring discards the old-mode verdict and 
   const release = holdRound(h);
   const call = h.gate("mcp__srv__x");
   await until(() => h.requests.length === 2, "the lazy round");
-  await h.command("tools mode mcp");
+  await h.set("tools.mode", "mcp");
   release();
   assert.match((await call)!.reason, /MCP server "srv" is unavailable/, "re-evaluated in mcp mode: the namespace was never decided there");
   await h.agentEnd();
@@ -260,7 +264,7 @@ test("gate: disabling filtering during lazy scoring lets the call through withou
   const release = holdRound(h);
   const call = h.gate("mcp__srv__x");
   await until(() => h.requests.length === 2, "the lazy round");
-  await h.command("tools off");
+  await h.set("tools.enabled");
   release();
   assert.equal(await call, undefined, "filtering is off now");
   await h.agentEnd();

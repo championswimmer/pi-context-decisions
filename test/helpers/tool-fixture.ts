@@ -9,6 +9,7 @@ import type { CommandContext } from "../../src/extension/contracts.ts";
 import { createDecisionClient } from "../../src/decision/api.ts";
 import type { DecisionRequest } from "../../src/decision/types.ts";
 import { defaultSettings, defaultToolSettings, saveSettings, type ContextDecisionsSettings, type ToolFilterSettings } from "../../src/settings.ts";
+import { saveAllowlist, setSetting } from "./settings-ui.ts";
 import { SimSession, builtinSource, extensionSource, simHost, turnEnd, type SimToolInfo } from "./pi-sim.ts";
 
 /** Pi's built-in MCP manager: server tools carry built-in provenance AND an `mcp__` namespace; resource tools carry no namespace. */
@@ -71,6 +72,10 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
     async agentEnd() { await sim.emit("agent_end", { type: "agent_end", messages: [] }, ctx); },
     gate: (name: string, input: unknown = {}, eventExtra?: Record<string, unknown>) => sim.toolCall(name, input, ctx, eventExtra),
     async command(args: string) { await sim.command(args, ctx); },
+    /** A settings change through the real RPC settings menu (the dialog's save path); booleans toggle. */
+    set: (key: string, value?: string) => setSetting((args, c) => sim.command(args, c), ctx, key, value),
+    /** Save an allowlist through the real terminal dialog (Ctrl+S), optionally flipping one entry first. */
+    allowlist: (options: Parameters<typeof saveAllowlist>[2]) => saveAllowlist((args, c) => sim.command(args, c), ctx, options),
     ledger: () => sim.session.getBranch().filter((entry) => entry.type === "custom" && entry.customType === "context-decisions-tools").map((entry) => entry.data as Record<string, string[] | string>),
     notices: () => sim.session.getBranch().filter((entry) => entry.type === "custom_message" && entry.customType === "context-decisions-tools-notice"),
     /** Names scored by decision call N onwards. */

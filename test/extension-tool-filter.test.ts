@@ -70,7 +70,7 @@ test("mcp mode: namespaces are the candidates; extension tools are never filtere
   assert.ok(h.active().includes("mcp__dev_radius__late"), "a late member of an available namespace needs no scoring");
   assert.equal(await h.gate("mcp__dev_radius__late"), undefined);
   // Switching to tools mode keeps everything that was available.
-  await h.command("tools mode tools");
+  await h.set("tools.mode", "tools");
   await h.start("again");
   assert.equal(await h.gate("mcp__dev_radius__r"), undefined); assert.equal(await h.gate("ext_a"), undefined);
 });
@@ -318,8 +318,8 @@ test("session_tree: each branch has its own ledger, and a stale in-flight state 
   assert.equal(await h.gate("ext_a"), undefined); assert.match((await h.gate("ext_b"))!.reason, BLOCKED, "back on branch one, branch two's addition is blocked");
 });
 for (const [label, save] of [
-  ["a settings save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.command("relevance threshold 0.5")],
-  ["an allowlist save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.command("allow project add some-skill")],
+  ["a settings save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.set("relevance.threshold", "0.5")],
+  ["an allowlist save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.allowlist({ tab: "skills", row: "Always allowed · Project" })],
 ] as const) {
   test(`${label} while a decision round is in flight aborts it and commits nothing`, async (t) => {
     const h = await toolSetup(t, { extra: [A, B], scores: { ext_a: 2 } });
@@ -478,7 +478,7 @@ test("resources: reads are routed by server: blocked while the namespace is unav
   // Before any decision: everything is unavailable.
   const blocked = await h.gate("read_mcp_resource", READ("dev-radius"));
   assert.match(blocked!.reason, /^MCP resource access to server "dev-radius" is unavailable/); assert.ok(blocked!.reason.length <= 300);
-  assert.match(blocked!.reason, /\/decisions mcp allow/);
+  assert.match(blocked!.reason, /\/decisions Tool picker tab/);
   await h.start("search the radar");
   assert.deepEqual(h.active().filter((name) => name.includes("resource")), ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"], "resource tools are never withheld from declarations");
   for (const server of ["dev-radius", "dev_radius"]) assert.equal(await h.gate("read_mcp_resource", READ(server)), undefined, server);

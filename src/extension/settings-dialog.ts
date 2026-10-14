@@ -359,7 +359,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const wrap = (text: string, width: number, limit: number): string[] => wrapTextWithAnsi(sanitizeTerminalText(text, 1200), Math.max(1, width)).slice(0, Math.max(0, limit));
   const bannerLines = (frame: Frame, width: number): string[] => {
-    const banner = frame.banner ?? ((frame.route.kind === "main" || frame.route.kind === "tools") && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair with /decisions model or settings.`, tone: "error" as const } : undefined);
+    const banner = frame.banner ?? ((frame.route.kind === "main" || frame.route.kind === "tools") && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair the settings file, or choose a model in /decisions.`, tone: "error" as const } : undefined);
     if (!banner) return [];
     const color = banner.tone === "error" ? "error" : banner.tone === "success" ? "success" : "warning";
     return wrap(banner.text, width, 4).map((line) => theme.fg(color, line));

@@ -15,6 +15,7 @@ import { createDecisionClient } from "../src/decision/api.ts";
 import { DecisionError } from "../src/decision/errors.ts";
 import type { DecisionRequest, DecisionResponse } from "../src/decision/types.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
+import { setModel, setSetting } from "./helpers/settings-ui.ts";
 
 const host = () => simHost();
 function answer(request: DecisionRequest): DecisionResponse {
@@ -62,12 +63,14 @@ async function setup(t: { after(fn: () => Promise<void>): void }, deps: Partial<
   return { ...h, path, messages };
 }
 
-test("real entry factory registers one command and seven hooks (two for opt-in tool filtering), no custom provider or tools", () => {
+test("real entry factory registers one command and seven hooks (two for opt-in tool filtering), no custom provider or tools", async () => {
   const h = host(); contextDecisions(h.pi as ExtensionAPI);
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
   assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "turn_end", "tool_call", "agent_end"]);
-  assert.deepEqual(h.commands.get("decisions")!.getArgumentCompletions!("mo"), [{ value: "model", label: "model" }]);
+  // The dialog owns every setting: only status, the paid self-test, read-only listings and the legacy pin list remain as arguments.
+  assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "test", "tools", "mcp", "pin", "unpin"]);
+  assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("mo"), null);
 });
 test("real Pi context registry is type-compatible without a cast in production", () => {
   // Compiled by npm run typecheck against the installed peer types.
@@ -82,10 +85,10 @@ test("startup defaults perform no auth or inference and do not mutate advertisem
   assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.match(c.statuses[0]!, /select model/);
   assert.deepEqual(deltaMessages(h.session), [], "unconfigured advertises everything through the base: no delta");
   assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "the branch remembers that every skill was advertised");
-  await h.command("settings", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /"backend": null/);
+  await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions: enabled; not configured/);
 });
-test("headless native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
-  const h = await setup(t); const c = context(); await h.command("model pi custom nested/model", c.ctx);
+test("RPC native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
+  const h = await setup(t); const c = context(); await setModel(h.command, c.ctx, "Pi custom/nested/model");
   assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "pi", provider: "custom", id: "nested/model" });
   const e = event(); const original = e.systemPromptOptions.skills; const before = { ...e.systemPromptOptions };
   let observed: unknown;
@@ -100,7 +103,7 @@ test("headless native selection persists, filters through real core, only skills
   for (const key of Object.keys(before).filter((key) => key !== "skills") as (keyof typeof before)[]) assert.equal(e.systemPromptOptions[key], before[key]);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered, \+1 of 8 candidates, 1 advertised/); assert.match(h.messages.at(-1)!.text, /inputTokens/);
 });
-test("30-skill hook respects persisted decimal thresholds and batch settings via real commands", async (t) => {
+test("30-skill hook respects persisted decimal thresholds and batch settings via the RPC settings menus", async (t) => {
   const batches: number[] = [];
   const h = await setup(t, { createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide(request) {
     const metadata = request.state.skills as Record<string, { name: string; description: string }>;
@@ -109,42 +112,33 @@ test("30-skill hook respects persisted decimal thresholds and batch settings via
     return { answers: Object.fromEntries(Object.entries(metadata).map(([id, skill]) => [id, { type: "score", score: Number(skill.name.slice(6)) % 2 === 0 ? 1.2 : 1.8 }])) };
   } }); } }, true);
   const c = context();
-  await h.command("relevance chunkSize 5", c.ctx);
-  await h.command("relevance maxSkills 30", c.ctx);
-  await h.command("relevance threshold 0.625", c.ctx);
+  await setSetting(h.command, c.ctx, "relevance.chunkSize", "5");
+  await setSetting(h.command, c.ctx, "relevance.maxSkills", "30");
+  await setSetting(h.command, c.ctx, "relevance.threshold", "0.625");
   const e = event(30); const original = e.systemPromptOptions.skills;
   await h.emit("before_agent_start", e, c.ctx);
   assert.deepEqual(batches, [5, 5, 5, 5, 5, 5]);
   assert.deepEqual(advertised(h, original, e.systemPromptOptions.skills), original.filter((_, i) => i % 2 === 1).map((skill) => skill.name));
   assert.equal((await loadSettings(h.path)).settings.relevance.threshold, 0.625);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /threshold 0.625 \(0–1\).*shard 5/s);
-  await h.command("relevance threshold 1.6", c.ctx);
+  await setSetting(h.command, c.ctx, "relevance.threshold", "1.6");
   assert.equal(h.messages.at(-1)!.level, "error");
   assert.equal((await loadSettings(h.path)).settings.relevance.threshold, 0.625);
-  await h.command("relevance relatedThreshold 1.25", c.ctx);
-  assert.equal(h.messages.at(-1)!.level, "error"); assert.match(h.messages.at(-1)!.text, /Removed setting/);
 });
 test("disable, relevance-off, unconfigured, below-minimum and empty prompt make zero calls", async (t) => {
   const h = await setup(t, {}, true); const c = context();
-  await h.command("disable", c.ctx); const disabled = event(); const original = disabled.systemPromptOptions.skills;
+  await setSetting(h.command, c.ctx, "enabled"); const disabled = event(); const original = disabled.systemPromptOptions.skills;
   await h.emit("before_agent_start", disabled, c.ctx); assert.equal(disabled.systemPromptOptions.skills, original);
   assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "disabled advertises everything and the branch remembers it");
-  await h.command("enable", c.ctx); await h.command("relevance enabled false", c.ctx); await h.emit("before_agent_start", event(), c.ctx);
-  await h.command("relevance enabled true", c.ctx); await h.emit("before_agent_start", event(2), c.ctx);
+  await setSetting(h.command, c.ctx, "enabled"); await setSetting(h.command, c.ctx, "relevance.enabled"); await h.emit("before_agent_start", event(), c.ctx);
+  await setSetting(h.command, c.ctx, "relevance.enabled"); await h.emit("before_agent_start", event(2), c.ctx);
   const empty = event(); empty.prompt = " "; await h.emit("before_agent_start", empty, c.ctx);
-  await h.command("model none", c.ctx); await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 0);
+  await setModel(h.command, c.ctx, "none"); await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 0);
 });
-test("invalid manual router selections and missing native classifiers do not alter configured backend", async (t) => {
-  const h = await setup(t, {}, true); const c = context();
-  for (const cmd of ["model openrouter ~typesafe/jev-latest", "model pi openrouter respan/span-01", "model pi missing unknown", "model openrouter", "model openai chat-model"]) {
-    await h.command(cmd, c.ctx); assert.equal(h.messages.at(-1)!.level, "error");
-  }
-  assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "pi", provider: "custom", id: "nested/model" });
-});
-test("all static-ten direct IDs configurable headless, no ranking/discovery or inference calls", async (t) => {
+test("all static-ten direct IDs are selectable through the RPC model menu, with no ranking/discovery or inference calls", async (t) => {
   const h = await setup(t); const c = context({ async getApiKeyForProvider() { return "FIXTURE-ROUTER-KEY"; } });
-  for (const { id } of OPENROUTER_DECISION_MODELS) { await h.command(`model openrouter ${id}`, c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: id }); }
-  assert.equal(c.calls(), 0); assert.equal(c.dialogs.length, 0);
+  for (const { id } of OPENROUTER_DECISION_MODELS) { await setModel(h.command, c.ctx, `openrouter direct ${id}`); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: id }); }
+  assert.equal(c.calls(), 0);
 });
 test("picker restricts router entries, preserves native classifiers, and marks auth/OAuth correctly", async () => {
   let lookups: string[] = [];
@@ -162,37 +156,39 @@ test("picker restricts router entries, preserves native classifiers, and marks a
 });
 test("UI picker uses static entries, supports cancellation and None without writes/inference", async (t) => {
   const h = await setup(t); const c = context({ async getApiKeyForProvider(provider) { return provider === "openrouter" ? "FIXTURE-ROUTER-KEY" : undefined; } }, true); c.selections.push(undefined);
-  await h.command("model", c.ctx); assert.equal(c.dialogs.length, 1); assert.equal(c.calls(), 0);
-  c.selections.push((options) => options.find((option) => option.includes("openrouter direct typesafe/jev-1.13"))!);
-  await h.command("model", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" });
-  c.selections.push("None (no decision calls)"); await h.command("model", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  assert.ok(c.dialogs[0].options!.every((option) => !option.includes("respan")));
+  const modelRow = (options: string[]) => options.find((option) => option.startsWith("Model:"))!;
+  c.selections.splice(0, 1, modelRow, undefined, "Done"); // open the model picker, cancel it
+  await h.command("", c.ctx); assert.equal(c.dialogs.length, 3); assert.equal(c.calls(), 0); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  c.selections.push(modelRow, (options) => options.find((option) => option.includes("openrouter direct typesafe/jev-1.13"))!, "Done");
+  await h.command("", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" });
+  c.selections.push(modelRow, "None (no decision calls)", "Done"); await h.command("", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  assert.ok(c.dialogs[1].options!.every((option) => !option.includes("respan")));
 });
-test("headless picker without args returns actionable error, settings updates and pins work", async (t) => {
-  const h = await setup(t); const c = context(); await h.command("model", c.ctx); assert.match(h.messages.at(-1)!.text, /No dialog UI/);
-  await h.command("settings relevance.maxSkills 2", c.ctx); await h.command("relevance failMode open", c.ctx);
+test("headless pins work and RPC settings updates persist or fail validation", async (t) => {
+  const h = await setup(t); const c = context();
+  await setSetting(h.command, c.ctx, "relevance.maxSkills", "2"); await setSetting(h.command, c.ctx, "relevance.failMode", "open");
   await h.command("pin skill-3", c.ctx); await h.command("pin skill-3", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.relevance.pinned, ["skill-3"]);
   await h.command("unpin skill-3", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.relevance.pinned, []);
   assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 2); assert.equal((await loadSettings(h.path)).settings.relevance.failMode, "open");
-  await h.command("settings relevance.timeoutMs 300001", c.ctx); assert.equal(h.messages.at(-1)!.level, "error");
+  await setSetting(h.command, c.ctx, "relevance.timeoutMs", "300001"); assert.equal(h.messages.at(-1)!.level, "error");
 });
 test("UI settings dialog validation, cancellation and boolean edit share persisted config", async (t) => {
   const h = await setup(t); const c = context({}, true);
   c.selections.push("Advanced…", (options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, "Back", (options) => options.find((option) => option.startsWith("Context decisions:"))!, "Done");
-  c.inputs.push("999"); await h.command("settings", c.ctx);
+  c.inputs.push("999"); await h.command("", c.ctx);
   assert.ok(h.messages.some((message) => message.level === "error")); assert.equal((await loadSettings(h.path)).settings.enabled, false);
   c.selections.push(undefined); await h.command("", c.ctx); assert.equal(c.calls(), 0);
 });
 test("failed persistence does not change in-memory selection or behavior; queue recovers", async (t) => {
   let fail = true;
   const h = await setup(t, { async save(settings, path) { if (fail) throw new Error("SECRET-FIXTURE"); await saveSettings(settings, path); } }, true);
-  const c = context(); await h.command("disable", c.ctx); assert.equal(h.messages.at(-1)!.text, "Context-decisions operation failed");
+  const c = context(); await setSetting(h.command, c.ctx, "enabled"); assert.equal(h.messages.at(-1)!.text, "Context-decisions operation failed");
   await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 1);
-  fail = false; await h.command("disable", c.ctx); await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 1);
+  fail = false; await setSetting(h.command, c.ctx, "enabled"); await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 1);
 });
 test("parallel settings updates serialize without dropping other changes", async (t) => {
   const h = await setup(t); const c = context();
-  await Promise.all([h.command("pin one", c.ctx), h.command("pin two", c.ctx), h.command("relevance maxSkills 3", c.ctx)]);
+  await Promise.all([h.command("pin one", c.ctx), h.command("pin two", c.ctx), setSetting(h.command, c.ctx, "relevance.maxSkills", "3")]);
   const loaded = (await loadSettings(h.path)).settings; assert.deepEqual(loaded.relevance.pinned, ["one", "two"]); assert.equal(loaded.relevance.maxSkills, 3);
 });
 test("provider failure hides advertisements by default, explicitly configured open retains them", async (t) => {
@@ -200,7 +196,7 @@ test("provider failure hides advertisements by default, explicitly configured op
   const c = context({}, true); const closed = event(); const closedInventory = closed.systemPromptOptions.skills;
   await h.emit("before_agent_start", closed, c.ctx); assert.deepEqual(advertised(h, closedInventory, closed.systemPromptOptions.skills), []);
   assert.match(c.statuses.at(-1)!, /fail-closed.*network/); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE|private prompt/);
-  await h.command("relevance failMode open", c.ctx); const open = event(); const original = open.systemPromptOptions.skills; await h.emit("before_agent_start", open, c.ctx);
+  await setSetting(h.command, c.ctx, "relevance.failMode", "open"); const open = event(); const original = open.systemPromptOptions.skills; await h.emit("before_agent_start", open, c.ctx);
   assert.deepEqual(advertised(h, original, open.systemPromptOptions.skills), original.map((skill) => skill.name), "fail-open adds every remaining skill, once"); assert.match(c.statuses.at(-1)!, /fail-open/);
   assert.equal(deltaMessages(h.session).length, 1);
 });
@@ -216,7 +212,7 @@ test("stale persisted model produces explicit startup/status error and fail-clos
   await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx); assert.match(h.messages.at(-1)!.text, /outside the checked-in top ten/);
   const e = event(2); await h.emit("before_agent_start", e, c.ctx); assert.equal(e.systemPromptOptions.skills.length, 0); assert.equal(c.calls(), 0);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /Settings error/);
-  await h.command("model pi custom nested/model", c.ctx); const repaired = event(); await h.emit("before_agent_start", repaired, c.ctx); assert.equal(c.calls(), 1);
+  await setModel(h.command, c.ctx, "Pi custom/nested/model"); const repaired = event(); await h.emit("before_agent_start", repaired, c.ctx); assert.equal(c.calls(), 1);
 });
 for (const failure of ["invalid-persisted", "missing-native"] as const) {
   for (const [description, prompt] of [
@@ -253,9 +249,9 @@ for (const failure of ["invalid-persisted", "missing-native"] as const) {
 test("whole filter timeout hides ads with timeout status and shutdown cancels ignored signals", async (t) => {
   let started!: () => void; let ready = new Promise<void>((resolve) => { started = resolve; });
   const h = await setup(t, { createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide() { started(); return new Promise(() => {}); } }); } }, true);
-  const c = context({}, true); await h.command("relevance timeoutMs 5", c.ctx); const timed = event(); await h.emit("before_agent_start", timed, c.ctx);
+  const c = context({}, true); await setSetting(h.command, c.ctx, "relevance.timeoutMs", "5"); const timed = event(); await h.emit("before_agent_start", timed, c.ctx);
   assert.equal(timed.systemPromptOptions.skills.length, 0); assert.match(c.statuses.at(-1)!, /timeout/);
-  await h.command("relevance timeoutMs 1000", c.ctx); ready = new Promise((resolve) => { started = resolve; });
+  await setSetting(h.command, c.ctx, "relevance.timeoutMs", "1000"); ready = new Promise((resolve) => { started = resolve; });
   const e = event(); const pending = h.emit("before_agent_start", e, c.ctx); await ready;
   await h.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, c.ctx); await pending;
   assert.equal(e.systemPromptOptions.skills.length, 0); assert.equal(c.statuses.at(-1), undefined);
@@ -274,7 +270,7 @@ test("synthetic test command is explicit, gated by selection and uses fixed bool
   let payload: DecisionRequest | undefined;
   const h = await setup(t, { createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide(request) { payload = request; return answer(request); } }); } });
   const c = context(); await h.command("test", c.ctx); assert.equal(payload, undefined);
-  await h.command("model pi custom nested/model", c.ctx); await h.command("test", c.ctx);
+  await setModel(h.command, c.ctx, "Pi custom/nested/model"); await h.command("test", c.ctx);
   assert.deepEqual(payload!.state, { task: "Synthetic extension self-test" }); assert.equal(payload!.questions.q.type, "bool"); assert.match(h.messages.at(-1)!.text, /probability 1/);
 });
 test("shutdown also cancels explicit synthetic calls from idle commands", async (t) => {
@@ -287,7 +283,7 @@ test("shutdown also cancels explicit synthetic calls from idle commands", async 
 test("direct OpenAI status uses env when OAuth active, never displays tokens", async (t) => {
   const h = await setup(t, { env: { OPENAI_API_KEY: "SECRET-FIXTURE" } });
   const c = context({ isUsingOAuth() { return true; }, getApiKeyForProvider() { throw new Error("OAuth bearer must not resolve"); } });
-  await h.command("model openai", c.ctx); await h.command("status", c.ctx);
+  await setModel(h.command, c.ctx, "openai direct gpt-6-luna"); await h.command("status", c.ctx);
   assert.match(h.messages.at(-1)!.text, /Credentials: environment/); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE/);
   assert.equal(JSON.parse(await readFile(h.path, "utf8")).backend.model, "gpt-6-luna");
 });

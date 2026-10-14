@@ -263,15 +263,15 @@ export async function saveSettings(settings: ContextDecisionsSettings, path: str
 }
 /** CLI/UI updates always pass through the same strict validation as persistence. */
 export function updateSetting(settings: ContextDecisionsSettings, key: string, text: string): ContextDecisionsSettings {
-  if (key === "globalAllowlist") throw new SettingsError("Use /decisions allow global to edit the allowlist");
-  if (key === "tools.alwaysAllowedTools" || key === "tools.alwaysAllowedMcpServers") throw new SettingsError("Use /decisions tools allow global ... or /decisions mcp allow global ... to edit these allowlists");
+  if (key === "globalAllowlist") throw new SettingsError("Edit the allowlist in the /decisions dialog");
+  if (key === "tools.alwaysAllowedTools" || key === "tools.alwaysAllowedMcpServers") throw new SettingsError("Edit these allowlists in the /decisions Tool picker tab");
   const next = structuredClone(settings);
   let target: Record<string, unknown>;
   let field: string;
   if (key === "enabled") { target = next as unknown as Record<string, unknown>; field = key; }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
-  else throw new SettingsError("Use enabled, a relevance or tools setting; use model to choose a backend");
+  else throw new SettingsError("Use enabled, a relevance or tools setting; choose a backend in the /decisions dialog");
   if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
     throw new SettingsError("Removed setting: skill picking is score-only. Use relevance threshold <0–1>");
   }

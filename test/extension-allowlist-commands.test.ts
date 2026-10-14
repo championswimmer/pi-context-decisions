@@ -8,7 +8,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
-import { loadProjectAllowlist, projectAllowlistPath } from "../src/project-allowlist.ts";
+import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -39,12 +39,13 @@ async function harness(t: { after(fn: () => Promise<void>): void }, configured =
   const path = join(root, "settings.json");
   await saveSettings({ ...defaultSettings(), backend: configured ? { backend: "typesafe", model: "jev-latest" } : null }, path);
   const commands = new Map<string, Omit<RegisteredCommand, "name" | "sourceInfo">>();
+  const handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
   const requests: DecisionRequest[] = [], messages: string[] = [], overlays: Component[] = [];
   const choices: ((options: string[]) => string | undefined)[] = [];
   let customDriver: ((component: Component) => Promise<void>) | undefined;
   let key: string | undefined = configured ? "FIXTURE_API_KEY" : undefined;
   const pi: ExtensionHost = {
-    on: (() => () => {}) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); }, appendEntry() {}, getActiveTools: () => [],
+    on: ((name: string, handler: (event: unknown, ctx: unknown) => unknown) => { handlers.set(name, [...(handlers.get(name) ?? []), handler]); }) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); }, appendEntry() {}, getActiveTools: () => [],
     getCommands() { return [
       { name: "skill:alpha", description: "Browser testing", source: "skill", sourceInfo: { path: "/private/global/alpha", source: "fixture", scope: "user", origin: "top-level" } },
       { name: "skill:project-only", description: "Database querying", source: "skill", sourceInfo: { path: "/private/project/skill", source: "fixture", scope: "project", origin: "top-level" } },
@@ -73,26 +74,34 @@ async function harness(t: { after(fn: () => Promise<void>): void }, configured =
   return { root, path, ctx, commands, requests, messages, overlays, choices, setKey(value: string | undefined) { key = value; },
     driver(fn: typeof customDriver) { customDriver = fn; },
     async command(args: string) { await commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext); },
+    /** Settings and project files were edited on disk: a reload picks them up. */
+    async emitReload() { for (const handler of handlers.get("session_start") ?? []) await handler({ type: "session_start", reason: "reload" }, ctx as never); },
   };
 }
-test("headless global/project list/add/remove/clear persist separately and status displays counts", async (t) => {
+test("headless status shows allowlist counts; the removed allow/allowlist subcommands change nothing", async (t) => {
   const h = await harness(t);
-  await h.command("allow global add alpha unseen"); await h.command("allow project add project-only");
-  assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha", "unseen"]);
-  assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]);
-  const projectFile = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8")); assert.deepEqual(projectFile, { alwaysAllowed: ["project-only"] });
-  await h.command("allow global list"); assert.match(h.messages.at(-1)!, /global \(2\): alpha, unseen/);
+  await saveSettings({ ...defaultSettings(), globalAllowlist: ["alpha", "unseen"] }, h.path); await saveProjectAllowlist(h.root, ["project-only"]);
+  await h.emitReload();
   await h.command("status"); assert.match(h.messages.at(-1)!, /global 2, project 1/);
-  await h.command("allow global remove alpha"); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["unseen"]);
-  await h.command("allow project clear"); assert.deepEqual((await loadProjectAllowlist(h.root)).names, []); assert.deepEqual(h.requests, []);
+  for (const args of ["allow global add x", "allow project clear", "allow global list", "allowlist global"]) { await h.command(args); assert.match(h.messages.at(-1)!, /^Use \/decisions status\|test\|tools\|mcp\|pin\|unpin/, args); }
+  assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha", "unseen"]);
+  assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]); assert.equal(h.overlays.length, 0); assert.deepEqual(h.requests, []);
+  const projectFile = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8")); assert.deepEqual(projectFile, { alwaysAllowed: ["project-only"] });
 });
-test("global edits refuse to overwrite invalid settings; missing cwd and malformed names are safe errors", async (t) => {
-  const h = await harness(t); await writeFile(h.path, "invalid PRIVATE_CONTENT");
-  await h.command("allow global add alpha"); assert.match(h.messages.at(-1)!, /Repair settings/); assert.equal(await readFile(h.path, "utf8"), "invalid PRIVATE_CONTENT");
-  h.ctx.cwd = undefined; await h.command("allow project list"); assert.match(h.messages.at(-1)!, /working directory/);
+test("global edits refuse to overwrite invalid settings; a missing cwd disables the project editor; nothing private leaks", async (t) => {
+  const h = await harness(t); await writeFile(h.path, "invalid PRIVATE_CONTENT"); h.ctx.hasUI = true; h.ctx.mode = "tui";
+  h.driver(async (component) => {
+    openAllowlistRow(component, "global");
+    await until(component, /Search:/); component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13");
+    await until(component, /Could not save allowlist/);
+  });
+  await h.command(""); assert.equal(await readFile(h.path, "utf8"), "invalid PRIVATE_CONTENT");
+  h.ctx.cwd = undefined;
+  h.driver(async (component) => { assert.match(await until(component, /Always allowed · Project\s+n\/a/), /Always allowed · Project/); });
+  await h.command("");
   assert.ok(h.messages.every((message) => !message.includes("PRIVATE_CONTENT"))); assert.deepEqual(h.requests, []);
 });
-test("/decisions settings opens ONE floating dialog hosting Global and Project editors; saves only the current scope", async (t) => {
+test("/decisions opens ONE floating dialog hosting Global and Project editors; saves only the current scope", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "tui";
   h.driver(async (component) => {
     const main = component.render(100).join("\n");
@@ -103,39 +112,39 @@ test("/decisions settings opens ONE floating dialog hosting Global and Project e
     component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
     component.handleInput!(keys.esc); component.handleInput!(keys.esc); await until(component, /Context decisions/);
   });
-  await h.command("settings"); assert.equal(h.overlays.length, 1); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
+  await h.command(""); assert.equal(h.overlays.length, 1); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
   h.driver(async (component) => {
     await until(component, /Always allowed · Project\s+[1-9?…]/);
     openAllowlistRow(component, "project");
     await until(component, /project-only/); component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
   });
-  await h.command("settings"); assert.equal(h.overlays.length, 2); assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]);
+  await h.command(""); assert.equal(h.overlays.length, 2); assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]);
   assert.deepEqual(h.requests, []); assert.equal(h.commands.has("context-decisions"), false);
   assert.deepEqual(h.messages, [], "dialog feedback stays inside the dialog, not the transcript");
 });
-test("RPC allowlist editor is unavailable but text commands remain functional", async (t) => {
+test("RPC cannot open the allowlist editors: the menu says so, opens no overlay and no allow subcommand exists", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "rpc";
-  await h.command("allowlist global"); assert.match(h.messages.at(-1)!, /terminal UI.*decisions allow/); assert.equal(h.overlays.length, 0);
-  await h.command("allow global add alpha"); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
-  assert.ok((await h.commands.get("decisions")!.getArgumentCompletions!("allow"))!.some((item) => item.value === "allowlist"));
+  h.choices.push((options) => options.find((option) => option.startsWith("Allow list (Global)")), () => "Done");
+  await h.command(""); assert.match(h.messages.at(-1)!, /allow list editors need the terminal UI.*globalAllowlist.*alwaysAllowed/s); assert.equal(h.overlays.length, 0);
+  assert.equal((await h.commands.get("decisions")!.getArgumentCompletions!("allow")), null);
 });
 test("explicit topic ranking uses configured decision client even when auto filtering is off; metadata only", async (t) => {
   const h = await harness(t, true); h.ctx.hasUI = true; h.ctx.mode = "tui";
-  await h.command("disable");
+  await saveSettings({ ...defaultSettings(), enabled: false, backend: { backend: "typesafe", model: "jev-latest" } }, h.path); await h.emitReload();
   h.driver(async (component) => {
-    await until(component, /Search:/);
+    openAllowlistRow(component, "global"); await until(component, /Search:/);
     for (const char of "Browser work") component.handleInput!(char); assert.equal(h.requests.length, 0);
     component.handleInput!("\x12"); await tick(); await tick();
     assert.match(component.render(120).join("\n"), /1.80\/2/);
   });
-  await h.command("allowlist global"); assert.equal(h.requests.length, 1);
+  await h.command(""); assert.equal(h.requests.length, 1);
   const data = JSON.stringify(h.requests); assert.doesNotMatch(data, /\/private\/|filePath|sourceInfo|project-only/); assert.match(data, /topics in the search query/);
   assert.equal(h.requests[0].state.task, "Browser work"); assert.equal((await loadSettings(h.path)).settings.enabled, false);
 });
 test("missing credential guidance remains inline and local fuzzy works without creating a client", async (t) => {
   const h = await harness(t, true); h.setKey(undefined); h.ctx.hasUI = true; h.ctx.mode = "tui";
-  h.driver(async (component) => { await until(component, /Search:/); for (const char of "Browser") component.handleInput!(char); component.handleInput!("\x12"); await tick();
+  h.driver(async (component) => { openAllowlistRow(component, "global"); await until(component, /Search:/); for (const char of "Browser") component.handleInput!(char); component.handleInput!("\x12"); await tick();
     assert.match(component.render(160).join("\n"), /TYPESAFE_API_KEY/); assert.deepEqual(h.requests, []);
     component.handleInput!("\t"); assert.match(component.render(120).join("\n"), /alpha/); });
-  await h.command("allowlist global"); assert.deepEqual(h.requests, []);
+  await h.command(""); assert.deepEqual(h.requests, []);
 });
