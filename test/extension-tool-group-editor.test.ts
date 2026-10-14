@@ -11,10 +11,11 @@ import { join } from "node:path";
 import { extTool, mcpTool, toolSetup, type ToolHarness } from "./helpers/tool-fixture.ts";
 import type { SimToolInfo } from "./helpers/pi-sim.ts";
 import { extensionKey } from "../src/apps/tool-inventory.ts";
+import { normalizeServerAllowlist } from "../src/apps/allowlist.ts";
 
 const PKG_KEY = extensionKey("@acme/pi-web")!;
 
-const KEY = { down: "\x1b[B", up: "\x1b[A", enter: "\r", esc: "\x1b", space: " ", save: "\x13" };
+const KEY = { tab: "\t", down: "\x1b[B", up: "\x1b[A", enter: "\r", esc: "\x1b", space: " ", save: "\x13" };
 const theme = { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value };
 const waitFor = async <T,>(read: () => T | undefined | false, label: string): Promise<T> => {
   const deadline = Date.now() + 2000;
@@ -29,12 +30,14 @@ const EXTRA = [
   mcpTool("dev-radius", "q", "direct"), mcpTool("docs", "s", "direct"), mcpTool("docs", "t", "codemode"),
 ];
 
-async function open(h: ToolHarness, args: string) {
+/** Open the REAL /decisions dialog, switch to the Tool picker tab and enter one allowlist editor (`tools global`, `mcp project`, ...). */
+async function open(h: ToolHarness, target: `${"tools" | "mcp"} ${"global" | "project"}`) {
+  const [list, scope] = target.split(" ") as ["tools" | "mcp", "global" | "project"];
   const components: (Component & { dispose?(): void })[] = [];
   const ui = { async select() { return undefined; }, async input() { return undefined; }, notify() {}, setStatus() {},
     async custom(factory: (...a: unknown[]) => unknown) { return new Promise((resolve) => { components.push(factory({ requestRender() {}, terminal: { rows: 40 } }, theme, {}, resolve) as Component); }); } };
   const ctx = { ...h.ctx, mode: "tui", hasUI: true, ui } as unknown as CommandContext;
-  const run = h.sim.command(args, ctx);
+  const run = h.sim.command("", ctx);
   const dialog = await waitFor(() => components[0], "dialog");
   const text = () => dialog.render(110).join("\n");
   const until = (pattern: RegExp) => waitFor(() => pattern.test(text()) && text(), `${pattern}\n${text()}`);
@@ -46,12 +49,14 @@ async function open(h: ToolHarness, args: string) {
     for (let guard = 0; guard < 80; guard++) { if (text().split("\n").some((line) => /❯/.test(line) && pattern.test(line))) return; press(KEY.down); }
     assert.fail(`cursor never reached ${pattern}\n${text()}`);
   };
+  press(KEY.tab); await until(/Always allowed tools · Global/);
+  to(new RegExp(`${list === "tools" ? "Always allowed tools" : "Always allowed MCP servers & extensions"} · ${scope === "global" ? "Global" : "Project"}`)); press(KEY.enter);
   return { dialog, run, text, until, press, to, close };
 }
 
 test("the tool editor lists built-ins first, then MCP servers and extensions named from public provenance (package name, file name), then ungrouped tools", async (t) => {
   const h = await toolSetup(t, { extra: EXTRA });
-  const e = await open(h, "tools allowlist global");
+  const e = await open(h, "tools global");
   const text = await e.until(/Built-in tools/);
   assert.match(text, /Always allowed tools · Global/);
   const at = (needle: RegExp) => text.search(needle);
@@ -62,7 +67,7 @@ test("the tool editor lists built-ins first, then MCP servers and extensions nam
 });
 test("saving writes tool names and group keys together to the global settings, preserving unloaded names and canonicalizing raw server names", async (t) => {
   const h = await toolSetup(t, { extra: EXTRA, tools: { alwaysAllowedTools: ["ghost_tool"], alwaysAllowedMcpServers: ["dev-radius", "ext__gone"] } });
-  const e = await open(h, "tools allowlist global");
+  const e = await open(h, "tools global");
   await e.until(/▸ dev-radius/);
   assert.match(e.text(), /\[x\] ▸ dev-radius/);
   e.to(/▸ notes/); e.press(KEY.space);
@@ -80,7 +85,7 @@ test("the project scope saves both lists in one atomic project-file write and le
   const h = await toolSetup(t, { extra: EXTRA });
   await mkdir(join(h.root, ".pi"), { recursive: true });
   await writeFile(projectAllowlistPath(h.root), JSON.stringify({ alwaysAllowed: ["skill-a"], alwaysAllowedTools: ["old_tool"], alwaysAllowedMcpServers: ["docs"] }));
-  const e = await open(h, "tools allowlist project");
+  const e = await open(h, "tools project");
   await e.until(/▸ docs/);
   assert.match(e.text(), /\[x\] ▸ docs/, "a raw server name in the project file seeds the canonical group");
   e.to(/▸ @acme\/pi-web/); e.press(KEY.space); e.press(KEY.save);
@@ -91,7 +96,7 @@ test("the project scope saves both lists in one atomic project-file write and le
 });
 test("the MCP editor lists servers AND extensions as one flat group list, saved by canonical key", async (t) => {
   const h = await toolSetup(t, { extra: EXTRA, tools: { alwaysAllowedMcpServers: ["docs"] } });
-  const e = await open(h, "mcp allowlist global");
+  const e = await open(h, "mcp global");
   const text = await e.until(/\(MCP server\)/);
   assert.match(text, /Always allowed MCP servers & extensions/); assert.match(text, /\[x\] docs \(MCP server\)/); assert.match(text, /\[ \] dev-radius \(MCP server\)/); assert.match(text, /\[ \] notes \(extension\)/); assert.match(text, /\[ \] @acme\/pi-web \(extension\)/);
   e.to(/notes \(extension\)/); e.press(KEY.space); e.press(KEY.save);
@@ -109,9 +114,8 @@ test("a saved extension group takes effect: all its tools are available in both 
     assert.match((await h.gate("web_fetch"))!.reason, mode === "mcp" ? /^Extension "@acme\/pi-web" is unavailable/ : /^Tool "web_fetch" is unavailable/);
   }
 });
-test("/decisions mcp allow accepts ext__ keys, folds case and `-`, and `tools list`/`mcp list` show the extension", async (t) => {
-  const h = await toolSetup(t, { extra: EXTRA });
-  await h.command(`mcp allow global add ext__Notes ${PKG_KEY}`);
+test("settings accept ext__ keys and fold their case, and `tools list`/`mcp list` show the allowlisted extension", async (t) => {
+  const h = await toolSetup(t, { extra: EXTRA, tools: { alwaysAllowedMcpServers: ["ext__Notes", PKG_KEY] } });
   assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, [PKG_KEY, "ext__notes"]);
   await h.command("mcp list");
   const report = h.messages.at(-1)!;
@@ -133,8 +137,8 @@ test("regression: a non-ASCII extension is a real group that mcp mode filters, s
   const key = extensionKey("笔记")!;
   const h = await toolSetup(t, { extra: [fromExtension("note_zh", "/home/u/.pi/agent/extensions/笔记.ts"), EXTRA[0]!], tools: { mode: "mcp" } });
   await h.start("task");
-  assert.ok(!h.active().includes("note_zh"), "no longer escapes filtering"); assert.match((await h.gate("note_zh"))!.reason, /^Extension "笔记" is unavailable.*add ext__ext_[0-9a-f]{10}\./);
-  const e = await open(h, "mcp allowlist global");
+  assert.ok(!h.active().includes("note_zh"), "no longer escapes filtering"); assert.match((await h.gate("note_zh"))!.reason, /^Extension "笔记" is unavailable.*Tool picker tab/);
+  const e = await open(h, "mcp global");
   await e.until(/笔记 \(extension\)/);
   e.to(/笔记 \(extension\)/); e.press(KEY.space, KEY.save);
   await waitFor(() => /saved/.test(e.text()) && !/●/.test(e.text()), "saved");
@@ -142,19 +146,15 @@ test("regression: a non-ASCII extension is a real group that mcp mode filters, s
   await e.close();
   assert.equal(await h.gate("note_zh"), undefined);
 });
-test("regression: a LOADED 64-character server name round-trips through both editors, the project file and the commands without failing unrelated saves", async (t) => {
+test("regression: a LOADED 64-character server name round-trips through both editors, the project file and the settings without failing unrelated saves", async (t) => {
   const full = "x".repeat(64), canonical = `mcp__${full}`;
   const h = await toolSetup(t, { extra: [EXTRA[0]!, mcpTool(full, "q", "direct")], tools: { alwaysAllowedMcpServers: [full] } });
   await mkdir(join(h.root, ".pi"), { recursive: true });
   await writeFile(projectAllowlistPath(h.root), JSON.stringify({ alwaysAllowed: [], alwaysAllowedMcpServers: [full] }));
-  // Commands: the canonical key of a valid raw name is valid and is the same server.
-  await h.command(`mcp allow global add ${canonical}`);
-  assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, [full], "same server: not duplicated");
-  await h.command(`mcp allow global remove ${canonical}`);
-  assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, [], "removing by the canonical key removes the raw entry");
-  await h.command(`mcp allow global add ${full}`);
+  // The canonical key of a valid raw name is valid and is the same server (never duplicated).
+  assert.deepEqual(normalizeServerAllowlist([full, canonical]), [full]);
   // Tool editor: the loaded server seeds as a canonical 69-character key; an unrelated pick saves.
-  const e = await open(h, "tools allowlist global");
+  const e = await open(h, "tools global");
   await e.until(/▸ x{64}/);
   assert.match(e.text(), /\[x\] ▸ x{64}/);
   e.to(/▸ notes/); e.press(KEY.space, KEY.save);
@@ -162,13 +162,13 @@ test("regression: a LOADED 64-character server name round-trips through both edi
   assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, [canonical, "ext__notes"].sort());
   await e.close();
   // MCP editor (global and project).
-  const g = await open(h, "mcp allowlist global");
+  const g = await open(h, "mcp global");
   await g.until(/x{64} \(MCP server\)/);
   g.to(/notes \(extension\)/); g.press(KEY.space, KEY.save);
   await waitFor(() => /saved/.test(g.text()) && !/●/.test(g.text()), "mcp editor saved");
   assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, [canonical]);
   await g.close();
-  const p = await open(h, "mcp allowlist project");
+  const p = await open(h, "mcp project");
   await p.until(/x{64} \(MCP server\)/);
   p.to(/notes \(extension\)/); p.press(KEY.space, KEY.save);
   await waitFor(() => /saved/.test(p.text()) && !/●/.test(p.text()), "project saved");

@@ -34,6 +34,11 @@ class EmulatedTerminal implements Terminal {
   clearLine() { this.write("\x1b[K"); } clearFromCursor() { this.write("\x1b[J"); } clearScreen() { this.write("\x1b[2J\x1b[H"); }
   setTitle() {} setProgress() {} setProgramStatus() {}
   async flush() { const batch = this.pending; this.pending = []; await Promise.all(batch); }
+  /** Background palette index of the cell at (absolute buffer row, column), or undefined for the default background. */
+  bgAt(row: number, col: number): number | undefined {
+    const cell = this.xterm.buffer.active.getLine(row)?.getCell(col);
+    return cell && !cell.isBgDefault() ? cell.getBgColor() : undefined;
+  }
   /** Every buffer line (scrollback first, then the visible viewport) and the viewport offset. */
   snapshot() {
     const buffer = this.xterm.buffer.active; const lines: string[] = [];
@@ -42,7 +47,7 @@ class EmulatedTerminal implements Terminal {
   }
 }
 class Lines implements Component { lines: string[] = []; invalidate() {} render() { return this.lines; } }
-const theme = { fg: (_token: unknown, value: string) => `\x1b[36m${value}\x1b[39m`, bg: (_token: unknown, value: string) => value } as Parameters<typeof createSettingsDialogComponent>[1];
+const theme = { fg: (_token: unknown, value: string) => `\x1b[36m${value}\x1b[39m`, bg: (_token: unknown, value: string) => `\x1b[48;5;24m${value}\x1b[49m` } as Parameters<typeof createSettingsDialogComponent>[1];
 
 function fakeOps(): SettingsDialogOps {
   const settings = defaultSettings();
@@ -136,7 +141,7 @@ test("real renderer 80x24: the Tool picker tab renders inside the overlay bounds
   const { lines, viewportTop } = s.terminal.snapshot();
   const viewport = lines.slice(viewportTop, viewportTop + 24);
   assert.ok(viewport.some((line) => /Decisions › Tool picker/.test(line)), viewport.join("\n"));
-  assert.ok(viewport.some((line) => /Skill picker\s+\[ Tool picker \]|Skill picker.*Tool picker/.test(line)), "tab strip is visible");
+  assert.ok(viewport.some((line) => /Skill picker\s+Tool picker/.test(line)), "tab strip is visible");
   assert.ok(viewport.some((line) => /Tool filtering\s+Off/.test(line)));
   s.dialog.dispose();
 });
@@ -144,12 +149,32 @@ test("real renderer 80x24: the Tool picker tab renders inside the overlay bounds
 test("real renderer 80x24: Tab through the focused overlay switches Skill picker ⇄ Tool picker inside the same overlay bounds", async () => {
   const s = await scenario(24, 0);
   const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + 24); };
-  assert.ok(view().some((line) => /\[ Skill picker \]/.test(line)));
+  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line) && !/\[/.test(line)));
   s.tui.getFocusedComponent()!.handleInput!("\t"); s.tui.renderNow(); await s.terminal.flush();
-  assert.ok(view().some((line) => /\[ Tool picker \]/.test(line)) && view().some((line) => /Tool filtering\s+Off/.test(line)), view().join("\n"));
+  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line)) && view().some((line) => /Tool filtering\s+Off/.test(line)), view().join("\n"));
   assert.equal(s.editor.getValue(), "", "Tab must not reach the editor underneath"); assert.equal(s.tui.hasOverlay(), true);
   s.tui.getFocusedComponent()!.handleInput!("\x1b[Z"); s.tui.renderNow(); await s.terminal.flush();
-  assert.ok(view().some((line) => /\[ Skill picker \]/.test(line)));
+  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line) && !/\[/.test(line)));
+  s.dialog.dispose();
+});
+
+test("real renderer: the selected tab has a real cell background (not brackets) that follows Tab, and the other tab has none", async () => {
+  const s = await scenario(24, 0);
+  const find = async (label: string) => {
+    s.tui.renderNow(); await s.terminal.flush();
+    const { lines, viewportTop } = s.terminal.snapshot();
+    const row = lines.findIndex((line, i) => i >= viewportTop && /Skill picker\s+Tool picker/.test(line));
+    assert.ok(row >= 0, "tab strip row");
+    assert.doesNotMatch(lines[row], /[\[\]]/);
+    const col = lines[row].indexOf(label);
+    return { row, col, mid: s.terminal.bgAt(row, col + 2), edgeLeft: s.terminal.bgAt(row, col - 1), edgeRight: s.terminal.bgAt(row, col + label.length) };
+  };
+  let skill = await find("Skill picker"), tool = await find("Tool picker");
+  assert.equal(skill.mid, 24, "active tab label has the background"); assert.equal(skill.edgeLeft, 24, "padding is filled too"); assert.equal(skill.edgeRight, 24);
+  assert.equal(tool.mid, undefined, "inactive tab has no background");
+  s.tui.getFocusedComponent()!.handleInput!("\t");
+  skill = await find("Skill picker"); tool = await find("Tool picker");
+  assert.equal(tool.mid, 24); assert.equal(tool.edgeLeft, 24); assert.equal(tool.edgeRight, 24); assert.equal(skill.mid, undefined);
   s.dialog.dispose();
 });
 

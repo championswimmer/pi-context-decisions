@@ -330,12 +330,12 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           };
           if (server !== undefined) {
             if (usable(serverKey(server))) return undefined;
-            return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: pi-context-decisions tool filtering has not enabled that server. Ask the user to allow it with /decisions mcp allow <global|project> add <server>.`.slice(0, BLOCK_REASON_LIMIT) };
+            return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: filtering has not enabled it. Ask the user to add it to tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers (project .pi/pi-context-decisions.json), then /reload.`.slice(0, BLOCK_REASON_LIMIT) };
           }
           if (tool.name === "read_mcp_resource") return undefined; // Pi rejects a read without a server; nothing to route
           // Unscoped listing: the complete server inventory (resource-only and disconnected servers included) is not observable, so it can never be
           // verified as fully allowed. Fail closed while filtering is on; the model must name a server.
-          return { block: true, reason: "Listing MCP resources across all servers is unavailable while tool filtering is on, because the complete server inventory cannot be verified: pass a specific available server, or ask the user to allow it with /decisions mcp allow <global|project> add <server>.".slice(0, BLOCK_REASON_LIMIT) };
+          return { block: true, reason: "Listing MCP resources across all servers is unavailable while filtering is on (servers cannot be fully verified): pass an available server, or ask the user to add one to tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers (project .pi/pi-context-decisions.json), then /reload.".slice(0, BLOCK_REASON_LIMIT) };
         }
         if (tool.kind === "internal" || c.avail.isAvailable(tool)) return undefined;
         if (state === "on" && (!settings.backend || externalCount(inv, mode) < settings.tools.minCandidates)) {
@@ -374,9 +374,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         const group = tool.group && mode === "mcp" ? inv.groups.get(tool.group) : undefined;
         const reason = group
           ? group.type === "mcp"
-            ? `MCP server "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it with /decisions mcp allow <global|project> add ${clean(group.label)}.`
-            : `Extension "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled its tools for this task. Continue without it, or ask the user to allow it with /decisions mcp allow <global|project> add ${clean(group.key)}.`
-          : `Tool "${clean(tool.name, 128)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it with /decisions tools allow <global|project> add ${clean(tool.name, 128)}.`;
+            ? `MCP server "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tool picker tab (Always allowed MCP servers & extensions).`
+            : `Extension "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled its tools for this task. Continue without it, or ask the user to allow it in the /decisions Tool picker tab (Always allowed MCP servers & extensions).`
+          : `Tool "${clean(tool.name, 128)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tool picker tab (Always allowed tools).`;
         return { block: true, reason: reason.slice(0, BLOCK_REASON_LIMIT) };
       } catch {
         // Unexpected error. A known unavailable external candidate is blocked; a tool the last snapshot verified as internal passes;
@@ -569,7 +569,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       if (!settings.enabled || !settings.tools.enabled) return undefined;
       if (!supported()) return "tools: host lacks tool APIs";
       if (deps.getSettingsError()) return "tools: settings error";
-      if (!settings.backend) return "tools: select model · /decisions model";
+      if (!settings.backend) return "tools: select model · /decisions";
       if (!counts) return `tools: ${settings.tools.mode} · ${settings.tools.cadence}`;
       return `tools: ${counts.available}/${counts.external} ${counts.mode === "mcp" ? "groups" : "tools"} available${last ? (last.cached ? " · cached" : last.errorCode ? ` · ${last.errorCode}` : ` · ${last.latencyMs}ms`) : ""}`;
     },

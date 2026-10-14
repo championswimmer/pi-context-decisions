@@ -7,6 +7,7 @@ import { DecisionError } from "../decision/errors.ts";
 import { SettingsError, updateSetting, validateBackendSelection } from "../settings.ts";
 import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist, type AllowlistScope, type ScopedSkill } from "../apps/allowlist.ts";
 import { rankSkills } from "../apps/relevance.ts";
+import { canonicalServerKey } from "../apps/tool-inventory.ts";
 import { projectAllowlistPath } from "../project-allowlist.ts";
 import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
@@ -15,9 +16,13 @@ import { createSettingsDialogManager, type DialogLife, type InitialRoute, type M
 import { ADVANCED_FIELDS, TOOL_FIELDS, describeError, fieldValue, sanitizeTerminalText, toolsSummary, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
-import { canonicalServerKey } from "../apps/tool-inventory.ts";
 
-const COMMANDS = ["settings", "provider", "model", "status", "enable", "disable", "relevance", "tools", "mcp", "allow", "allowlist", "pin", "unpin", "test"];
+/**
+ * Everything a setting can be changed with lives in the settings dialog (RPC: its select/input menus), so the
+ * text command surface is only what the dialog cannot do: read-only reports, the explicit paid self-test and the
+ * legacy `pinned` list. `tools`/`mcp` accept only `list`.
+ */
+const COMMANDS = ["status", "test", "tools", "mcp", "pin", "unpin"];
 type DirectProvider = "openai" | "typesafe" | "openrouter";
 function cleanLabel(value: string): string { return sanitizeTerminalText(value, 400); }
 const safeError = describeError;
@@ -40,7 +45,6 @@ export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefin
   });
 }
 function statusSafely(controller: Controller, ctx: CommandContext): void { try { controller.setStatus(ctx); } catch { /* cosmetic; the dialog may have closed */ } }
-function directProvider(provider: string): provider is DirectProvider { return ["openai", "typesafe", "openrouter"].includes(provider); }
 function credentialGuide(provider: string, native = false): string {
   const variable = provider === "typesafe" ? "TYPESAFE_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : provider === "openrouter" ? "OPENROUTER_API_KEY" : undefined;
   return `${cleanLabel(provider)} credentials are missing or unavailable. ${variable ? `Set ${variable} in the environment or ` : ""}configure /login ${cleanLabel(provider)} in Pi.${provider === "openai" ? ` Use an OpenAI API key, not openai-codex/ChatGPT OAuth.${native ? " If Pi resolves OAuth for openai, choose OpenAI direct with OPENAI_API_KEY instead." : ""}` : ""}`;
@@ -93,14 +97,6 @@ async function requireCredentials(selection: BackendSelection | null, ctx: Comma
   const status = selection.backend === "pi" ? await nativeAuth(provider, ctx) : (await directAuth(selection.backend, ctx, env)).status;
   if (status !== "ok") throw new SettingsError(credentialGuide(provider, selection.backend === "pi"));
 }
-function parseModel(tokens: string[]): BackendSelection | null {
-  if (tokens.length === 1 && tokens[0] === "none") return null;
-  const [backend, ...rest] = tokens;
-  if (backend === "pi" && rest.length === 2) return validateBackendSelection({ backend, provider: rest[0], id: rest[1] });
-  if ((backend === "typesafe" || backend === "openai") && rest.length <= 1) return validateBackendSelection({ backend, ...(rest[0] ? { model: rest[0] } : {}) });
-  if (backend === "openrouter" && rest.length === 1) return validateBackendSelection({ backend, model: rest[0] });
-  throw new SettingsError("Use /decisions model pi <provider> <id>, typesafe [id], openai [id], openrouter <id>, or none");
-}
 function authLabel(status: AuthStatus): string { return status === "ok" ? "configured" : status === "missing" ? "missing key" : "unverified key"; }
 async function saveModel(controller: Controller, ctx: CommandContext, selection: BackendSelection | null, env?: Record<string, string | undefined>): Promise<string> {
   requireNative(selection, ctx);
@@ -112,9 +108,7 @@ async function saveModel(controller: Controller, ctx: CommandContext, selection:
 async function persistModel(controller: Controller, ctx: CommandContext, selection: BackendSelection | null, env?: Record<string, string | undefined>) {
   controller.report(ctx, await saveModel(controller, ctx, selection, env));
 }
-async function chooseModel(controller: Controller, ctx: CommandContext, tokens: string[], env?: Record<string, string | undefined>, filter?: (entry: PickerEntry) => boolean) {
-  if (tokens.length) return persistModel(controller, ctx, parseModel(tokens), env);
-  if (!ctx.hasUI) throw new SettingsError("No dialog UI; use /decisions model <backend> <id> (Pi also requires provider)");
+async function chooseModel(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>, filter?: (entry: PickerEntry) => boolean) {
   controller.report(ctx, `Checking credential availability; ${OPENROUTER_DECISION_SNAPSHOT.attribution}`);
   const entries = (await pickerEntries(ctx, env)).filter(filter ?? (() => true));
   if (!entries.length) throw new SettingsError("No matching registered classifiers; choose a direct provider or register a Pi classifier");
@@ -144,30 +138,13 @@ async function providerChoices(ctx: CommandContext, env?: Record<string, string 
   }
   return choices;
 }
-async function chooseProvider(controller: Controller, ctx: CommandContext, tokens: string[], env?: Record<string, string | undefined>) {
-  if (tokens.length) {
-    if (directProvider(tokens[0])) {
-      if (tokens.length > 1 || tokens[0] !== "openrouter") return chooseModel(controller, ctx, tokens, env);
-      if (!ctx.hasUI) throw new SettingsError("Use /decisions provider openrouter <model-id> or /decisions model openrouter <model-id>");
-      const provider = tokens[0];
-      if ((await directAuth(provider, ctx, env)).status !== "ok") throw new SettingsError(credentialGuide(provider));
-      return chooseModel(controller, ctx, [], env, (entry) => entry.selection.backend === provider);
-    }
-    if (tokens[0] === "pi" && tokens.length === 3) return chooseModel(controller, ctx, tokens, env);
-    if (tokens[0] === "pi" && tokens.length === 2 && ctx.hasUI) return chooseModel(controller, ctx, [], env, (entry) => entry.selection.backend === "pi" && entry.selection.provider === tokens[1]);
-    throw new SettingsError("Use /decisions provider typesafe|openai [model], openrouter <model>, or pi <provider> <model>");
-  }
-  if (!ctx.hasUI) {
-    const choices = await providerChoices(ctx, env);
-    controller.report(ctx, choices.map((choice) => `${choice.label}${choice.status !== "ok" ? `\n  ${credentialGuide(choice.provider, choice.backend === "pi")}` : ""}`).join("\n"));
-    return;
-  }
+async function chooseProvider(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
   const choices = await providerChoices(ctx, env);
   const selected = await ctx.ui.select("Decisions · provider and execution path", [...choices.map((choice) => choice.label), "Cancel"], { signal: ctx.signal });
   const choice = choices.find((item) => item.label === selected);
   if (!choice) return;
   if (choice.status !== "ok") throw new SettingsError(credentialGuide(choice.provider, choice.backend === "pi"));
-  await chooseModel(controller, ctx, [], env, (entry) => entry.selection.backend === choice.backend && (entry.selection.backend !== "pi" || entry.selection.provider === choice.provider));
+  await chooseModel(controller, ctx, env, (entry) => entry.selection.backend === choice.backend && (entry.selection.backend !== "pi" || entry.selection.provider === choice.provider));
 }
 async function statusLines(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>): Promise<string[]> {
   const settings = controller.getSettings();
@@ -191,7 +168,7 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
     `Scoring: shard ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all shards parallel (0)" : settings.relevance.concurrency}, max ${settings.relevance.maxSkills} added per round, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms. Skills are only ever added; already-added skills are never re-scored`,
     `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
     ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
-    ...(error ? [`Settings error: ${error}. Use /decisions model/settings to repair the file.`] : []),
+    ...(error ? [`Settings error: ${error}. Repair the settings file, or choose a model in /decisions.`] : []),
     ...(last ? [`Last (${last.trigger ?? "prompt"}): ${last.reason}, +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : `, ${last.advertised} advertised`}${last.redelivered ? `, ${last.redelivered} re-delivered` : ""}${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
     ...toolStatusLines(controller, settings),
     OPENROUTER_DECISION_SNAPSHOT.attribution,
@@ -201,11 +178,11 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
 /** Tool filtering status. Counts and modes only: no tool names, task text, arguments or results. */
 function toolStatusLines(controller: Controller, settings: ReturnType<Controller["getSettings"]>): string[] {
   const t = settings.tools;
-  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; /decisions tools on)"];
+  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tool picker tab)"];
   const last = controller.getLastToolDecision();
   return [
     `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · threshold ${t.threshold} · max ${t.maxAdded} added per round · minimum ${t.minCandidates} · fail-${t.failMode}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
-    `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length} (project lists: /decisions tools allow project list, /decisions mcp allow project list)`,
+    `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
   ];
@@ -214,7 +191,6 @@ async function status(controller: Controller, ctx: CommandContext, env?: Record<
   controller.report(ctx, (await statusLines(controller, ctx, env)).join("\n"));
 }
 const KIND_LABEL: Record<AllowlistKind, string> = { skills: "skill", tools: "tool", mcp: "MCP server" };
-const KIND_COMMAND: Record<AllowlistKind, string> = { skills: "allow", tools: "tools allow", mcp: "mcp allow" };
 function globalList(settings: ReturnType<Controller["getSettings"]>, kind: AllowlistKind): string[] {
   return kind === "skills" ? settings.globalAllowlist : kind === "tools" ? settings.tools.alwaysAllowedTools : settings.tools.alwaysAllowedMcpServers;
 }
@@ -326,37 +302,7 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
     ...(rank ? { rank, rankLabel: `${selectionLabel(settings.backend)} · explicit ranking may incur charges` } : { unavailable }),
   };
 }
-async function allowlistCommand(controller: Controller, ctx: CommandContext, tokens: string[], editor: boolean, env: Record<string, string | undefined> | undefined,
-  openEditor: (scope: AllowlistScope) => Promise<void>, kind: AllowlistKind = "skills"): Promise<void> {
-  const [scope, action, ...names] = tokens;
-  const command = `/decisions ${KIND_COMMAND[kind]}`;
-  if (scope !== "global" && scope !== "project") throw new SettingsError(`Use ${command} <global|project> list|add <name>|remove <name>|clear${kind === "skills" ? ", or allowlist <global|project>" : ""}`);
-  if (editor || action === undefined) {
-    if (action !== undefined) throw new SettingsError(`Use ${command.replace(" allow", " allowlist")} <global|project>`);
-    await openEditor(scope); return;
-  }
-  const noun = KIND_LABEL[kind];
-  if (action === "list" && names.length === 0) {
-    const current = await listNames(controller, ctx, scope, true, kind);
-    controller.report(ctx, `Always-allowed ${kind === "skills" ? "" : `${noun}s, `}${scope} (${current.length}): ${current.length ? current.map(cleanLabel).join(", ") : "none"}`); return;
-  }
-  let note = "";
-  if (action === "clear" && names.length === 0) await saveNames(controller, ctx, scope, [], kind);
-  else if ((action === "add" || action === "remove") && names.length > 0) {
-    const valid = normalizeKind(kind, names);
-    const current = await listNames(controller, ctx, scope, true, kind);
-    const sameServer = (a: string, b: string) => kind === "mcp" ? canonicalServerKey(a) === canonicalServerKey(b) : a === b;
-    await saveNames(controller, ctx, scope, action === "add" ? new Set([...current, ...valid]) : current.filter((name) => !valid.some((entry) => sameServer(entry, name))), kind);
-    // In `mcp` (group) mode a tool of an MCP server or extension cannot be half-on: allowlisting it makes the whole group available. Say so.
-    if (kind === "tools" && action === "add" && controller.getSettings().tools.mode === "mcp") {
-      const report = await controller.describeTools(ctx).catch(() => undefined);
-      const groups = [...new Set(valid.flatMap((name) => report?.rows.find((row) => row.name === name)?.groupLabel ?? []))];
-      if (groups.length) note = ` In mcp mode this makes the whole MCP server or extension available: ${groups.map(cleanLabel).join(", ")}.`;
-    }
-  } else throw new SettingsError(`Use ${command} <global|project> list|add <name>|remove <name>|clear`);
-  controller.report(ctx, `Always-allowed ${kind === "skills" ? "" : `${noun} `}${scope} list saved${note ? `.${note}` : ""}`);
-}
-const EDITOR_UNAVAILABLE = "Allow list editor needs the terminal UI; use /decisions allow <global|project> list|add|remove|clear";
+const EDITOR_UNAVAILABLE = "The allow list editors need the terminal UI. Without it, edit globalAllowlist in the settings file or alwaysAllowed in <cwd>/.pi/pi-context-decisions.json, then /reload";
 /** RPC fallback: the same grouping as the terminal dialog, built from select/input requests. */
 async function fieldsMenu(controller: Controller, ctx: CommandContext, group: SettingsGroup) {
   const fields: readonly AdvancedField[] = group === "tools" ? TOOL_FIELDS : ADVANCED_FIELDS;
@@ -408,10 +354,10 @@ async function settingsMenu(controller: Controller, ctx: CommandContext, env?: R
       if (pick === toggle) {
         await controller.update((current) => ({ ...current, enabled: !current.enabled }));
         controller.setStatus(ctx); controller.report(ctx, `Context decisions ${!settings.enabled ? "enabled" : "disabled"}`);
-      } else if (pick === provider) await chooseProvider(controller, ctx, [], env);
+      } else if (pick === provider) await chooseProvider(controller, ctx, env);
       else if (pick === model) {
         const backend = settings.backend;
-        await chooseModel(controller, ctx, [], env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
+        await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
       } else if (pick === globalAllow || pick === projectAllow) throw new SettingsError(EDITOR_UNAVAILABLE);
       else if (pick === "Advanced…") await advancedMenu(controller, ctx);
       else if (pick === tools) await fieldsMenu(controller, ctx, "tools");
@@ -477,7 +423,7 @@ function toolListLines(report: ToolReport, which: "tools" | "mcp"): string[] {
     lines.push(`MCP servers and extensions (${report.groups.length}, ${state}); grouped only by Pi's public metadata (mcp__ namespace for servers, sourceInfo for extensions):`);
     for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${group.type === "mcp" ? "MCP" : "extension"} ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.type === "mcp" && !group.verified ? " · not registered by Pi's built-in MCP" : ""}`);
     if (report.groups.length > LIST_LIMIT) lines.push(`  … and ${report.groups.length - LIST_LIMIT} more`);
-    lines.push("Resource-only or disconnected servers with no tools are not observable: allowlist them by name with /decisions mcp allow. Extensions are allowlisted by their ext__ key.");
+    lines.push("Resource-only or disconnected servers with no tools are not observable: the Tool picker cannot add them. Allowlist by name in tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers in the project .pi/pi-context-decisions.json, then /reload.");
     if (report.ungrouped) lines.push(`${report.ungrouped} extension tools expose no usable provenance: they belong to no group and are never filtered in mcp mode.`);
     return lines;
   }
@@ -495,41 +441,13 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
     // After "shutdown" the context may be invalid: return without touching it.
     await dialogs.open(ctx, (life) => buildDialogOps(controller, ctx, env, life), route);
   };
-  const toolsCommand = async (ctx: CommandContext, tokens: string[]): Promise<void> => {
-    const [first, ...rest] = tokens;
-    if (first === undefined) {
-      if (terminal(ctx)) await openDialog(ctx, "tools");
-      else if (ctx.hasUI) await fieldsMenu(controller, ctx, "tools");
-      else controller.report(ctx, toolStatusLines(controller, controller.getSettings()).join("\n"));
-      return;
-    }
-    if ((first === "on" || first === "off") && rest.length === 0) {
-      await controller.update((current) => ({ ...current, tools: { ...current.tools, enabled: first === "on" } }));
-      controller.setStatus(ctx);
-      controller.report(ctx, `Tool filtering ${first === "on" ? "enabled" : "disabled"}${first === "on" && !controller.getSettings().backend ? ". No decision model is selected, so every tool stays available until you choose one with /decisions model" : ""}`);
-    } else if (first === "list" && rest.length === 0) controller.report(ctx, toolListLines(await controller.describeTools(ctx), "tools").join("\n"));
-    else if (first === "allow" || first === "allowlist") {
-      await allowlistCommand(controller, ctx, rest, first === "allowlist", env, async (scope) => {
-        if (!terminal(ctx)) throw new SettingsError("The tool allowlist editor needs the terminal UI; use /decisions tools allow <global|project> list|add|remove|clear");
-        await openDialog(ctx, { allowlist: scope, list: "tools" });
-      }, "tools");
-    } else if (rest.length === 1) {
-      await controller.update((current) => updateSetting(current, `tools.${first}`, rest[0]));
-      controller.setStatus(ctx); controller.report(ctx, "Tool filtering settings saved");
-    } else throw new SettingsError("Use /decisions tools [on|off|list|mode tools|mcp|cadence initial|prompt|tool-round|threshold|maxAdded|minCandidates|failMode|maxDescriptionChars <value>|allow <global|project> list|add|remove|clear]");
-  };
-  const mcpCommand = async (ctx: CommandContext, tokens: string[]): Promise<void> => {
-    const [first, ...rest] = tokens;
-    if (first === "list" && rest.length === 0) controller.report(ctx, toolListLines(await controller.describeTools(ctx), "mcp").join("\n"));
-    else if (first === "allow" || first === "allowlist") {
-      await allowlistCommand(controller, ctx, rest, first === "allowlist", env, async (scope) => {
-        if (!terminal(ctx)) throw new SettingsError("The MCP allowlist editor needs the terminal UI; use /decisions mcp allow <global|project> list|add|remove|clear");
-        await openDialog(ctx, { allowlist: scope, list: "mcp" });
-      }, "mcp");
-    } else throw new SettingsError("Use /decisions mcp list or /decisions mcp allow <global|project> list|add <server>|remove <server>|clear");
+  /** Read-only inventory reports: `tools list` / `mcp list`. Everything editable lives in the dialog. */
+  const listCommand = async (ctx: CommandContext, which: "tools" | "mcp", tokens: string[]): Promise<void> => {
+    if (tokens.length !== 1 || tokens[0] !== "list") throw new SettingsError(`Use /decisions ${which} list. Change tool and MCP settings and allowlists in the /decisions Tool picker tab`);
+    controller.report(ctx, toolListLines(await controller.describeTools(ctx), which).join("\n"));
   };
   pi.registerCommand("decisions", {
-    description: "Context decisions settings: enabled, provider, model, batching, and skill-filter status",
+    description: "Context decisions settings dialog (also: status, test, tools list, mcp list)",
     getArgumentCompletions(prefix) { const values = COMMANDS.filter((value) => value.startsWith(prefix)); return values.length ? values.map((value) => ({ value, label: value })) : null; },
     async handler(args, ctx) {
       await controller.ensureLoaded();
@@ -542,29 +460,9 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
           else await status(controller, ctx, env);
           return;
         }
-        if (action === "model") { if (!tokens.length && terminal(ctx)) await openDialog(ctx, "model"); else await chooseModel(controller, ctx, tokens, env); }
-        else if (action === "provider") { if (!tokens.length && terminal(ctx)) await openDialog(ctx, "provider"); else await chooseProvider(controller, ctx, tokens, env); }
-        else if (action === "status" && !tokens.length) await status(controller, ctx, env);
-        else if (action === "tools") await toolsCommand(ctx, tokens);
-        else if (action === "mcp") await mcpCommand(ctx, tokens);
-        else if (action === "allow" || action === "allowlist") await allowlistCommand(controller, ctx, tokens, action === "allowlist", env, async (scope) => {
-          if (!terminal(ctx)) throw new SettingsError(EDITOR_UNAVAILABLE);
-          await openDialog(ctx, { allowlist: scope });
-        });
-        else if ((action === "enable" || action === "disable") && !tokens.length) {
-          await controller.update((current) => ({ ...current, enabled: action === "enable" }));
-          controller.setStatus(ctx); controller.report(ctx, `Context decisions ${action === "enable" ? "enabled" : "disabled"}`);
-        } else if (action === "settings" || action === "relevance") {
-          if (!tokens.length) {
-            if (terminal(ctx)) await openDialog(ctx, action === "relevance" ? "advanced" : "main");
-            else if (ctx.hasUI && action === "relevance") await advancedMenu(controller, ctx);
-            else await settingsMenu(controller, ctx, env);
-          } else if (tokens.length === 2) {
-            const key = action === "relevance" ? `relevance.${tokens[0]}` : tokens[0];
-            await controller.update((current) => updateSetting(current, key, tokens[1]));
-            controller.setStatus(ctx); controller.report(ctx, "Context-decisions settings saved");
-          } else throw new SettingsError("Use /decisions settings <key> <value> or relevance <key> <value>");
-        } else if ((action === "pin" || action === "unpin") && tokens.length === 1) {
+        if (action === "status" && !tokens.length) await status(controller, ctx, env);
+        else if (action === "tools" || action === "mcp") await listCommand(ctx, action, tokens);
+        else if ((action === "pin" || action === "unpin") && tokens.length === 1) {
           await controller.update((current) => ({ ...current, relevance: { ...current.relevance, pinned: action === "pin" ? [...new Set([...current.relevance.pinned, tokens[0]])] : current.relevance.pinned.filter((name) => name !== tokens[0]) } }));
           controller.report(ctx, "Pinned skills updated");
         } else if (action === "test" && !tokens.length) {

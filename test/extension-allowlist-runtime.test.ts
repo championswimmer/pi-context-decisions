@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BeforeAgentStartEvent, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { SimSession, simHost } from "./helpers/pi-sim.ts";
+import { saveAllowlist, setSetting } from "./helpers/settings-ui.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext } from "../src/extension/contracts.ts";
 import { defaultSettings } from "../src/settings.ts";
@@ -54,15 +55,22 @@ async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" 
       ctx.hasUI = true; ctx.mode = "tui";
       ctx.ui.custom = async (factory) => {
         const component = await factory({ requestRender() {} } as Parameters<typeof factory>[0], { fg: (_token: unknown, text: string) => text, bg: (_token: unknown, text: string) => text } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], () => {});
+        // Open the editor from the Skill picker tab: rows are toggle, provider, model, global, project.
+        for (let i = 0; i < (scope === "global" ? 3 : 4); i++) component.handleInput!("\x1b[B");
+        component.handleInput!("\r");
         // The dialog loads the embedded editor's inputs asynchronously.
         for (let i = 0; i < 500 && !/Search:/.test(component.render(120).join("\n")); i++) await new Promise((resolve) => setTimeout(resolve, 1));
         rendered = component.render(120).join("\n"); component.dispose?.(); return "closed" as never;
       };
-      await commands.get("decisions")!.handler(`allowlist ${scope}`, ctx as ExtensionCommandContext);
+      await commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
       return rendered;
     },
     async emit(name: string, value: unknown) { await sim.emit(name, value, ctx); },
     async command(text: string) { await commands.get("decisions")!.handler(text, ctx as ExtensionCommandContext); },
+    /** Toggle the enabled switch through the real RPC settings menu. */
+    toggleEnabled: () => setSetting((args, c) => commands.get("decisions")!.handler(args, c as ExtensionCommandContext), ctx, "enabled"),
+    /** Edit the project skill list inside the real terminal dialog and save it with Ctrl+S. */
+    saveProjectSkill: (name: string) => saveAllowlist((args, c) => commands.get("decisions")!.handler(args, c as ExtensionCommandContext), ctx, { tab: "skills", row: "Always allowed · Project", toggle: name }),
   };
 }
 for (const outcome of ["ok", "failure", "config"] as const) test(`scoped always-included skills survive ${outcome}, consume no cap and never score`, async (t) => {
@@ -103,7 +111,7 @@ test("inventory snapshot precedes filtering even while disabled, then reload fal
   assert.ok(!e.systemPromptOptions.skills.some((skill) => skill.name === "other"));
   const filteredSnapshot = await h.editor("project");
   assert.match(filteredSnapshot, /other/); assert.doesNotMatch(filteredSnapshot, /fallback-only|private/);
-  await h.command("disable");
+  await h.toggleEnabled();
   const disabled = event(); disabled.systemPromptOptions.skills[2].name = "new-project-skill";
   await h.emit("before_agent_start", disabled);
   assert.match(await h.editor("project"), /new-project-skill/);
@@ -115,7 +123,7 @@ test("project allowlist saves cancel an active decision and the next task uses t
   // Cancellation of project writes uses the same operation registry as settings changes.
   const h = await setup(t, "pending"); await saveProjectAllowlist(h.cwd, ["project"]);
   const interrupted = event(); const pending = h.emit("before_agent_start", interrupted); await h.ready;
-  await h.command("allow project add other"); await pending;
+  await h.saveProjectSkill("other"); await pending;
   assert.equal(h.cancelled(), true);
   assert.deepEqual(interrupted.systemPromptOptions.skills.map((s) => s.name), ["global", "project", "manual"]);
   const e = event(); await h.emit("before_agent_start", e);

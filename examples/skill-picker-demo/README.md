@@ -36,7 +36,7 @@ The default evaluates **all 30** skills in **three batches of 10**, selects up t
 | `--model` | Backend-specific | Classifier model ID |
 | `--provider` | typesafe | Native Pi classifier provider; used only with `--backend pi` |
 
-The model rubric is `[irrelevant, related, directly relevant]`, with expected score 0–2. The demo passes the normalized threshold straight to the picker, exactly like the extension's single `relevance.threshold` setting (a skill qualifies when its 0–2 score is at least `2 × threshold`). For example, demo `--threshold 0.75` is extension `/decisions relevance threshold 0.75`. The demo is a stateless one-shot picker: it does not keep the extension's additive per-branch ledger. Results preserve inventory order after selecting the highest-scoring eligible entries. Zero threshold intentionally allows zero-score skills; use a positive threshold to exclude unrelated skills.
+The model rubric is `[irrelevant, related, directly relevant]`, with expected score 0–2. The demo passes the normalized threshold straight to the picker, exactly like the extension's single `relevance.threshold` setting (a skill qualifies when its 0–2 score is at least `2 × threshold`). For example, demo `--threshold 0.75` is extension **Relevance threshold** `0.75` in `/decisions` → **Advanced…**. The demo is a stateless one-shot picker: it does not keep the extension's additive per-branch ledger. Results preserve inventory order after selecting the highest-scoring eligible entries. Zero threshold intentionally allows zero-score skills; use a positive threshold to exclude unrelated skills.
 
 `config/demo-options.json` illustrates programmatic `runDemo` options. It is not auto-loaded. `config/pi-context-decisions.example.json` illustrates a credential-free partial extension config. Configure the real extension with its commands rather than editing credential files.
 
@@ -63,19 +63,19 @@ Run Pi **from this folder**, so these 30 `.agents/skills` directories are discov
 pi --extension ../../src/extension.ts
 ```
 
-Then choose a classifier using `/decisions model` and configure:
+Then open `/decisions`, choose a provider and classifier model, switch **Context decisions** on, and in **Advanced…** set:
 
-```text
-/decisions relevance chunkSize 10
-/decisions relevance threshold 0.5
-/decisions relevance maxSkills 6
-/decisions relevance minCandidates 0
-/decisions relevance concurrency 2
-/decisions relevance timeoutMs 15000
-/decisions relevance failMode closed
-/decisions enable
-/decisions status
-```
+| Setting | Value |
+|---|---|
+| Shard size | 10 |
+| Relevance threshold | 0.5 |
+| Max added per round | 6 |
+| Minimum inventory | 0 |
+| Concurrency | 2 |
+| Timeout | 15000 |
+| On failure | closed |
+
+Run `/decisions status` to check the result.
 
 Try a prompt from `prompts.json`; inspect `/decisions status`. Other user/project skills may also be discoverable in your Pi installation, so the real interactive inventory can exceed this fixture's 30. The standalone runner deliberately loads exactly the fixture inventory. A later extension can overwrite skill advertisements; tool/MCP filtering is not implemented.
 

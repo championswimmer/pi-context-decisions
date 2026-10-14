@@ -108,26 +108,18 @@ test("terminal /decisions opens ONE floating overlay with the shared options and
   assert.equal(h.calls.select + h.calls.input, 0); assert.deepEqual(h.messages, []);
 });
 
-for (const [args, crumb] of [
-  ["settings", /Decisions\s/], ["relevance", /Decisions › Advanced/], ["provider", /Decisions › Provider/], ["model", /Decisions › Model/],
-  ["allowlist global", /Always allowed · Global/], ["allowlist project", /Always allowed · Project/],
-] as const) test(`/decisions ${args} deep-links into the matching dialog route and Esc returns toward main`, async (t) => {
-  const h = await harness(t); const run = h.command(args); const dialog = await h.dialog();
-  await h.until(dialog, crumb); assert.equal(h.calls.custom, 1); assert.equal(h.calls.select + h.calls.input, 0);
-  dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
-});
-
 test("RPC mode keeps the select menus with Advanced… and never calls custom", async (t) => {
   const h = await harness(t, { mode: "rpc" }); await h.command("");
   assert.equal(h.calls.custom, 0); assert.equal(h.calls.select, 1);
-  await h.command("allowlist global"); assert.match(h.messages.at(-1)!, /terminal UI.*decisions allow/); assert.equal(h.calls.custom, 0);
 });
 
 test("a second /decisions while the first dialog is open does not open another; it focuses the first", async (t) => {
   const h = await harness(t); const first = h.command(""); const dialog = await h.dialog();
-  await h.command("relevance");
-  assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1); assert.match(h.text(dialog), /Decisions › Advanced/);
-  dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await first;
+  for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down);
+  dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Advanced/);
+  await h.command("");
+  assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1); assert.doesNotMatch(h.text(dialog), /Decisions › Advanced/, "re-running /decisions focuses the existing dialog on its main screen");
+  dialog.handleInput!(KEY.esc); await first;
 });
 
 test("saves inside the dialog persist, do not close it, and later settle without touching a closed ctx", async (t) => {
@@ -142,7 +134,8 @@ test("saves inside the dialog persist, do not close it, and later settle without
 test("choosing a model through the dialog persists it atomically and never enables filtering", async (t) => {
   const h = await harness(t, { env: { TYPESAFE_API_KEY: "FIXTURE" } });
   await saveSettings({ ...defaultSettings(), enabled: false }, h.path);
-  const run = h.command("provider"); const dialog = await h.dialog();
+  const run = h.command(""); const dialog = await h.dialog();
+  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /typesafe · direct API\s+configured/);
   dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Model/);
   await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.enter);
@@ -155,7 +148,8 @@ test("choosing a model through the dialog persists it atomically and never enabl
 
 test("missing keys are labelled, guide to env or /login, and are never persisted; OpenAI OAuth cannot substitute", async (t) => {
   const h = await harness(t, { openaiOAuth: true, env: {} });
-  const run = h.command("provider"); const dialog = await h.dialog();
+  const run = h.command(""); const dialog = await h.dialog();
+  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /openai · direct API\s+missing key/);
   assert.match(h.text(dialog), /typesafe · direct API\s+missing key/); assert.match(h.text(dialog), /openrouter · direct API\s+missing key/);
   // Move to the openai row and activate it.
@@ -170,12 +164,14 @@ test("missing keys are labelled, guide to env or /login, and are never persisted
 
 test("dialog work never reads ctx.signal (the agent-run signal), even through status, models and ranking", async (t) => {
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
-  const run = h.command("allowlist global"); const dialog = await h.dialog(); await h.until(dialog, /Search:/);
+  const run = h.command(""); const dialog = await h.dialog();
+  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/);
   assert.equal(h.requests.length, 1);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
-  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Model route
+  dialog.handleInput!("\x1b[A"); dialog.handleInput!(KEY.enter); // Model route (the cursor stayed on Global)
   await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
   for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
   await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
@@ -185,8 +181,10 @@ test("dialog work never reads ctx.signal (the agent-run signal), even through st
 test("session_shutdown while open resolves the handler, aborts ranking and never touches a stale ctx", async (t) => {
   const h = await harness(t, { configured: true, pendingDecision: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   let resolved = false;
-  const run = h.command("allowlist global").then(() => { resolved = true; });
-  const dialog = await h.dialog(); await h.until(dialog, /Search:/);
+  const run = h.command("").then(() => { resolved = true; });
+  const dialog = await h.dialog();
+  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await waitFor(() => h.decisionSignals[0], "pending ranking request");
   const messagesBefore = h.messages.length;
@@ -220,7 +218,8 @@ test("a custom() failure is reported as a safe error and does not wedge later op
 test("headless commands keep their text output without a dialog", async (t) => {
   const h = await harness(t, { mode: "print", custom: false });
   await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/);
-  await h.command("provider"); assert.match(h.messages.at(-1)!, /openai · direct API \[missing key\]/);
-  await h.command("allow global add alpha"); await h.command("allow global list"); assert.match(h.messages.at(-1)!, /global \(1\): alpha/);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/, "no arguments: the status, never a dialog");
+  await h.command("pin alpha"); assert.match(h.messages.at(-1)!, /Pinned skills updated/);
+  await h.command("tools list"); assert.match(h.messages.at(-1)!, /Tools \(/);
   assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);
 });

@@ -64,15 +64,15 @@ test("mcp mode: MCP servers AND extensions are the candidates; adding a group en
   assert.match(request, /Extension ext_a\. Tools: ext_a/, "an extension is a candidate exactly like a server: its name and its tool names");
   assert.deepEqual(h.active(), [...CORE, "mcp__dev_radius__q"], "the declared tools of the unselected server and extension are withheld");
   assert.equal(await h.gate("mcp__dev_radius__r"), undefined);
-  assert.match((await h.gate("ext_a"))!.reason, /^Extension "ext_a" is unavailable: .* \/decisions mcp allow <global\|project> add ext__ext_a\./);
+  assert.match((await h.gate("ext_a"))!.reason, /^Extension "ext_a" is unavailable: .* \/decisions Tool picker tab \(Always allowed MCP servers & extensions\)\./);
   const blocked = await h.gate("mcp__docs__s");
   assert.match(blocked!.reason, /^MCP server "docs" is unavailable/);
   h.sim.registerTool(mcpTool("dev-radius", "late", "direct"));
   await h.end({ toolResults: [{}] });
   assert.ok(h.active().includes("mcp__dev_radius__late"), "a late member of an available namespace needs no scoring");
   assert.equal(await h.gate("mcp__dev_radius__late"), undefined);
-  // Switching to tools mode keeps everything that was available, and decides the rest per tool.
-  await h.command("tools mode tools");
+  // Switching to tools mode keeps everything that was available.
+  await h.set("tools.mode", "tools");
   await h.start("again");
   assert.equal(await h.gate("mcp__dev_radius__r"), undefined); assert.match((await h.gate("ext_a"))!.reason, BLOCKED);
 });
@@ -335,8 +335,8 @@ test("session_tree: each branch has its own ledger, and a stale in-flight state 
   assert.equal(await h.gate("ext_a"), undefined); assert.match((await h.gate("ext_b"))!.reason, BLOCKED, "back on branch one, branch two's addition is blocked");
 });
 for (const [label, save] of [
-  ["a settings save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.command("relevance threshold 0.5")],
-  ["an allowlist save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.command("allow project add some-skill")],
+  ["a settings save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.set("relevance.threshold", "0.5")],
+  ["an allowlist save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.allowlist({ tab: "skills", row: "Always allowed · Project" })],
 ] as const) {
   test(`${label} while a decision round is in flight aborts it and commits nothing`, async (t) => {
     const h = await toolSetup(t, { extra: [A, B], scores: { ext_a: 2 } });
@@ -486,6 +486,11 @@ test("a failing tool round never disturbs the skill pass, and vice versa", async
 // MCP resource tools: an explicit ROUTING policy by their local `server` argument, not an exception to "internal tools are always
 // allowed" (they stay declared and callable; a whole-server decision just cannot be bypassed through them).
 // ---------------------------------------------------------------------------------------------------------------------------------
+/** Recovery text for a server the picker cannot offer (resource-only / disconnected): config keys plus /reload, never the Tool picker. */
+function assertSettingsFileGuidance(reason: string): void {
+  assert.match(reason, /tools\.alwaysAllowedMcpServers/); assert.match(reason, /\.pi\/pi-context-decisions\.json/); assert.match(reason, /\/reload/);
+  assert.doesNotMatch(reason, /Tool picker/);
+}
 const READ = (server: string) => ({ server, uri: "file:///x" });
 const SENTINEL = "SENTINEL-SERVER-VALUE";
 
@@ -495,7 +500,7 @@ test("resources: reads are routed by server: blocked while the namespace is unav
   // Before any decision: everything is unavailable.
   const blocked = await h.gate("read_mcp_resource", READ("dev-radius"));
   assert.match(blocked!.reason, /^MCP resource access to server "dev-radius" is unavailable/); assert.ok(blocked!.reason.length <= 300);
-  assert.match(blocked!.reason, /\/decisions mcp allow/);
+  assertSettingsFileGuidance(blocked!.reason);
   await h.start("search the radar");
   assert.deepEqual(h.active().filter((name) => name.includes("resource")), ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"], "resource tools are never withheld from declarations");
   for (const server of ["dev-radius", "dev_radius"]) assert.equal(await h.gate("read_mcp_resource", READ(server)), undefined, server);
@@ -516,6 +521,7 @@ test("resources: unscoped listing is ALWAYS blocked while filtering is on (the c
   for (const name of ["list_mcp_resources", "list_mcp_resource_templates"]) {
     const blocked = await h.gate(name, {});
     assert.match(blocked!.reason, /Listing MCP resources across all servers is unavailable/, name); assert.ok(blocked!.reason.length <= 300);
+    assertSettingsFileGuidance(blocked!.reason);
     assert.equal(await h.gate(name, READ("dev-radius")), undefined, `${name} with an available server`);
     assert.match((await h.gate(name, READ("docs")))!.reason, /unavailable/);
   }
@@ -530,7 +536,11 @@ test("resources: unscoped listing is ALWAYS blocked while filtering is on (the c
 test("resources: an unknown or resource-only server fails closed unless it is allowlisted", async (t) => {
   const h = await toolSetup(t, { extra: [...resourceTools(), mcpTool("docs", "s")], scores: { mcp__docs__s: 2 } });
   await h.start("task");
-  assert.match((await h.gate("read_mcp_resource", READ("notes")))!.reason, /server "notes" is unavailable/, "no namespace observed: not a known group");
+  const notes = (await h.gate("read_mcp_resource", READ("notes")))!.reason;
+  assert.match(notes, /server "notes" is unavailable/, "no namespace observed: not a known group");
+  assertSettingsFileGuidance(notes); // the Tool picker cannot add a server it has never observed: the guidance must name the files
+  const longName = (await h.gate("read_mcp_resource", READ("n".repeat(64))))!.reason;
+  assert.ok(longName.length <= 300, `${longName.length}`); assertSettingsFileGuidance(longName); // truncation never cuts the instruction
   assert.match((await h.gate("list_mcp_resources", READ("notes")))!.reason, /unavailable/);
   await reload(h, (settings) => { settings.tools.alwaysAllowedMcpServers = ["notes"]; });
   assert.equal(await h.gate("read_mcp_resource", READ("notes")), undefined); assert.equal(await h.gate("list_mcp_resource_templates", READ("notes")), undefined);

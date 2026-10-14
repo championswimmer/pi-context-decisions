@@ -359,7 +359,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const wrap = (text: string, width: number, limit: number): string[] => wrapTextWithAnsi(sanitizeTerminalText(text, 1200), Math.max(1, width)).slice(0, Math.max(0, limit));
   const bannerLines = (frame: Frame, width: number): string[] => {
-    const banner = frame.banner ?? ((frame.route.kind === "main" || frame.route.kind === "tools") && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair with /decisions model or settings.`, tone: "error" as const } : undefined);
+    const banner = frame.banner ?? ((frame.route.kind === "main" || frame.route.kind === "tools") && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair the settings file, or choose a model in /decisions.`, tone: "error" as const } : undefined);
     if (!banner) return [];
     const color = banner.tone === "error" ? "error" : banner.tone === "success" ? "success" : "warning";
     return wrap(banner.text, width, 4).map((line) => theme.fg(color, line));
@@ -390,9 +390,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
 
   const TABS = [{ kind: "main", label: "Skill picker" }, { kind: "tools", label: "Tool picker" }] as const;
-  /** One line: the active tab is bracketed and accented, the other is muted. */
+  /** One line: the active tab is a `selectedBg` chip, the other is muted; both have the same padding so switching never shifts layout. */
   const tabStrip = (frame: Frame, inner: number): string => {
-    const text = TABS.map((tab) => tab.kind === frame.route.kind ? theme.fg("accent", `[ ${tab.label} ]`) : theme.fg("muted", `  ${tab.label}  `)).join(" ");
+    const text = TABS.map((tab) => tab.kind === frame.route.kind ? theme.bg("selectedBg", theme.fg("text", `  ${tab.label}  `)) : theme.fg("muted", `  ${tab.label}  `)).join(" ");
     return truncateToWidth(text, inner, "…");
   };
   const listBody = (frame: Frame, inner: number, bodyBudget: number): string[] => {
