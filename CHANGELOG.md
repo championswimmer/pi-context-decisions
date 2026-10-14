@@ -10,6 +10,14 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v0.3.0...v1.0.0
 
+### [v1.3.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.3.0) — Minor release (2026-10-14)
+
+<!-- Release notes generated using configuration in .github/release.yml at v1.3.0 -->
+
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v1.2.0...v1.3.0
+
 ### [v1.2.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.2.0) — Minor release (2026-10-14)
 
 <!-- Release notes generated using configuration in .github/release.yml at v1.2.0 -->
