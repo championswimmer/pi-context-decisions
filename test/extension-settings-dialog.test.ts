@@ -10,7 +10,7 @@ import {
 } from "../src/extension/settings-dialog.ts";
 import type { AllowlistPickerDeps } from "../src/extension/allowlist-picker.ts";
 
-const KEY = { down: "\x1b[B", up: "\x1b[A", enter: "\r", esc: "\x1b", space: " ", backspace: "\x7f", save: "\x13", rank: "\x12", pageDown: "\x1b[6~" };
+const KEY = { tab: "\t", shiftTab: "\x1b[Z", left: "\x1b[D", right: "\x1b[C", down: "\x1b[B", up: "\x1b[A", enter: "\r", esc: "\x1b", space: " ", backspace: "\x7f", save: "\x13", rank: "\x12", pageDown: "\x1b[6~" };
 const theme = { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value } as Parameters<typeof createSettingsDialogComponent>[1];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T>() {
@@ -83,19 +83,20 @@ function mount(fixture: OpsFixture, options: { rows?: number; initialRoute?: Ini
   };
   return { component, results, press, text, until, tui, get renders() { return renders; }, closedHooks };
 }
-/** Main rows: 0 toggle, 1 provider, 2 model, 3 global, 4 project, 5 advanced, 6 tools & MCP, 7 status, 8 close. */
+/** Skill picker rows: 0 toggle, 1 provider, 2 model, 3 global, 4 project, 5 advanced, 6 status, 7 close. */
 const toRow = (h: ReturnType<typeof mount>, row: number) => { h.press(...Array(row).fill(KEY.down)); };
 
-test("main screen shows exactly the nine concise rows; relevance knobs are not on it", async () => {
+test("Skill picker tab shows exactly the eight concise rows; relevance knobs and the nested Tools & MCP entry are not on it", async () => {
   const f = fakeOps(); const h = mount(f); await h.until(/Always allowed · Project\s+3/);
-  const labels = ["Context decisions", "Provider / execution", "Model", "Always allowed · Global", "Always allowed · Project", "Advanced…", "Tools & MCP…", "Status…", "Close"];
+  const labels = ["Context decisions", "Provider / execution", "Model", "Always allowed · Global", "Always allowed · Project", "Advanced…", "Status…", "Close"];
   const text = h.text(100); let at = -1;
   for (const label of labels) { const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next; }
-  assert.doesNotMatch(text, /threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode/i);
+  assert.doesNotMatch(text, /threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode|Tools & MCP/i);
+  assert.match(text, /\[ Skill picker \]\s+Tool picker/, "the tab strip marks the active tab");
   assert.equal(h.results.length, 0); h.component.dispose();
 });
 
-test("the description yields to the list: all nine rows incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
+test("the description yields to the list: all eight rows plus the tab strip incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
   const f = fakeOps(); const h = mount(f, { rows: 16 });
   const text = h.text(100); assert.match(text, /Status…/); assert.match(text, /Close/);
   assert.ok(h.component.render(100).length <= dialogHeightBudget(16));
@@ -156,7 +157,7 @@ test("model success pops to main with a banner and never toggles the enabled swi
   assert.ok(f.calls.includes("listModels:typesafe"));
   h.press(KEY.enter); await tick();
   assert.deepEqual(f.settings.backend, { backend: "typesafe", model: "jev-latest" });
-  assert.match(h.text(), /Decision model saved/); assert.doesNotMatch(h.text(), /Decisions › /);
+  assert.match(h.text(), /Decision model saved/); assert.doesNotMatch(h.text(), /Decisions › (?!Skill picker)/);
   assert.equal(f.settings.enabled, false); assert.ok(!f.calls.includes("toggleEnabled")); h.component.dispose();
 });
 
@@ -237,7 +238,7 @@ test("a deferred edit save resolving after Esc×2 to Main does not close the dia
   toBatchSizeEditor(h); typeValue(h, "25"); h.press(KEY.enter);
   assert.equal(gates.length, 1); assert.match(h.text(), /saving…/);
   h.press(KEY.esc, KEY.esc); // edit → advanced → main, save still pending
-  assert.match(h.text(), /Always allowed · Global/); assert.doesNotMatch(h.text(), /Decisions › /);
+  assert.match(h.text(), /Always allowed · Global/); assert.doesNotMatch(h.text(), /Decisions › (?!Skill picker)/);
   gates[0].release(); await tick();
   assert.deepEqual(h.results, [], "a late save must not close the dialog"); assert.equal(h.closedHooks.length, 0);
   assert.match(h.text(), /Always allowed · Global/); assert.doesNotMatch(h.text(), /saving…/);
@@ -288,7 +289,7 @@ test("a deferred model save resolving after the user left the model screen does 
   h.press(KEY.esc); assert.match(h.text(), /Decisions › Provider/); // back on the provider screen
   gate.resolve({ message: "Decision model saved" }); await tick();
   assert.match(h.text(), /Decisions › Provider/, "late success must not unwind to Main"); assert.deepEqual(h.results, []);
-  h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › /); assert.deepEqual(f.settings.backend, { backend: "typesafe", model: "jev-latest" });
+  h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › (?!Skill picker)/); assert.deepEqual(f.settings.backend, { backend: "typesafe", model: "jev-latest" });
   h.component.dispose();
 });
 
@@ -339,11 +340,11 @@ test("focus reaches the edit Input only in the edit route", async () => {
 });
 
 test("status route loads lines, scrolls and refreshes; errors render inline", async () => {
-  const f = fakeOps(); const h = mount(f); toRow(h, 7); h.press(KEY.enter);
+  const f = fakeOps(); const h = mount(f); toRow(h, 6); h.press(KEY.enter);
   await h.until(/Credentials: environment/); h.press(KEY.enter); await tick(); assert.equal(f.calls.filter((call) => call === "statusLines").length, 2);
   h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › Status/); h.component.dispose();
   const g = fakeOps({ statusLines: async () => { throw new SettingsError("Repair settings first"); } });
-  const k = mount(g, { initialRoute: "main" }); toRow(k, 7); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
+  const k = mount(g, { initialRoute: "main" }); toRow(k, 6); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
 });
 
 test("allowlist route embeds the editor within the dialog budget; Esc from search pops to main and cancels ranking", async () => {
@@ -384,7 +385,8 @@ test("project warning is visible on the row without leaving the dialog", async (
 
 test("settings errors render as a banner on main", () => {
   const f = fakeOps(); f.state.settingsError = "Settings file exceeds 64 KiB"; const h = mount(f);
-  assert.match(h.text(), /Settings error: Settings file exceeds 64 KiB/); h.component.dispose();
+  assert.match(h.text(), /Settings error: Settings file exceeds 64 KiB/);
+  h.press(KEY.tab); assert.match(h.text(), /Settings error: Settings file exceeds 64 KiB/, "also on the Tool picker tab"); h.component.dispose();
 });
 
 test("Esc on main closes once; close is idempotent; late results cannot render or call ops after close", async () => {
@@ -418,7 +420,7 @@ test("a save in flight when the dialog closes is not cancelled, but its completi
 test("deep links stack main under the target, so Esc returns to main; navigate() refocuses an open dialog", async () => {
   const f = fakeOps(); const h = mount(f, { initialRoute: "provider" });
   await h.until(/typesafe · direct API/); assert.equal(f.calls.filter((call) => call === "listProviders").length, 1);
-  h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › /); assert.equal(h.results.length, 0);
+  h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › (?!Skill picker)/); assert.equal(h.results.length, 0);
   h.component.navigate("advanced"); assert.match(h.text(), /Decisions › Advanced/);
   h.component.navigate({ allowlist: "project" }); assert.match(h.text(), /Always allowed · Project/);
   await h.until(/Search:/); assert.ok(f.calls.includes("allowlist:project")); h.component.dispose();
@@ -433,9 +435,9 @@ test("rendered frame fits width and height at every size for every route, with h
     allowlist: async (scope) => allowlistDeps(scope, { skills: Array.from({ length: 40 }, (_, n) => skill(`skill-${n}-${hostile}`.slice(0, 60), hostile)) }),
   });
   const routes: [string, (h: ReturnType<typeof mount>) => void][] = [
-    ["main", () => {}], ["advanced", (h) => h.component.navigate("advanced")], ["provider", (h) => h.component.navigate("provider")],
+    ["main", () => {}], ["tools", (h) => h.component.navigate("tools")], ["advanced", (h) => h.component.navigate("advanced")], ["provider", (h) => h.component.navigate("provider")],
     ["model", (h) => h.component.navigate("model")], ["allowlist", (h) => h.component.navigate({ allowlist: "global" })],
-    ["status", (h) => { toRow(h, 7); h.press(KEY.enter); }],
+    ["status", (h) => { toRow(h, 6); h.press(KEY.enter); }],
     ["edit", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.enter); }],
     ["options", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter); }],
   ];
@@ -496,10 +498,11 @@ test("manager: one dialog at a time, second open focuses the first; closeAll res
   doneFn = undefined;
 });
 
-test("Tools & MCP route: fields in order, bool toggles, options and inline edit save through tools.* keys, and the four tool/MCP allowlist rows open their editors", async () => {
+test("Tool picker tab: fields in order, bool toggles, options and inline edit save through tools.* keys, and the four tool/MCP allowlist rows open their editors", async () => {
   const f = fakeOps({ async toolAllowlist(list, scope, signal) { f.calls.push(`toolAllowlist:${list}:${scope}`); void signal; return { ...allowlistDeps(scope), noun: list === "tools" ? "tool" : "MCP server", skills: [{ ...skill("ext_a"), scope }] }; } });
-  const h = mount(f, { rows: 40 }); await h.until(/Tools & MCP…\s+Off/); toRow(h, 6); h.press(KEY.enter);
-  const text = await h.until(/Decisions › Tools & MCP/);
+  const h = mount(f, { rows: 40 }); await h.until(/Always allowed · Project\s+3/); h.press(KEY.tab);
+  const text = await h.until(/Decisions › Tool picker/);
+  assert.match(text, /Skill picker\s+\[ Tool picker \]/);
   let at = -1;
   for (const label of ["Tool filtering", "Mode", "Run picker", "Relevance threshold", "Max added per round", "Minimum candidates", "On failure", "Description size", "Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers · Global", "Always allowed MCP servers · Project"]) {
     const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next;
@@ -507,8 +510,8 @@ test("Tools & MCP route: fields in order, bool toggles, options and inline edit 
   assert.match(text, /Tool filtering\s+Off/);
   h.press(KEY.space); await tick(); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:tools.enabled=true"]);
   assert.equal(f.settings.tools.enabled, true); assert.match(h.text(), /Tool filtering\s+On/);
-  h.press(KEY.down, KEY.enter); assert.match(h.text(), /Decisions › Tools & MCP › Mode/);
-  h.press(KEY.down, KEY.enter); await tick(); assert.equal(f.settings.tools.mode, "mcp"); assert.match(h.text(), /Decisions › Tools & MCP/); assert.match(h.text(), /Mode\s+mcp/);
+  h.press(KEY.down, KEY.enter); assert.match(h.text(), /Decisions › Tool picker › Mode/);
+  h.press(KEY.down, KEY.enter); await tick(); assert.equal(f.settings.tools.mode, "mcp"); assert.match(h.text(), /Decisions › Tool picker/); assert.match(h.text(), /Mode\s+mcp/);
   h.press(KEY.down, KEY.down, KEY.enter); assert.match(h.text(), /Value: 0\.375/);
   h.press(KEY.backspace, KEY.backspace, KEY.backspace, KEY.backspace, KEY.backspace, "9"); h.press(KEY.enter); await tick();
   assert.match(h.text(), /threshold must be/, "invalid values stay inline"); assert.equal(f.settings.tools.threshold, 0.375);
@@ -518,7 +521,7 @@ test("Tools & MCP route: fields in order, bool toggles, options and inline edit 
   h.press(KEY.esc);
   h.component.dispose();
 });
-test("Tools & MCP route fits the height budget at every size and survives hostile text; Esc returns to main", () => {
+test("Tool picker tab fits the height budget at every size and survives hostile text; Esc closes the dialog", () => {
   for (const rows of [10, 14, 20, 24, 40]) {
     const f = fakeOps(); const h = mount(f, { rows, initialRoute: "tools" });
     const budget = dialogHeightBudget(rows);
@@ -528,6 +531,51 @@ test("Tools & MCP route fits the height budget at every size and survives hostil
       for (const line of lines) assert.ok(visibleWidth(line) <= 60, line);
       h.press(KEY.down);
     }
-    h.press(KEY.esc); assert.match(h.text(), /Decisions\s/); h.component.dispose();
+    h.press(KEY.esc); assert.deepEqual(h.results, ["closed"]); assert.equal(h.component.isClosed(), true); h.component.dispose();
   }
+});
+
+test("Skill picker and Tool picker are peer tabs: Tab, Shift+Tab, ←/→ switch only on a tab root, in one overlay, with no nested route", async () => {
+  const f = fakeOps(); const h = mount(f, { rows: 40 }); await h.until(/Always allowed · Project\s+3/);
+  assert.match(h.text(), /Decisions › Skill picker/); assert.doesNotMatch(h.text(), /Tool filtering/);
+  h.press(KEY.tab); assert.match(h.text(), /Decisions › Tool picker/); assert.match(h.text(), /\[ Tool picker \]/); assert.match(h.text(), /Tool filtering\s+Off/);
+  assert.doesNotMatch(h.text(), /Context decisions\s+(On|Off)/);
+  h.press(KEY.shiftTab); assert.match(h.text(), /Decisions › Skill picker/); assert.match(h.text(), /Context decisions\s+On/);
+  h.press(KEY.right); assert.match(h.text(), /Decisions › Tool picker/);
+  h.press(KEY.right); assert.match(h.text(), /Decisions › Tool picker/, "→ on the last tab stays put");
+  h.press(KEY.left); assert.match(h.text(), /Decisions › Skill picker/);
+  h.press(KEY.left); assert.match(h.text(), /Decisions › Skill picker/);
+  assert.equal(h.results.length, 0, "switching tabs never closes the dialog");
+  // Tab keys do nothing on a pushed route; Esc returns to the tab it came from.
+  h.press(KEY.right); toRow(h, 0); h.press(KEY.down, KEY.enter); assert.match(h.text(), /Decisions › Tool picker › Mode/);
+  h.press(KEY.tab, KEY.left, KEY.right); assert.match(h.text(), /Decisions › Tool picker › Mode/);
+  h.press(KEY.esc); assert.match(h.text(), /Decisions › Tool picker/); assert.doesNotMatch(h.text(), /› Mode/);
+  h.press(KEY.esc); assert.deepEqual(h.results, ["closed"]); h.component.dispose();
+});
+
+test("entering the Tool picker tab loads the project tool and MCP counts", async () => {
+  const late = deferred<{ count: number; tools: number; mcpServers: number }>();
+  const f = fakeOps({ async projectCount(signal) { f.calls.push("projectCount"); void signal; return late.promise; } });
+  const h = mount(f, { rows: 40 }); h.press(KEY.tab); assert.match(h.text(), /Always allowed tools · Project\s+…/);
+  late.resolve({ count: 1, tools: 4, mcpServers: 2 }); await tick();
+  assert.match(h.text(), /Always allowed tools · Project\s+4/); assert.match(h.text(), /Always allowed MCP servers · Project\s+2/);
+  h.component.dispose();
+});
+
+test("the tool picker's first row toggles tool filtering independently of the skill picker's master toggle", async () => {
+  const f = fakeOps(); const h = mount(f, { rows: 40 }); await h.until(/Always allowed · Project\s+3/);
+  h.press(KEY.tab, KEY.space); await tick();
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting") || call === "toggleEnabled"), ["updateSetting:tools.enabled=true"]);
+  assert.equal(f.settings.enabled, true); assert.equal(f.settings.tools.enabled, true);
+  h.press(KEY.shiftTab); assert.match(h.text(), /Context decisions\s+On/); h.component.dispose();
+});
+
+test("deep links to the tool picker open it as the sole root; tool and MCP allowlists return to the Tool picker tab", async () => {
+  const f = fakeOps({ async toolAllowlist(list, scope) { return { ...allowlistDeps(scope), noun: list === "tools" ? "tool" : "MCP server", skills: [{ ...skill("ext_a"), scope }] }; } });
+  const h = mount(f, { initialRoute: "tools" });
+  assert.match(h.text(), /Decisions › Tool picker/); h.press(KEY.esc); assert.deepEqual(h.results, ["closed"]); h.component.dispose();
+  const g = mount(f); g.component.navigate({ allowlist: "global", list: "mcp" }); await g.until(/Search:/);
+  assert.match(g.text(), /Always allowed MCP servers · Global/);
+  g.press(KEY.esc); assert.match(g.text(), /Decisions › Tool picker/); assert.equal(g.results.length, 0);
+  g.component.navigate("main"); assert.match(g.text(), /Decisions › Skill picker/); g.component.dispose();
 });

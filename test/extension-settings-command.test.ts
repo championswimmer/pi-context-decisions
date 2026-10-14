@@ -177,7 +177,7 @@ test("dialog work never reads ctx.signal (the agent-run signal), even through st
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
   dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Model route
   await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
-  for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
+  for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
   await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.reads.signal, 0, "the dialog must own its signal");
 });

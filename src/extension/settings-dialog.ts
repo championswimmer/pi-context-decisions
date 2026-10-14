@@ -1,4 +1,5 @@
 // Floating /decisions settings dialog: ONE overlay with an internal route stack.
+// The two roots, "main" (Skill picker) and "tools" (Tool picker), are peer tabs; every other route is pushed above the active tab.
 // Never opens nested ctx.ui.select/input/custom: Pi's custom `done` removes the TOPMOST overlay,
 // so stacked dialogs could close the wrong one. Close only through `done`, exactly once.
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -11,7 +12,7 @@ import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-
 import type { CommandContext } from "./contracts.ts";
 import {
   ADVANCED_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
-  sanitizeTerminalText, toolsSummary, type SettingsGroup,
+  sanitizeTerminalText, type SettingsGroup,
 } from "./settings-model.ts";
 
 /** Percent sizes are resolved by Pi on every render; the options object itself is read once. */
@@ -220,13 +221,25 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const toRoute = (route: InitialRoute): SettingsRoute => route === "main" ? { kind: "main" }
     : typeof route === "object" ? { kind: "allowlist", scope: route.allowlist, ...(route.list ? { list: route.list } : {}) } : { kind: route };
+  /** The tab (root route) a destination belongs to: tool/MCP lists and the tool settings live under the Tool picker tab. */
+  const rootFor = (route: InitialRoute): "main" | "tools" => route === "tools" || (typeof route === "object" && route.list !== undefined && route.list !== "skills") ? "tools" : "main";
   const navigate = (route: InitialRoute) => {
     if (closed) return;
     while (stack.length) leave(stack.pop()!);
-    const main = newFrame({ kind: "main" });
-    stack.push(main); enter(main);
-    if (route !== "main") { const frame = newFrame(toRoute(route)); stack.push(frame); enter(frame); }
+    const root = newFrame({ kind: rootFor(route) });
+    stack.push(root); enter(root);
+    if (route !== "main" && route !== "tools") { const frame = newFrame(toRoute(route)); stack.push(frame); enter(frame); }
     applyFocus(); redraw();
+  };
+  /** Swap the root frame between the two peer tabs. Only possible on a tab root, so sub-routes, inputs and editors are never affected. */
+  const selectTab = (kind: "main" | "tools" | "toggle") => {
+    if (closed || stack.length !== 1) return;
+    const current = stack[0];
+    const next = kind === "toggle" ? (current.route.kind === "main" ? "tools" : "main") : kind;
+    if (current.route.kind === next) return;
+    leave(current);
+    const root = newFrame({ kind: next });
+    stack[0] = root; enter(root); applyFocus(); redraw();
   };
 
   const ok = (frame: Frame, text: string) => { frame.banner = { text, tone: "success" }; };
@@ -246,8 +259,6 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         ...(snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." }),
         run: () => push({ kind: "allowlist", scope: "project" }) },
       { label: "Advanced…", description: "Relevance threshold, shard size, max added per round, picker cadence and safety limits.", run: () => push({ kind: "advanced" }) },
-      { label: "Tools & MCP…", value: toolsSummary(settings), tone: settings.tools.enabled ? "ok" : "muted",
-        description: "Opt-in filtering of external tools and MCP servers, separate from skill filtering. Off by default; not a sandbox.", run: () => push({ kind: "tools" }) },
       { label: "Status…", description: "Credentials, last decision and allowlist counts. Makes no inference calls.", run: () => push({ kind: "status" }) },
       { label: "Close", run: () => close("closed") },
     ];
@@ -327,19 +338,19 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   const crumb = (frame: Frame): string => {
     const route = frame.route;
     switch (route.kind) {
-      case "main": return "Decisions";
+      case "main": return "Decisions › Skill picker";
       case "advanced": return "Decisions › Advanced";
-      case "tools": return "Decisions › Tools & MCP";
+      case "tools": return "Decisions › Tool picker";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "edit": case "options": return `Decisions › ${route.group === "tools" ? "Tools & MCP" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
+      case "edit": case "options": return `Decisions › ${route.group === "tools" ? "Tool picker" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "allowlist": return `Decisions › Always allowed${route.list === "tools" ? " tools" : route.list === "mcp" ? " MCP servers" : ""} · ${route.scope === "global" ? "Global" : "Project"}`;
     }
   };
   const hint = (frame: Frame): string => {
     switch (frame.route.kind) {
-      case "main": return "↑↓ move · Enter select · Space toggle · Esc close";
+      case "main": case "tools": return "Tab switch · ↑↓ move · Enter select · Space toggle · Esc close";
       case "edit": return "Enter save · Esc cancel";
       case "status": return "↑↓ scroll · Enter refresh · Esc back";
       case "allowlist": return "Esc back";
@@ -348,7 +359,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const wrap = (text: string, width: number, limit: number): string[] => wrapTextWithAnsi(sanitizeTerminalText(text, 1200), Math.max(1, width)).slice(0, Math.max(0, limit));
   const bannerLines = (frame: Frame, width: number): string[] => {
-    const banner = frame.banner ?? (frame.route.kind === "main" && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair with /decisions model or settings.`, tone: "error" as const } : undefined);
+    const banner = frame.banner ?? ((frame.route.kind === "main" || frame.route.kind === "tools") && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair with /decisions model or settings.`, tone: "error" as const } : undefined);
     if (!banner) return [];
     const color = banner.tone === "error" ? "error" : banner.tone === "success" ? "success" : "warning";
     return wrap(banner.text, width, 4).map((line) => theme.fg(color, line));
@@ -378,6 +389,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     return sections.flatMap((section, i) => section.lines.slice(0, taken[i]));
   };
 
+  const TABS = [{ kind: "main", label: "Skill picker" }, { kind: "tools", label: "Tool picker" }] as const;
+  /** One line: the active tab is bracketed and accented, the other is muted. */
+  const tabStrip = (frame: Frame, inner: number): string => {
+    const text = TABS.map((tab) => tab.kind === frame.route.kind ? theme.fg("accent", `[ ${tab.label} ]`) : theme.fg("muted", `  ${tab.label}  `)).join(" ");
+    return truncateToWidth(text, inner, "…");
+  };
   const listBody = (frame: Frame, inner: number, bodyBudget: number): string[] => {
     const items = itemsFor(frame);
     frame.selected = Math.min(Math.max(0, frame.selected), Math.max(0, items.length - 1));
@@ -453,7 +470,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         const room = Math.max(1, bodyBudget - Math.min(banner.length, Math.max(0, bodyBudget - 1)));
         frame.scroll = Math.min(Math.max(0, frame.scroll), Math.max(0, lines.length - room));
         body = fit(bodyBudget, [{ lines: lines.slice(frame.scroll, frame.scroll + room), min: 1 }, { lines: banner, min: 1 }]);
-      } else body = listBody(frame, inner, bodyBudget);
+      } else if ((route.kind === "main" || route.kind === "tools") && bodyBudget >= 3) body = [tabStrip(frame, inner), ...listBody(frame, inner, bodyBudget - 1)];
+      else body = listBody(frame, inner, bodyBudget);
       body = body.slice(0, bodyBudget);
       return [borderLine("╭", "╮", crumb(frame), tag, w), ...body.map((line) => bodyLine(line, inner)), bottomLine(hint(frame), w)];
     },
@@ -478,6 +496,11 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         return;
       }
       if (keys.matches(data, "tui.select.cancel")) { if (stack.length > 1) pop(); else close("closed"); return; }
+      if (stack.length === 1 && (frame.route.kind === "main" || frame.route.kind === "tools")) {
+        if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) { selectTab("toggle"); return; }
+        if (matchesKey(data, "left")) { selectTab("main"); return; }
+        if (matchesKey(data, "right")) { selectTab("tools"); return; }
+      }
       if (frame.route.kind === "status") {
         if (keys.matches(data, "tui.select.up")) frame.scroll = Math.max(0, frame.scroll - 1);
         else if (keys.matches(data, "tui.select.down")) frame.scroll += 1;

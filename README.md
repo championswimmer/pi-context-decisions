@@ -30,7 +30,7 @@ For a local package install, `pi install /absolute/path/to/pi-context-decisions`
 
 ## User settings: `/decisions`
 
-Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **floating dialog** drawn over the session, not a block in the status area: the session underneath keeps printing and scrolling while the dialog stays where it is. The main screen is deliberately short:
+Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **floating dialog** drawn over the session, not a block in the status area: the session underneath keeps printing and scrolling while the dialog stays where it is. The dialog has two peer tabs, **Skill picker** and **Tool picker**, switched with **Tab**/**Shift+Tab** or **←/→**; the tab strip is the first line of the dialog. The **Skill picker** tab is deliberately short:
 
 | Row | What it does |
 |---|---|
@@ -39,13 +39,14 @@ Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **float
 | **Model** | The decision model. Providers without a key are labelled **missing key**. |
 | **Always allowed · Global / Project** | The searchable allowlist editors (see below). |
 | **Advanced…** | Every relevance fine-tuning knob (see below). |
-| **Tools & MCP…** | Opt-in tool/MCP filtering: its own on/off, mode, picker cadence, limits and four allowlist editors (see [Tool & MCP filtering](#tool--mcp-filtering-opt-in)). |
 | **Status…** | Credentials source, last decision and allowlist counts. Makes no inference calls. |
 | **Close** | Closes the dialog. |
 
-**Advanced…** lists, in order: **Skill filtering** on/off; **Relevance threshold** (0–1, inclusive; default 0.375); **Shard size** (skills per decision request, 1–50); **Max added per round** (new skills per picking round, ranked across all shards; always-allowed and already-added skills do not count); **Run picker** (`prompt` or `tool-round`); then the safety limits **On failure**, **Timeout**, **Concurrency**, **Minimum inventory** and the **prompt/description size** limits. Selecting a row edits it inline with validation (the same rules as `/decisions relevance <key> <value>`); **Run picker** and **On failure** are option lists where `open` carries a visible warning and is never reached by cycling. Legacy `pin`/`unpin` names stay on the text commands. This is the extension's only command; headless use supports the same actions through arguments.
+**Advanced…** lists, in order: **Skill filtering** on/off; **Relevance threshold** (0–1, inclusive; default 0.375); **Shard size** (skills per decision request, 1–50); **Max added per round** (new skills per picking round, ranked across all shards; always-allowed and already-added skills do not count); **Run picker** (`prompt` or `tool-round`); then the safety limits **On failure**, **Timeout**, **Concurrency**, **Minimum inventory** and the **prompt/description size** limits. Selecting a row edits it inline with validation (the same rules as `/decisions relevance <key> <value>`); **Run picker** and **On failure** are option lists where `open` carries a visible warning and is never reached by cycling. Legacy `pin`/`unpin` names stay on the text commands.
 
-Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on/off rows, **Esc** goes back (and closes from the main screen). While the dialog has focus, **Esc and Ctrl+C act on the dialog, not on the running agent**: close it to interrupt or type a prompt. Running `/decisions` again while it is open focuses the existing dialog instead of opening a second one. Reloading or shutting down the session closes the dialog and cancels its in-flight work. RPC clients get the same grouping (Advanced is a sub-menu) through select/input requests; print/JSON use the text commands.
+The **Tool picker** tab is the opt-in tool/MCP filtering ([Tool & MCP filtering](#tool--mcp-filtering-opt-in)): its own on/off, mode, picker cadence, limits and the four always-allowed editors, directly on the tab rather than behind a nested screen. It shares the decision provider/model chosen on the Skill picker tab. This is the extension's only command; headless use supports the same actions through arguments.
+
+Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on/off rows, **Tab**/**Shift+Tab**/**←/→** switch tabs (only on a tab, not inside an editor or sub-screen), **Esc** goes back (and closes from either tab). While the dialog has focus, **Esc and Ctrl+C act on the dialog, not on the running agent**: close it to interrupt or type a prompt. Running `/decisions` again while it is open focuses the existing dialog instead of opening a second one. Reloading or shutting down the session closes the dialog and cancels its in-flight work. RPC clients cannot show tabs, so they get the same grouping as select menus (Advanced and Tools & MCP are sub-menus) through select/input requests; print/JSON use the text commands.
 
 **No backend is selected by default**, so startup and prompts make no decision calls until you configure one. Selection persists across sessions and opts in to sending bounded task/skill metadata on eligible prompts. Choosing a provider/model does not change the enabled toggle. Providers and models are labelled **configured** or **missing key**; unavailable selections are rejected without changing settings. Configure the relevant `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `TYPESAFE_API_KEY` in the environment, or use `/login <provider>` in Pi. Credentials remain Pi-first/environment-second; OpenAI requires its API key, not Codex/ChatGPT OAuth.
 
@@ -132,7 +133,7 @@ Invalid persisted settings are reported explicitly and advertisements fail close
 
 ### Global and project skill allowlists
 
-From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the main screen. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the per-round cap, join the stable base (so removing an entry never withdraws a skill already advertised on the branch) and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
+From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the Skill picker tab. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the per-round cap, join the stable base (so removing an entry never withdraws a skill already advertised on the branch) and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
 
 - **Global** names are stored as `globalAllowlist` in the user settings file.
 - **Project** names are stored in `<cwd>/.pi/pi-context-decisions.json` as `{ "alwaysAllowed": ["skill-name"] }`. It can be shared in the repository; this is scoped to Pi's working directory, so starting in different subdirectories uses different lists. A malformed project list is warned about and treated as empty, not a full-inventory fallback.
@@ -162,7 +163,7 @@ This changes **advertisements, not permissions**: explicit `/skill:name`, readin
 
 ## Tool & MCP filtering (opt-in)
 
-**Off by default and independent of skill filtering.** It has its own switch (`/decisions tools on`, or **Tools & MCP…** in the dialog); only the master `enabled` switch, the selected decision model and the shared scoring limits (timeout, shard size, concurrency, prompt size) are common. Turning it on never selects a model (without one, every tool simply stays available), and selecting a model never turns it on. While it is off the extension never calls `getAllTools`/`setActiveTools`, writes no entries and lets every call through.
+**Off by default and independent of skill filtering.** It has its own switch (`/decisions tools on`, or the **Tool picker** tab in the dialog); only the master `enabled` switch, the selected decision model and the shared scoring limits (timeout, shard size, concurrency, prompt size) are common. Turning it on never selects a model (without one, every tool simply stays available), and selecting a model never turns it on. While it is off the extension never calls `getAllTools`/`setActiveTools`, writes no entries and lets every call through.
 
 **Modes** (`tools.mode`):
 
