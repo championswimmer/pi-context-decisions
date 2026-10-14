@@ -92,7 +92,7 @@ test("Skill picker tab shows exactly the eight concise rows; relevance knobs and
   const text = h.text(100); let at = -1;
   for (const label of labels) { const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next; }
   assert.doesNotMatch(text, /threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode|Tools & MCP/i);
-  assert.match(text, /\[ Skill picker \]\s+Tool picker/, "the tab strip marks the active tab");
+  assert.match(text, /Skill picker\s+Tool picker/, "the tab strip lists both tabs"); assert.doesNotMatch(text, /\[ (Skill|Tool) picker \]/, "no bracket selectors");
   assert.equal(h.results.length, 0); h.component.dispose();
 });
 
@@ -502,7 +502,7 @@ test("Tool picker tab: fields in order, bool toggles, options and inline edit sa
   const f = fakeOps({ async toolAllowlist(list, scope, signal) { f.calls.push(`toolAllowlist:${list}:${scope}`); void signal; return { ...allowlistDeps(scope), noun: list === "tools" ? "tool" : "MCP server", skills: [{ ...skill("ext_a"), scope }] }; } });
   const h = mount(f, { rows: 40 }); await h.until(/Always allowed · Project\s+3/); h.press(KEY.tab);
   const text = await h.until(/Decisions › Tool picker/);
-  assert.match(text, /Skill picker\s+\[ Tool picker \]/);
+  assert.match(text, /Skill picker\s+Tool picker/); assert.doesNotMatch(text, /\[ (Skill|Tool) picker \]/);
   let at = -1;
   for (const label of ["Tool filtering", "Mode", "Run picker", "Relevance threshold", "Max added per round", "Minimum candidates", "On failure", "Description size", "Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers · Global", "Always allowed MCP servers · Project"]) {
     const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next;
@@ -535,10 +535,30 @@ test("Tool picker tab fits the height budget at every size and survives hostile 
   }
 });
 
+test("the active tab is a selectedBg chip (no brackets), the inactive tab is muted, and the strip stays width-bounded when narrow", () => {
+  const marked = { fg: (token: string, value: string) => `<fg:${token}>${value}</fg>`, bg: (token: string, value: string) => `<bg:${token}>${value}</bg>` } as unknown as Parameters<typeof createSettingsDialogComponent>[1];
+  const strip = (width: number, route?: "tools") => {
+    const component = createSettingsDialogComponent({ requestRender() {}, terminal: { rows: 40 } }, marked, () => {}, fakeOps().ops, { initialRoute: route });
+    const lines = component.render(width); component.dispose();
+    return lines.find((line) => line.includes("Skill picker") && line.includes("Tool picker") && !line.includes("Decisions ›"));
+  };
+  const skills = strip(100)!;
+  assert.match(skills, /<bg:selectedBg><fg:text> {2}Skill picker {2}<\/fg><\/bg>/); assert.match(skills, /<fg:muted> {2}Tool picker {2}<\/fg>/);
+  assert.doesNotMatch(skills, /\[|\]/);
+  const tools = strip(100, "tools")!;
+  assert.match(tools, /<bg:selectedBg><fg:text> {2}Tool picker {2}<\/fg><\/bg>/); assert.match(tools, /<fg:muted> {2}Skill picker {2}<\/fg>/);
+  assert.equal(visibleWidth(skills), visibleWidth(tools), "switching tabs does not shift layout");
+  assert.equal([skills, tools].filter((line) => line.includes("<bg:selectedBg>")).length, 2);
+  // Narrow: every line still fits (the strip is truncated, never wrapped past the frame).
+  const component = createSettingsDialogComponent({ requestRender() {}, terminal: { rows: 40 } }, theme, () => {}, fakeOps().ops);
+  for (const width of [46, 30, 20]) for (const line of component.render(width)) assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(line)}`);
+  component.dispose();
+});
+
 test("Skill picker and Tool picker are peer tabs: Tab, Shift+Tab, ←/→ switch only on a tab root, in one overlay, with no nested route", async () => {
   const f = fakeOps(); const h = mount(f, { rows: 40 }); await h.until(/Always allowed · Project\s+3/);
   assert.match(h.text(), /Decisions › Skill picker/); assert.doesNotMatch(h.text(), /Tool filtering/);
-  h.press(KEY.tab); assert.match(h.text(), /Decisions › Tool picker/); assert.match(h.text(), /\[ Tool picker \]/); assert.match(h.text(), /Tool filtering\s+Off/);
+  h.press(KEY.tab); assert.match(h.text(), /Decisions › Tool picker/); assert.match(h.text(), /Tool filtering\s+Off/);
   assert.doesNotMatch(h.text(), /Context decisions\s+(On|Off)/);
   h.press(KEY.shiftTab); assert.match(h.text(), /Decisions › Skill picker/); assert.match(h.text(), /Context decisions\s+On/);
   h.press(KEY.right); assert.match(h.text(), /Decisions › Tool picker/);

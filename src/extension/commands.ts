@@ -391,7 +391,7 @@ function toolListLines(report: ToolReport, which: "tools" | "mcp"): string[] {
     lines.push(`MCP servers (${report.groups.length}, ${state}); grouped only by Pi's public mcp__ namespace:`);
     for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.verified ? "" : " · not registered by Pi's built-in MCP"}`);
     if (report.groups.length > LIST_LIMIT) lines.push(`  … and ${report.groups.length - LIST_LIMIT} more`);
-    lines.push("Resource-only or disconnected servers with no tools are not observable: allowlist them by name in the /decisions Tool picker tab.");
+    lines.push("Resource-only or disconnected servers with no tools are not observable: the Tool picker cannot add them. Allowlist by name in tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers in the project .pi/pi-context-decisions.json, then /reload.");
     return lines;
   }
   const external = report.rows.filter((row) => row.kind !== "internal");

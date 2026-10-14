@@ -327,12 +327,12 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           };
           if (server !== undefined) {
             if (usable(serverKey(server))) return undefined;
-            return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: pi-context-decisions tool filtering has not enabled that server. Ask the user to allow it in the /decisions Tool picker tab (Always allowed MCP servers).`.slice(0, BLOCK_REASON_LIMIT) };
+            return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: filtering has not enabled it. Ask the user to add it to tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers (project .pi/pi-context-decisions.json), then /reload.`.slice(0, BLOCK_REASON_LIMIT) };
           }
           if (tool.name === "read_mcp_resource") return undefined; // Pi rejects a read without a server; nothing to route
           // Unscoped listing: the complete server inventory (resource-only and disconnected servers included) is not observable, so it can never be
           // verified as fully allowed. Fail closed while filtering is on; the model must name a server.
-          return { block: true, reason: "Listing MCP resources across all servers is unavailable while tool filtering is on, because the complete server inventory cannot be verified: pass a specific available server, or ask the user to allow it in the /decisions Tool picker tab (Always allowed MCP servers).".slice(0, BLOCK_REASON_LIMIT) };
+          return { block: true, reason: "Listing MCP resources across all servers is unavailable while filtering is on (servers cannot be fully verified): pass an available server, or ask the user to add one to tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers (project .pi/pi-context-decisions.json), then /reload.".slice(0, BLOCK_REASON_LIMIT) };
         }
         if (tool.kind === "internal" || c.avail.isAvailable(tool)) return undefined;
         if (state === "on" && (!settings.backend || externalCount(inv, mode) < settings.tools.minCandidates)) {

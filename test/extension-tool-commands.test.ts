@@ -62,7 +62,7 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
   assert.doesNotMatch(report, /SECRET|parameters|instructions/);
   await h.command("mcp list");
   assert.match(last(h), /MCP servers \(2, filtering on · mode tools\)/); assert.match(last(h), /dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
-  assert.match(last(h), /allowlist them by name in the \/decisions Tool picker tab/);
+  assert.match(last(h), /Tool picker cannot add them/); assert.match(last(h), /tools\.alwaysAllowedMcpServers/); assert.match(last(h), /\.pi\/pi-context-decisions\.json/); assert.match(last(h), /\/reload/);
   assert.equal(h.requests.length, calls, "listing never calls the decision model");
 });
 test("status shows tool filtering lines and the not-a-sandbox sentence; off says opt-in", async (t) => {

@@ -390,9 +390,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
 
   const TABS = [{ kind: "main", label: "Skill picker" }, { kind: "tools", label: "Tool picker" }] as const;
-  /** One line: the active tab is bracketed and accented, the other is muted. */
+  /** One line: the active tab is a `selectedBg` chip, the other is muted; both have the same padding so switching never shifts layout. */
   const tabStrip = (frame: Frame, inner: number): string => {
-    const text = TABS.map((tab) => tab.kind === frame.route.kind ? theme.fg("accent", `[ ${tab.label} ]`) : theme.fg("muted", `  ${tab.label}  `)).join(" ");
+    const text = TABS.map((tab) => tab.kind === frame.route.kind ? theme.bg("selectedBg", theme.fg("text", `  ${tab.label}  `)) : theme.fg("muted", `  ${tab.label}  `)).join(" ");
     return truncateToWidth(text, inner, "…");
   };
   const listBody = (frame: Frame, inner: number, bodyBudget: number): string[] => {
