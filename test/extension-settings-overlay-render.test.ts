@@ -7,7 +7,7 @@ import * as xtermModule from "@xterm/headless";
 import { Container, Input, TuiMainScreen, type Component, type Terminal } from "@earendil-works/pi-tui";
 import { defaultSettings } from "../src/settings.ts";
 import { dialogHeightBudget } from "../src/extension/settings-model.ts";
-import { createSettingsDialogComponent, SETTINGS_OVERLAY_OPTIONS, type DialogResult, type SettingsDialogOps } from "../src/extension/settings-dialog.ts";
+import { createSettingsDialogComponent, SETTINGS_OVERLAY_OPTIONS, type DialogResult, type InitialRoute, type SettingsDialogOps } from "../src/extension/settings-dialog.ts";
 
 type XTerminal = InstanceType<typeof xtermModule.Terminal>;
 const XTermClass: typeof xtermModule.Terminal = (xtermModule as unknown as { Terminal?: typeof xtermModule.Terminal; default?: { Terminal: typeof xtermModule.Terminal } }).Terminal
@@ -58,7 +58,7 @@ function fakeOps(): SettingsDialogOps {
     async statusLines() { return ["status"]; }, async allowlist(scope) { return { scope, skills: [], initial: [], locationLabel: "x", async save() {} }; },
   };
 }
-async function scenario(rows: number, appendCount: number, initialRoute?: "tools") {
+async function scenario(rows: number, appendCount: number, initialRoute?: InitialRoute, ops: SettingsDialogOps = fakeOps()) {
   const terminal = new EmulatedTerminal(80, rows);
   const tui = new TuiMainScreen(terminal, false);
   const transcript = new Lines(); const editor = new Input({ prompt: "> " });
@@ -69,7 +69,7 @@ async function scenario(rows: number, appendCount: number, initialRoute?: "tools
   tui.renderNow(); await terminal.flush();
   const results: DialogResult[] = [];
   let handle!: ReturnType<typeof tui.showOverlay>;
-  const dialog = createSettingsDialogComponent(tui, theme, (result) => { results.push(result); tui.hideOverlay(); }, fakeOps(), { initialRoute });
+  const dialog = createSettingsDialogComponent(tui, theme, (result) => { results.push(result); tui.hideOverlay(); }, ops, { initialRoute });
   handle = tui.showOverlay(dialog, SETTINGS_OVERLAY_OPTIONS);
   tui.renderNow(); await terminal.flush();
   return { terminal, tui, transcript, editor, dialog, handle, results, append, appendCount };
@@ -176,4 +176,29 @@ test("real renderer: the selected tab has a real cell background (not brackets) 
   skill = await find("Skill picker"); tool = await find("Tool picker");
   assert.equal(tool.mid, 24); assert.equal(tool.edgeLeft, 24); assert.equal(tool.edgeRight, 24); assert.equal(skill.mid, undefined);
   s.dialog.dispose();
+});
+
+test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP and extension groups, tri-state headers) stays inside the overlay bounds", async () => {
+  const names = ["note_add", "note_list", "docs_s", "docs_t", "loose_tool"];
+  const ops: SettingsDialogOps = { ...fakeOps(), async toolAllowlist(_list, scope) {
+    return { scope, noun: "tool", skills: names.map((name) => ({ name, description: `does ${name}`, scope, disableModelInvocation: false })), initial: ["note_add"], locationLabel: "x", async save() {},
+      tree: { internal: [{ name: "read", description: "Read" }], groups: [
+        { key: "mcp__docs", label: "docs", type: "mcp", description: "", tools: ["docs_s", "docs_t"] },
+        { key: "ext__notes", label: "notes", type: "extension", description: "", tools: ["note_add", "note_list"] }], initialGroups: ["mcp__docs"] } };
+  } };
+  const s = await scenario(24, 0, { allowlist: "global", list: "tools" }, ops);
+  const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + 24); };
+  const send = async (data: string) => { s.tui.getFocusedComponent()!.handleInput!(data); s.tui.renderNow(); await s.terminal.flush(); };
+  for (let n = 0; n < 40 && !view().some((line) => /Built-in tools/.test(line)); n++) { await new Promise((resolve) => setTimeout(resolve, 2)); s.tui.renderNow(); await s.terminal.flush(); }
+  let text = view().join("\n");
+  assert.match(text, /Always allowed tools · Global/); assert.match(text, /\[x\] ▸ Built-in tools \(1\)/); assert.match(text, /\[x\] ▸ docs/); assert.match(text, /\[-\] ▸ notes/);
+  assert.ok(text.indexOf("Built-in tools") < text.indexOf("docs") && text.indexOf("docs") < text.indexOf("notes"));
+  await send("\x1b[B"); for (let n = 0; n < 2; n++) await send("\x1b[B"); // list focus -> notes header
+  await send("\r");
+  text = view().join("\n");
+  assert.match(text, /\[-\] ▾ notes/); assert.match(text, /\[x\] note_add/); assert.match(text, /\[ \] note_list/);
+  const bounds = s.handle.getBounds()!;
+  assert.ok(bounds.height <= dialogHeightBudget(24), `${bounds.height} rows exceed the budget`);
+  for (const line of view()) assert.ok(line.length <= 80);
+  assert.equal(s.tui.hasOverlay(), true); s.dialog.dispose();
 });

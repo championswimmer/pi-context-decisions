@@ -15,7 +15,7 @@ export interface ToolLedgerData {
   v: 1;
   /** Tool names made available (decided, allowlisted, or recorded as base). */
   tools?: string[];
-  /** MCP namespace keys made available as a whole. */
+  /** Group keys (MCP namespaces `mcp__x`, extensions `ext__x`) made available as a whole. */
   groups?: string[];
   /** Declared tools WE removed from the active set (so only they may be restored). */
   withheld?: string[];
@@ -114,11 +114,14 @@ function list(values: readonly string[]): string {
 export function buildToolNotice(newTools: readonly string[], newGroups: readonly string[], baseline: boolean): ToolNotice | undefined {
   if (!baseline && !newTools.length && !newGroups.length) return undefined;
   const parts: string[] = [];
-  if (newGroups.length) parts.push(`MCP servers: ${list(newGroups)}`);
+  const servers = newGroups.filter((key) => !key.startsWith("ext__"));
+  const extensions = newGroups.filter((key) => key.startsWith("ext__"));
+  if (servers.length) parts.push(`MCP servers: ${list(servers)}`);
+  if (extensions.length) parts.push(`extensions: ${list(extensions)}`);
   if (newTools.length) parts.push(`tools: ${list(newTools)}`);
   // Scoped to what the filter actually withholds: tools reached INDIRECTLY (codemode scripts, tool_search). Direct declarations are Pi's own.
   const content = baseline
-    ? `Tool availability (pi-context-decisions): among the MCP servers and tools that are reached indirectly (through codemode or tool search, not declared to you directly), only these are available now: ${parts.length ? parts.join("; ") : "none"}. Other indirect ones are unavailable unless a later notice adds them, and calls to them are blocked. Tools declared to you directly, built-in tools and unfiltered extension tools are unaffected.`
-    : `Tool availability (pi-context-decisions): these indirect MCP servers or tools are now also available: ${parts.join("; ")}.`;
+    ? `Tool availability (pi-context-decisions): among the MCP servers, extensions and tools that are reached indirectly (through codemode or tool search, not declared to you directly), only these are available now: ${parts.length ? parts.join("; ") : "none"}. Other indirect ones are unavailable unless a later notice adds them, and calls to them are blocked. Tools declared to you directly, built-in tools and unfiltered extension tools are unaffected.`
+    : `Tool availability (pi-context-decisions): these indirect MCP servers, extensions or tools are now also available: ${parts.join("; ")}.`;
   return { customType: TOOLS_NOTICE_TYPE, content, display: false, details: { v: 1, tools: unique(newTools).slice(0, MAX_NAMES), groups: unique(newGroups).slice(0, MAX_NAMES) } };
 }

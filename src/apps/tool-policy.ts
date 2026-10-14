@@ -6,9 +6,9 @@ export interface AvailabilityLedger { tools: ReadonlySet<string>; groups: Readon
 /** Effective (global ∪ project) allowlists. Server entries are matched with `sameServer` (`-`/`_` folding). */
 export interface EffectiveAllowlists { tools: ReadonlySet<string>; servers: ReadonlySet<string> }
 export interface Availability {
-  /** Registered MCP namespaces that are available as a whole. */
+  /** Registered groups (MCP namespaces and extensions) that are available as a whole. */
   groups: Set<string>;
-  /** Groups made available only because one of their tools is allowlisted or already available, in `mcp` mode. */
+  /** Groups made available only because one of their tools is allowlisted or already available, in `mcp` (group) mode. */
   promoted: Set<string>;
   isAvailable(tool: ClassifiedTool): boolean;
   isGroupAvailable(key: string): boolean;
@@ -19,12 +19,13 @@ export function serverAllowlisted(allow: EffectiveAllowlists, key: string): bool
   return false;
 }
 /**
+ * Groups are MCP namespaces AND extensions (`ext__<name>`, from Pi's public `sourceInfo`); both follow the same rules.
  * - internal: always available.
- * - `mcp` mode: external non-MCP tools are never filtered. An MCP namespace is available when it is in the ledger, its
- *   server is allowlisted, or ANY of its tools is allowlisted / already available (the whole namespace is promoted, so a
- *   server is never split into half-on in this mode).
- * - `tools` mode: a tool is available when it, or its whole namespace, is in the ledger or an allowlist.
- * A late member of an available namespace is available without scoring.
+ * - `mcp` (group) mode: a group is available when it is in the ledger, it is allowlisted, or ANY of its tools is allowlisted / already
+ *   available (the whole group is promoted, so a server or extension is never split into half-on in this mode). Only extension tools
+ *   without usable provenance (no group) are never filtered here.
+ * - `tools` mode: a tool is available when it, or its whole group, is in the ledger or an allowlist.
+ * A late member of an available group is available without scoring.
  */
 export function availability(inventory: ToolInventory, mode: ToolFilterMode, ledger: AvailabilityLedger, allow: EffectiveAllowlists): Availability {
   const groups = new Set<string>();
@@ -36,25 +37,26 @@ export function availability(inventory: ToolInventory, mode: ToolFilterMode, led
   const isGroupAvailable = (key: string) => groups.has(key);
   const isAvailable = (tool: ClassifiedTool): boolean => {
     if (tool.kind === "internal") return true;
-    if (tool.kind === "extension") return mode === "mcp" || ledger.tools.has(tool.name) || allow.tools.has(tool.name);
-    return isGroupAvailable(tool.group!) || (mode === "tools" && (ledger.tools.has(tool.name) || allow.tools.has(tool.name)));
+    if (tool.group) return isGroupAvailable(tool.group) || (mode === "tools" && (ledger.tools.has(tool.name) || allow.tools.has(tool.name)));
+    // Ungrouped (no usable provenance) extension tool.
+    return mode === "mcp" || ledger.tools.has(tool.name) || allow.tools.has(tool.name);
   };
   return { groups, promoted, isAvailable, isGroupAvailable };
 }
-/** Identifiers still to be decided: tool names (`tools` mode) or namespace keys (`mcp` mode). */
+/** Identifiers still to be decided: tool names (`tools` mode) or group keys (`mcp` mode). */
 export function remaining(inventory: ToolInventory, mode: ToolFilterMode, avail: Availability): Set<string> {
   if (mode === "mcp") return new Set([...inventory.groups.keys()].filter((key) => !avail.isGroupAvailable(key)));
   return new Set(inventory.tools.filter((tool) => tool.kind !== "internal" && !avail.isAvailable(tool)).map((tool) => tool.name));
 }
 /**
- * Identifiers that belong in the ledger as "base" so that availability only ever grows: allowlisted tools/namespaces
+ * Identifiers that belong in the ledger as "base" so that availability only ever grows: allowlisted tools/groups
  * that are registered (removing an allowlist entry later never takes availability away) and, in `mcp` mode, every
- * extension tool (a later switch to `tools` mode must not remove them).
+ * ungrouped extension tool (a later switch to `tools` mode must not remove them; grouped ones are covered by their group).
  */
 export function baseGrowth(inventory: ToolInventory, mode: ToolFilterMode, ledger: AvailabilityLedger, allow: EffectiveAllowlists, avail: Availability): { tools: string[]; groups: string[] } {
   const groups = [...avail.groups].filter((key) => !ledger.groups.has(key));
   const tools = inventory.tools.filter((tool) => tool.kind !== "internal" && !ledger.tools.has(tool.name)
-    && (allow.tools.has(tool.name) || (mode === "mcp" && tool.kind === "extension"))).map((tool) => tool.name);
+    && (allow.tools.has(tool.name) || (mode === "mcp" && tool.kind === "extension" && !tool.group))).map((tool) => tool.name);
   return { tools, groups };
 }
 /** Declared (active) external tools that are not available, and which tools we previously withheld may return. */

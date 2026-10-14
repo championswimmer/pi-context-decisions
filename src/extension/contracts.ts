@@ -61,8 +61,14 @@ export interface LastToolDecision {
   errorCode?: string;
   usage?: DecisionUsage;
 }
-export interface ToolReportRow { name: string; kind: "internal" | "mcp" | "extension"; server?: string; exposure: string; state: "always" | "allowlisted" | "available" | "unavailable"; description: string }
-export interface ToolReportGroup { key: string; label: string; tools: number; toolNames: string[]; available: boolean; allowlisted: boolean; verified: boolean }
+export interface ToolReportRow {
+  name: string; kind: "internal" | "mcp" | "extension";
+  /** Canonical group key (`mcp__<server>` or `ext__<extension>`) and its label, when the tool belongs to a group. */
+  group?: string; groupLabel?: string;
+  /** MCP server label (only for `mcp` tools). */
+  server?: string; exposure: string; state: "always" | "allowlisted" | "available" | "unavailable"; description: string;
+}
+export interface ToolReportGroup { key: string; type: "mcp" | "extension"; label: string; tools: number; toolNames: string[]; available: boolean; allowlisted: boolean; verified: boolean }
 /** Names-only local view for `/decisions tools list|mcp list`, status and allowlist pickers. Makes no decision calls. */
 export interface ToolReport {
   supported: boolean;
@@ -72,7 +78,7 @@ export interface ToolReport {
   rows: ToolReportRow[];
   groups: ToolReportGroup[];
   hidden: number;
-  /** MCP-looking tools without an `mcp__` namespace are indistinguishable from extension tools. */
+  /** Extension tools without usable public provenance: they belong to no group and (in group mode) are never filtered. */
   ungrouped: number;
   withheld: number;
 }

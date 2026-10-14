@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { defaultSettings, loadSettings, updateSetting } from "../src/settings.ts";
 import { setModel } from "./helpers/settings-ui.ts";
 import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
+import type { SimToolInfo } from "./helpers/pi-sim.ts";
 import { extTool, mcpTool, toolSetup, resourceTools, type ToolHarness } from "./helpers/tool-fixture.ts";
 
 const last = (h: ToolHarness) => h.messages.at(-1)!;
@@ -34,8 +35,10 @@ test("tool settings: mode, cadence and scalars validate through the same strict 
   // The allowlists are edited by the editors, never by a scalar setting.
   assert.throws(() => updateSetting(defaultSettings(), "tools.alwaysAllowedTools", "x"), /Tool picker tab/);
 });
+// Tools with no usable provenance belong to no group, so the editor saves them by name.
+const ungrouped = (name: string): SimToolInfo => ({ name, description: `Does ${name}`, exposure: "direct" });
 test("allowlist editors: tool, MCP server and skill lists persist per scope, keep each other, and are names-only", async (t) => {
-  const h = await toolSetup(t, { tools: { enabled: false }, extra: [extTool("alpha"), extTool("zeta"), mcpTool("dev-radius", "q", "direct")] });
+  const h = await toolSetup(t, { tools: { enabled: false }, extra: [ungrouped("alpha"), ungrouped("zeta"), mcpTool("dev-radius", "q", "direct")] });
   await saveProjectAllowlist(h.root, { skills: ["skill-one"] });
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "zeta" });
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "alpha" });
@@ -43,13 +46,13 @@ test("allowlist editors: tool, MCP server and skill lists persist per scope, kee
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "alpha" });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"], "toggling removes");
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Project", toggle: "alpha" });
-  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers · Project", toggle: "dev-radius" });
-  assert.deepEqual(await loadProjectAllowlist(h.root), { names: ["skill-one"], tools: ["alpha"], mcpServers: ["dev-radius"], warnings: [] });
+  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Project", toggle: "dev-radius" });
+  assert.deepEqual(await loadProjectAllowlist(h.root), { names: ["skill-one"], tools: ["alpha"], mcpServers: ["mcp__dev_radius"], warnings: [] });
   const file = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8"));
-  assert.deepEqual(file, { alwaysAllowed: ["skill-one"], alwaysAllowedTools: ["alpha"], alwaysAllowedMcpServers: ["dev-radius"] });
+  assert.deepEqual(file, { alwaysAllowed: ["skill-one"], alwaysAllowedTools: ["alpha"], alwaysAllowedMcpServers: ["mcp__dev_radius"] });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"], "project saves leave the global list alone");
-  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers · Global", toggle: "dev-radius" });
-  assert.deepEqual((await saved(h)).tools.alwaysAllowedMcpServers, ["dev-radius"]);
+  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Global", toggle: "dev-radius" });
+  assert.deepEqual((await saved(h)).tools.alwaysAllowedMcpServers, ["mcp__dev_radius"], "groups are saved by their canonical key");
 });
 test("tools list and mcp list are local, names-only and make no decision calls; tool and server counts are honest", async (t) => {
   const h = await toolSetup(t, { extra: [extTool("ext_a"), mcpTool("dev-radius", "q", "codemode"), mcpTool("docs", "s", "direct"), { name: "hid", exposure: "hidden" }, ...resourceTools()], scores: { ext_a: 2 } });
@@ -58,10 +61,11 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
   await h.command("tools list");
   const report = last(h);
   assert.match(report, /Tools \(3 external, 5 internal always allowed, 1 hidden; filtering on · mode tools\)/);
-  assert.match(report, /ext_a · extension · direct · available/); assert.match(report, /mcp__dev_radius__q · MCP dev-radius · codemode · unavailable/);
+  assert.match(report, /ext_a · extension ext_a · direct · available/); assert.match(report, /mcp__dev_radius__q · MCP dev-radius · codemode · unavailable/);
   assert.doesNotMatch(report, /SECRET|parameters|instructions/);
   await h.command("mcp list");
-  assert.match(last(h), /MCP servers \(2, filtering on · mode tools\)/); assert.match(last(h), /dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
+  assert.match(last(h), /MCP servers and extensions \(3, filtering on · mode tools\)/); assert.match(last(h), /MCP dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
+  assert.match(last(h), /extension ext_a \(ext__ext_a\) · 1 tools/, "extensions are listed beside servers, by their canonical key");
   assert.match(last(h), /Tool picker cannot add them/); assert.match(last(h), /tools\.alwaysAllowedMcpServers/); assert.match(last(h), /\.pi\/pi-context-decisions\.json/); assert.match(last(h), /\/reload/);
   assert.equal(h.requests.length, calls, "listing never calls the decision model");
 });

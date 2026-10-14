@@ -7,6 +7,7 @@ import { DecisionError } from "../decision/errors.ts";
 import { SettingsError, updateSetting, validateBackendSelection } from "../settings.ts";
 import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist, type AllowlistScope, type ScopedSkill } from "../apps/allowlist.ts";
 import { rankSkills } from "../apps/relevance.ts";
+import { canonicalServerKey } from "../apps/tool-inventory.ts";
 import { projectAllowlistPath } from "../project-allowlist.ts";
 import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
@@ -181,7 +182,7 @@ function toolStatusLines(controller: Controller, settings: ReturnType<Controller
   const last = controller.getLastToolDecision();
   return [
     `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · threshold ${t.threshold} · max ${t.maxAdded} added per round · minimum ${t.minCandidates} · fail-${t.failMode}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
-    `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers global ${t.alwaysAllowedMcpServers.length}`,
+    `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
   ];
@@ -198,7 +199,7 @@ function normalizeKind(kind: AllowlistKind, values: Iterable<unknown>): string[]
   catch {
     throw new SettingsError(kind === "skills" ? "Allowlist names must be bounded, nonempty identifiers (at most 1000)"
       : kind === "tools" ? "Tool names must be 1-128 characters without whitespace or control characters (at most 1000)"
-      : "MCP server names must match [A-Za-z0-9_-]{1,64} (at most 1000)");
+      : "MCP server names, mcp__ namespace keys and ext__ extension keys must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix (at most 1000)");
   }
 }
 async function listNames(controller: Controller, ctx: CommandContext, scope: AllowlistScope, report = true, kind: AllowlistKind = "skills"): Promise<string[]> {
@@ -220,13 +221,39 @@ async function saveNames(controller: Controller, ctx: CommandContext, scope: All
   }
   statusSafely(controller, ctx);
 }
-/** Names-only editor items for tools and MCP servers. `scope` is the list's scope, not where the tool came from (that is not observable). */
-function toolPickerItems(report: ToolReport, kind: Exclude<AllowlistKind, "skills">, scope: AllowlistScope): ScopedSkill[] {
-  if (kind === "tools") {
-    return report.rows.filter((row) => row.kind !== "internal").map((row) => ({ name: row.name, description: `${row.server ? `[MCP server ${row.server}] ` : ""}${row.description}`, scope, disableModelInvocation: false }));
+/** The nested tool editor saves the tool list AND the group list (MCP servers and extensions) in one write per scope. */
+async function saveToolLists(controller: Controller, ctx: CommandContext, scope: AllowlistScope, tools: Iterable<string>, groups: Iterable<string>): Promise<void> {
+  const toolNames = normalizeKind("tools", tools);
+  const groupNames = normalizeKind("mcp", groups);
+  if (scope === "global") {
+    if (controller.getSettingsError()) throw new SettingsError("Repair settings before saving the global allowlist");
+    await controller.update((settings) => ({ ...settings, tools: { ...settings.tools, alwaysAllowedTools: toolNames, alwaysAllowedMcpServers: groupNames } }));
+  } else {
+    if (!ctx.cwd) throw new SettingsError("Project allowlist needs a working directory");
+    await controller.saveProjectAllowlist(ctx.cwd, { tools: toolNames, mcpServers: groupNames });
   }
-  return report.groups.map((group) => ({ name: /^[A-Za-z0-9_-]{1,64}$/u.test(group.label) ? group.label : group.key, scope, disableModelInvocation: false,
-    description: `MCP server ${group.label}. Tools: ${group.toolNames.join(", ")}` }));
+  statusSafely(controller, ctx);
+}
+/** Names-only editor items for tools and MCP servers / extensions. `scope` is the list's scope, not where the tool came from (that is not observable). */
+function toolPickerItems(report: ToolReport, kind: Exclude<AllowlistKind, "skills">, scope: AllowlistScope): ScopedSkill[] {
+  const typeOf = (key: string) => report.groups.find((group) => group.key === key)?.type;
+  if (kind === "tools") {
+    return report.rows.filter((row) => row.kind !== "internal").map((row) => {
+      const prefix = row.group && row.groupLabel ? `[${typeOf(row.group) === "extension" ? "extension" : "MCP server"} ${row.groupLabel}] ` : "";
+      return { name: row.name, description: `${prefix}${row.description}`, scope, disableModelInvocation: false };
+    });
+  }
+  // One row per group, MCP server or extension alike, named by its canonical key (what the group allowlist stores).
+  return report.groups.map((group) => ({ name: group.key, label: `${group.label} (${group.type === "mcp" ? "MCP server" : "extension"})`, scope, disableModelInvocation: false,
+    description: `${group.type === "mcp" ? "MCP server" : "Extension"} ${group.label}. Tools: ${group.toolNames.join(", ")}` }));
+}
+/** The nested tool editor's structure: built-in tools, then each group with ALL its (not truncated) member tools. */
+function toolTree(report: ToolReport, initialGroups: readonly string[]): NonNullable<AllowlistPickerDeps["tree"]> {
+  return {
+    internal: report.rows.filter((row) => row.kind === "internal").map((row) => ({ name: row.name, description: row.description })),
+    groups: report.groups.map((group) => ({ key: group.key, label: group.label, type: group.type, description: "", tools: report.rows.filter((row) => row.group === group.key).map((row) => row.name) })),
+    initialGroups,
+  };
 }
 /**
  * Inputs for the embedded allowlist editor. Every context read goes through `scopedContext`, and
@@ -236,7 +263,10 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
   isOpen: () => boolean, dialogSignal: AbortSignal, kind: AllowlistKind = "skills"): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">> {
   const base = scopedContext(ctx, dialogSignal, isOpen);
   const initial = await listNames(controller, base, scope, false, kind);
-  const items = kind === "skills" ? controller.getInventory() : toolPickerItems(await controller.describeTools(base), kind, scope);
+  const report = kind === "skills" ? undefined : await controller.describeTools(base);
+  const items = report ? toolPickerItems(report, kind as Exclude<AllowlistKind, "skills">, scope) : controller.getInventory();
+  // The tool editor also edits the group list (MCP servers and extensions); read it together with the tool list.
+  const initialGroups = kind === "tools" ? await listNames(controller, base, scope, false, "mcp") : undefined;
   const settings = controller.getSettings();
   let unavailable: string | undefined;
   if (controller.getSettingsError()) unavailable = "Repair settings before relevance ranking";
@@ -264,9 +294,11 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
     } finally { operation.close(); }
   };
   return {
-    scope, skills: items, initial, noun: KIND_LABEL[kind] as "skill" | "tool" | "MCP server",
+    scope, skills: items, initial, noun: kind === "mcp" ? "MCP server or extension" : KIND_LABEL[kind] as "skill" | "tool",
     locationLabel: scope === "global" ? "Pi user context-decisions settings.json" : projectAllowlistPath(base.cwd!),
-    save: (names) => saveNames(controller, base, scope, names, kind),
+    ...(kind === "mcp" ? { heading: "Always allowed MCP servers & extensions", normalize: canonicalServerKey } : {}),
+    ...(kind === "tools" && report ? { tree: toolTree(report, initialGroups ?? []), normalize: canonicalServerKey } : {}),
+    save: kind === "tools" && report ? (names, groups) => saveToolLists(controller, base, scope, names, groups ?? initialGroups ?? []) : (names) => saveNames(controller, base, scope, names, kind),
     ...(rank ? { rank, rankLabel: `${selectionLabel(settings.backend)} · explicit ranking may incur charges` } : { unavailable }),
   };
 }
@@ -388,15 +420,16 @@ function toolListLines(report: ToolReport, which: "tools" | "mcp"): string[] {
   const state = report.state === "on" ? `filtering on · mode ${report.mode}` : report.state === "enforce" ? "settings unreadable: enforcing this branch's ledger" : "filtering off: everything is available";
   const lines: string[] = [];
   if (which === "mcp") {
-    lines.push(`MCP servers (${report.groups.length}, ${state}); grouped only by Pi's public mcp__ namespace:`);
-    for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.verified ? "" : " · not registered by Pi's built-in MCP"}`);
+    lines.push(`MCP servers and extensions (${report.groups.length}, ${state}); grouped only by Pi's public metadata (mcp__ namespace for servers, sourceInfo for extensions):`);
+    for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${group.type === "mcp" ? "MCP" : "extension"} ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.type === "mcp" && !group.verified ? " · not registered by Pi's built-in MCP" : ""}`);
     if (report.groups.length > LIST_LIMIT) lines.push(`  … and ${report.groups.length - LIST_LIMIT} more`);
     lines.push("Resource-only or disconnected servers with no tools are not observable: the Tool picker cannot add them. Allowlist by name in tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers in the project .pi/pi-context-decisions.json, then /reload.");
+    if (report.ungrouped) lines.push(`${report.ungrouped} extension tools expose no usable provenance: they belong to no group and are never filtered in mcp mode.`);
     return lines;
   }
   const external = report.rows.filter((row) => row.kind !== "internal");
   lines.push(`Tools (${external.length} external, ${report.rows.length - external.length} internal always allowed, ${report.hidden} hidden; ${state}):`);
-  for (const row of external.slice(0, LIST_LIMIT)) lines.push(`  ${cleanLabel(row.name)} · ${row.kind === "mcp" ? `MCP ${cleanLabel(row.server ?? "")}` : "extension"} · ${row.exposure} · ${row.state}`);
+  for (const row of external.slice(0, LIST_LIMIT)) lines.push(`  ${cleanLabel(row.name)} · ${row.kind === "mcp" ? `MCP ${cleanLabel(row.server ?? "")}` : row.groupLabel ? `extension ${cleanLabel(row.groupLabel)}` : "extension"} · ${row.exposure} · ${row.state}`);
   if (external.length > LIST_LIMIT) lines.push(`  … and ${external.length - LIST_LIMIT} more`);
   if (report.withheld) lines.push(`${report.withheld} declared tools are currently withheld from the model on this branch.`);
   return lines;

@@ -504,7 +504,7 @@ test("Tool picker tab: fields in order, bool toggles, options and inline edit sa
   const text = await h.until(/Decisions › Tool picker/);
   assert.match(text, /Skill picker\s+Tool picker/); assert.doesNotMatch(text, /\[ (Skill|Tool) picker \]/);
   let at = -1;
-  for (const label of ["Tool filtering", "Mode", "Run picker", "Relevance threshold", "Max added per round", "Minimum candidates", "On failure", "Description size", "Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers · Global", "Always allowed MCP servers · Project"]) {
+  for (const label of ["Tool filtering", "Mode", "Run picker", "Relevance threshold", "Max added per round", "Minimum candidates", "On failure", "Description size", "Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers & extensions · Global", "Always allowed MCP servers & extensions · Project"]) {
     const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next;
   }
   assert.match(text, /Tool filtering\s+Off/);
@@ -578,7 +578,7 @@ test("entering the Tool picker tab loads the project tool and MCP counts", async
   const f = fakeOps({ async projectCount(signal) { f.calls.push("projectCount"); void signal; return late.promise; } });
   const h = mount(f, { rows: 40 }); h.press(KEY.tab); assert.match(h.text(), /Always allowed tools · Project\s+…/);
   late.resolve({ count: 1, tools: 4, mcpServers: 2 }); await tick();
-  assert.match(h.text(), /Always allowed tools · Project\s+4/); assert.match(h.text(), /Always allowed MCP servers · Project\s+2/);
+  assert.match(h.text(), /Always allowed tools · Project\s+4/); assert.match(h.text(), /Always allowed MCP servers & extensions · Project\s+2/);
   h.component.dispose();
 });
 
@@ -595,7 +595,7 @@ test("deep links to the tool picker open it as the sole root; tool and MCP allow
   const h = mount(f, { initialRoute: "tools" });
   assert.match(h.text(), /Decisions › Tool picker/); h.press(KEY.esc); assert.deepEqual(h.results, ["closed"]); h.component.dispose();
   const g = mount(f); g.component.navigate({ allowlist: "global", list: "mcp" }); await g.until(/Search:/);
-  assert.match(g.text(), /Always allowed MCP servers · Global/);
+  assert.match(g.text(), /Always allowed MCP servers & extensions · Global/);
   g.press(KEY.esc); assert.match(g.text(), /Decisions › Tool picker/); assert.equal(g.results.length, 0);
   g.component.navigate("main"); assert.match(g.text(), /Decisions › Skill picker/); g.component.dispose();
 });

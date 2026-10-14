@@ -27,7 +27,7 @@ export interface RelevanceSettings {
   concurrency: number;
   pinned: string[];
 }
-/** `tools`: every external tool is its own candidate. `mcp`: whole MCP namespaces are on or off; other extension tools are never filtered. */
+/** `tools`: every external tool is its own candidate. `mcp` (group mode): every MCP namespace and every extension (grouped by Pi's public `sourceInfo`) is on or off as a whole; only extension tools without public provenance are never filtered. */
 export type ToolFilterMode = "tools" | "mcp";
 export const TOOL_FILTER_MODES: readonly ToolFilterMode[] = ["tools", "mcp"];
 /** `initial`: pick once from the first user prompt. `prompt`: every new user prompt. `tool-round`: also after completed tool rounds. */
@@ -51,7 +51,7 @@ export interface ToolFilterSettings {
   maxDescriptionChars: number;
   /** Always-available external tools (names). Global; the project list lives in `.pi/pi-context-decisions.json`. */
   alwaysAllowedTools: string[];
-  /** Always-available MCP servers (server names or `mcp__` namespace keys). */
+  /** Always-available groups: MCP servers (names or `mcp__` namespace keys) and extensions (`ext__` keys). The setting keeps its original name. */
   alwaysAllowedMcpServers: string[];
 }
 export interface ContextDecisionsSettings {
@@ -179,7 +179,7 @@ function parseToolSettings(value: unknown, warnings?: string[]): ToolFilterSetti
   if (value.alwaysAllowedMcpServers !== undefined) {
     if (!Array.isArray(value.alwaysAllowedMcpServers)) throw new SettingsError("tools.alwaysAllowedMcpServers must be an array of MCP server names");
     try { result.alwaysAllowedMcpServers = normalizeServerAllowlist(value.alwaysAllowedMcpServers); }
-    catch { throw new SettingsError("MCP server allowlist names must match [A-Za-z0-9_-]{1,64} (at most 1000)"); }
+    catch { throw new SettingsError("MCP server / extension allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix (at most 1000)"); }
   }
   return result;
 }

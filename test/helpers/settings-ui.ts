@@ -90,7 +90,7 @@ export async function saveAllowlist(run: Run, ctx: CommandContext, options: { ta
         await until(component, /Search:/);
         if (options.toggle) { for (const char of options.toggle) component.handleInput!(char); component.handleInput!(KEY.down); component.handleInput!(KEY.space); }
         component.handleInput!(KEY.save);
-        await until(component, /Always-allowed (skill|tool|MCP server)s saved/);
+        await until(component, /Always-allowed .+ saved/);
       } finally { component.dispose?.(); settle("closed"); }
       return result;
     } } },
