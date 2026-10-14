@@ -10,6 +10,19 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v0.3.0...v1.0.0
 
+### [v1.1.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.1.0) — Minor release (2026-10-14)
+
+<!-- Release notes generated using configuration in .github/release.yml at v1.1.0 -->
+
+#### What's Changed
+##### Merged pull requests
+* feat!: drop /decisions setter subcommands in favor of the settings dialog by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/3
+* fix: settings tabs use a selected background; resource-only server guidance points to config files by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/5
+* feat: group extension tools like MCP servers in tool allowlists by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/4
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v1.0.1...v1.1.0
+
 ### 1.0.x
 
 #### [v1.0.1](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.0.1) — Patch release (2026-10-14)
@@ -30,8 +43,6 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 ##### Merged pull requests
 * Automate release changelogs and archive completed plans by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/1
 
-#### New Contributors
-* @championswimmer made their first contribution in https://github.com/championswimmer/pi-context-decisions/pull/1
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v0.2.0...v0.3.0
 
