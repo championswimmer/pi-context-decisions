@@ -1,5 +1,5 @@
 import { rankSkills, type RelevanceClient, type RelevanceItem, type RelevanceOptions } from "./relevance.ts";
-import { DEFAULT_RELEVANCE_THRESHOLD, safeCode, selectRelevant, validItems, validThreshold, type AdvertisedSkill } from "./skill-filter.ts";
+import { DEFAULT_RELEVANCE_THRESHOLD, pickMap, safeCode, selectRelevant, validItems, validThreshold, type AdditionPick, type AdvertisedSkill } from "./skill-filter.ts";
 
 /**
  * Additive skill picking: skills that are already advertised are never scored here, and nothing in
@@ -23,6 +23,8 @@ export interface SkillAdditionResult<T> {
   /** Scores were reused for an identical task; the decision backend was not called. */
   cached: boolean;
   items?: RelevanceItem[];
+  /** Raw score and threshold of each newly added skill (absent when nothing was scored). */
+  picks?: Map<string, AdditionPick>;
   /** The round failed open: every remaining candidate was added without scoring. */
   failedOpen?: boolean;
   /** Safe code only. */
@@ -107,5 +109,5 @@ export async function scoreAdditions<T extends AdvertisedSkill>(
   if (options.signal?.aborted) return cancelled();
   const { chosen, eligible } = selectRelevant(items, threshold, maxSkills);
   const byName = new Map(candidates.map((skill) => [skill.name, skill]));
-  return done({ added: chosen.map((item) => byName.get(item.name)!), eligible, cached, items });
+  return done({ added: chosen.map((item) => byName.get(item.name)!), eligible, cached, items, picks: pickMap(chosen, threshold) });
 }

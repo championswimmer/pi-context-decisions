@@ -32,7 +32,7 @@ test("tools mode, prompt cadence: withholds undecided declared tools before the 
   const { e } = await h.start("use ext_a please");
   assert.deepEqual(h.active(), [...CORE, "ext_a"], "internal tools untouched, undecided external tools removed, order preserved");
   assert.equal(h.sim.calls.setActiveTools, 1);
-  assert.deepEqual(h.ledger(), [{ v: 1, tools: ["ext_a"], withheld: ["ext_b", "ext_c"] }]);
+  assert.deepEqual(h.ledger(), [{ v: 1, tools: ["ext_a"], withheld: ["ext_b", "ext_c"], picks: { ext_a: { score: 2, threshold: 0.375 } } }]);
   assert.deepEqual(e.systemPromptOptions.selectedTools, ["read", "bash"], "selectedTools is never edited");
   assert.deepEqual(e.systemPromptOptions.sections, {});
   assert.deepEqual(await h.gate("ext_b"), { block: true, reason: h.gate && (await h.gate("ext_b"))!.reason });
@@ -45,7 +45,7 @@ test("tools mode, prompt cadence: withholds undecided declared tools before the 
   await h.start("now use ext_b");
   assert.deepEqual(h.scored(calls), ["ext_b", "ext_c"]);
   assert.deepEqual(h.active(), [...CORE, "ext_a", "ext_b"]);
-  assert.deepEqual(h.ledger().at(-1), { v: 1, tools: ["ext_b"], released: ["ext_b"] });
+  assert.deepEqual(h.ledger().at(-1), { v: 1, tools: ["ext_b"], released: ["ext_b"], picks: { ext_b: { score: 1.5, threshold: 0.375 } } });
   assert.equal(await h.gate("ext_b"), undefined); assert.match((await h.gate("ext_c"))!.reason, BLOCKED);
 });
 test("maxAdded caps new additions per round, ranked across candidates; the threshold is inclusive", async (t) => {
@@ -100,6 +100,8 @@ test("allowlists (global tool, project server): pins are never scored, are recor
   assert.deepEqual(h.scored(), ["ext_b", "mcp__dev_radius__q"], "an allowlisted tool and every tool of an allowlisted server skip scoring");
   assert.equal(h.ledger()[0].errorCode, undefined);
   assert.deepEqual(h.ledger()[0].tools, ["ext_a"]); assert.deepEqual(h.ledger()[0].groups, ["mcp__docs"]);
+  assert.deepEqual(h.ledger()[0].allowlisted, ["ext_a", "mcp__docs"], "allowlist grants are recorded as allowlisted, never with a pick");
+  assert.equal(h.ledger()[0].picks, undefined);
   assert.equal(await h.gate("mcp__docs__s"), undefined); assert.equal(await h.gate("ext_a"), undefined);
   assert.match((await h.gate("ext_b"))!.reason, BLOCKED, "the failed round (fail-closed) added nothing else");
   // Remove every allowlist entry: availability never shrinks.
@@ -202,7 +204,7 @@ test("turn_end keeps earlier drafts, appends ours, and writes nothing when nothi
   h.sim.registerTool(extTool("ext_late")); h.scores.ext_late = 2;
   const prior = { type: "custom", customType: "other-extension", data: { keep: true } };
   const { all } = await h.end({ priorEntries: [prior] });
-  assert.deepEqual(all[0], prior); assert.deepEqual((all[1] as { data: unknown }).data, { v: 1, tools: ["ext_late"] });
+  assert.deepEqual(all[0], prior); assert.deepEqual((all[1] as { data: unknown }).data, { v: 1, tools: ["ext_late"], picks: { ext_late: { score: 2, threshold: 0.375 } } });
   assert.equal(h.sim.calls.setActiveTools, setCalls, "an addition changes no declaration");
 });
 test("other extensions keep their activations: only candidates are withheld and only tools we withheld are restored", async (t) => {

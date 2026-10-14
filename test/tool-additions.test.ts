@@ -141,3 +141,12 @@ test("request payloads carry only the task and name/description entries (no extr
   await scoreToolAdditions("task", hostile, client, base);
   assert.doesNotMatch(JSON.stringify(requests), /SECRET/);
 });
+
+test("each added identifier carries its raw score and the threshold it was selected under; fail-open adds carry none", async () => {
+  const s = scripted({ a: 1, b: 2, c: 0.2 });
+  const result = await scoreToolAdditions("task", cand("a", "b", "c"), s.client, base);
+  assert.deepEqual([...result.picks], [["b", { score: 2, threshold: 0.5 }], ["a", { score: 1, threshold: 0.5 }]]);
+  const failing = await scoreToolAdditions("task", cand("a"), scripted({}, { before: () => { throw Object.assign(new Error("boom"), { code: "http" }); } }).client, { ...base, failMode: "open" });
+  assert.equal(failing.failedOpen, true);
+  assert.equal(failing.picks.size, 0);
+});

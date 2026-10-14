@@ -1,4 +1,5 @@
 import { formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-agent";
+import type { AdditionPick } from "../apps/skill-filter.ts";
 
 /**
  * Per-branch skill advertisement ledger. Everything here is DERIVED from the active session branch;
@@ -6,7 +7,7 @@ import { formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-age
  * context edits are all reflected exactly as Pi committed them.
  *
  * - `SKILLS_BASE_ENTRY` (`custom`, never sent to the model) records names that belong to the stable
- *   `systemPromptOptions.skills` base: always-allowed skills and full-inventory advertisement.
+ *   `systemPromptOptions.skills` base: always-allowed skills (`pinned: true`, bypass scoring) and full-inventory advertisement.
  * - `SKILLS_MESSAGE_TYPE` (`custom_message`, sent to the model as user-role context) carries newly
  *   added skill descriptions, built with Pi's PUBLIC `formatSkillsForPrompt`.
  */
@@ -31,7 +32,8 @@ export interface LedgerState {
   /** Added names no longer visible (summarized away by compaction or edited out); re-delivered, never re-scored. */
   lost: string[];
 }
-export interface SkillsDeltaDetails { v: 1; added: string[]; redelivered: string[] }
+/** `picks` (numbers only) holds the raw score and threshold of each NEWLY added skill; re-deliveries and older records have none. */
+export interface SkillsDeltaDetails { v: 1; added: string[]; redelivered: string[]; picks?: Record<string, AdditionPick> }
 
 function names(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -89,15 +91,20 @@ export interface SkillsDelta {
  * locations in Pi's canonical format are included; skill bodies, transcripts and tool output never are.
  * Returns undefined when nothing visible to the model would be advertised.
  */
-export function buildSkillsDelta(added: readonly Skill[], redelivered: readonly Skill[], reader: "read" | "bash"): SkillsDelta | undefined {
+export function buildSkillsDelta(added: readonly Skill[], redelivered: readonly Skill[], reader: "read" | "bash", picks?: ReadonlyMap<string, AdditionPick>): SkillsDelta | undefined {
   const skills = [...added, ...redelivered].filter((skill) => !skill.disableModelInvocation);
   if (skills.length === 0) return undefined;
   const block = formatSkillsForPrompt(skills, reader).trim();
   if (!block) return undefined;
+  const addedNames = added.filter((skill) => !skill.disableModelInvocation).map((skill) => skill.name);
+  const scored = addedNames.filter((name) => picks?.has(name));
   return {
     customType: SKILLS_MESSAGE_TYPE,
     content: `Additional skills are now available; previously listed skills remain available.\n\n${block}`,
     display: false,
-    details: { v: 1, added: added.filter((skill) => !skill.disableModelInvocation).map((skill) => skill.name), redelivered: redelivered.filter((skill) => !skill.disableModelInvocation).map((skill) => skill.name) },
+    details: {
+      v: 1, added: addedNames, redelivered: redelivered.filter((skill) => !skill.disableModelInvocation).map((skill) => skill.name),
+      ...(scored.length ? { picks: Object.fromEntries(scored.map((name) => [name, { ...picks!.get(name)! }])) } : {}),
+    },
   };
 }

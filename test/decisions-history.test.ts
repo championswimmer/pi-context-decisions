@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SessionManager, formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { historyBatchLines, historyReportLines, readDecisionsHistory } from "../src/extension/decisions-history.ts";
+import { historyBatchLines, historyReportLines, qualifyingMark, readDecisionsHistory } from "../src/extension/decisions-history.ts";
 import { SKILLS_BASE_ENTRY, SKILLS_MESSAGE_TYPE, buildSkillsDelta } from "../src/extension/skill-ledger.ts";
 import { TOOLS_LEDGER_ENTRY, TOOLS_NOTICE_TYPE, toolRecords, buildToolNotice } from "../src/extension/tool-ledger.ts";
 
@@ -27,7 +27,7 @@ test("history groups committed additions before assistant responses, skips empty
   s.appendCustomMessageEntry(TOOLS_NOTICE_TYPE, "none", false, { v: 1, tools: [], groups: [] });
   const h = readDecisionsHistory(s);
   assert.deepEqual(h.batches.map((b) => [b.turn, b.answered]), [[1, true], [3, true]]);
-  assert.deepEqual(h.batches[0].items, { skills: ["alpha"], base: [], redelivered: [], tools: ["direct"], groups: ["mcp__srv", "ext__pkg"], noticeTools: ["indirect"], noticeGroups: ["mcp__srv"] });
+  assert.deepEqual(h.batches[0].items, { skills: ["alpha"], pinned: [], base: [], redelivered: [], tools: ["direct"], groups: ["mcp__srv", "ext__pkg"], noticeTools: ["indirect"], noticeGroups: ["mcp__srv"] });
   assert.deepEqual(h.batches[1].items.skills, ["beta"]);
   assert.deepEqual(h.batches[1].items.redelivered, ["alpha"]);
   assert.deepEqual(h.batches[1].items.tools, ["late"]);
@@ -147,6 +147,59 @@ test("oversized fail-open skill deltas and re-deliveries retain every name emitt
   assert.equal(h.batches.length, 2);
   assert.deepEqual(h.batches[0].items.skills, expected);
   assert.deepEqual(h.batches[1].items.redelivered, expected);
-  for (const batch of h.batches) assert.equal(historyBatchLines(batch).at(-1), "  oversized-1000");
+  assert.equal(historyBatchLines(h.batches[0]).at(-1), "  oversized-1000  not scored", "fail-open adds have no recorded pick");
+  assert.equal(historyBatchLines(h.batches[1]).at(-1), "  oversized-1000", "re-delivery is not a pick and shows the bare name");
   assert.match(historyReportLines(h).at(-1)!, /report truncated/, "report bounds stay independent of the complete model");
+});
+
+const skillNamed = (name: string) => ({ name, description: "PRIVATE", filePath: `/PRIVATE/${name}/SKILL.md`, disableModelInvocation: false } as Skill);
+
+test("added items show `value >= threshold` from recorded picks; pinned/allowlisted show no number; a pick with no record is unscored", () => {
+  const s = session();
+  s.appendCustomMessageEntry(SKILLS_MESSAGE_TYPE, "PRIVATE descriptions", false, { v: 1, added: ["scored", "unrecorded"], redelivered: [], picks: { scored: { score: 1.6, threshold: 0.375 } } });
+  s.appendCustomEntry(SKILLS_BASE_ENTRY, { v: 1, names: ["always"], pinned: true });
+  s.appendMessage({ role: "system", content: "", sections: { skills: formatSkillsForPrompt([skillNamed("always")]) }, timestamp: 0 });
+  record(s, { v: 1, tools: ["t-score", "t-allow", "t-none"], groups: ["mcp__srv"], picks: { "t-score": { score: 0, threshold: 0.375 }, mcp__srv: { score: 2, threshold: 0.5 } }, allowlisted: ["t-allow"] });
+  assistant(s);
+  const h = readDecisionsHistory(s);
+  const lines = historyBatchLines(h.batches[0]);
+  for (const line of ["  scored  0.80 >= 0.375", "  unrecorded  not scored", "  always  pinned/allowlisted", "  t-score  0.00 >= 0.375", "  t-allow  allowlisted", "  t-none  not scored", "  mcp__srv  1.00 >= 0.5"]) {
+    assert.ok(lines.includes(line), `missing line: ${line}`);
+  }
+  assert.ok(historyReportLines(h).includes("  scored  0.80 >= 0.375"), "RPC/print report shows the same values");
+  for (const line of lines) assert.doesNotMatch(line, /PRIVATE|label|beat|threshold|score:/, "added lines carry only the numbers, never labels");
+});
+
+test("malformed or unexpected pick records never produce a number", () => {
+  const s = session();
+  record(s, { v: 1, tools: ["constructor", "bad-score", "bad-threshold", "string-score", "nan", "ok"], picks: JSON.parse('{"constructor": 1, "bad-score": {"score": 3, "threshold": 0.375}, "bad-threshold": {"score": 1, "threshold": 2}, "string-score": {"score": "1", "threshold": 0.375}, "nan": {"score": null, "threshold": 0.375}, "ok": {"score": 1, "threshold": 0.375, "extra": "PRIVATE"}}') });
+  assistant(s);
+  const lines = historyBatchLines(readDecisionsHistory(s).batches[0]);
+  for (const name of ["constructor", "bad-score", "bad-threshold", "string-score", "nan"]) assert.ok(lines.includes(`  ${name}  not scored`), name);
+  assert.ok(lines.includes("  ok  0.50 >= 0.375"));
+  assert.doesNotMatch(lines.join("\n"), /PRIVATE/);
+});
+
+test("the value is the raw score halved in its shortest exact decimal; the stored threshold is shown verbatim", () => {
+  assert.equal(qualifyingMark(1.6, 0.375), "0.80 >= 0.375", "the documented example");
+  assert.equal(qualifyingMark(0.75, 0.375), "0.375 >= 0.375", "a value equal to the threshold qualifies");
+  assert.equal(qualifyingMark(0, 0.375), "0.00 >= 0.375");
+  assert.equal(qualifyingMark(2, 1), "1.00 >= 1");
+  assert.equal(qualifyingMark(0.6668, 0.3333), "0.3334 >= 0.3333", "the shown value keeps the exact comparison, not a rounded tie");
+  assert.equal(qualifyingMark(0.6664, 0.3333), "0.3332 >= 0.3333", "a value just below the threshold is shown below it");
+  assert.equal(qualifyingMark(1.4166666666666667, 0.375), "0.71 >= 0.375", "more than ten exact places rounds, keeping the direction honest");
+});
+
+test("tool picks travel with the chunk record that lists their name, so chunked ledgers keep every value", () => {
+  const s = session();
+  const tools = Array.from({ length: 1001 }, (_, n) => `p${n}`);
+  const picks = new Map<string, { score: number; threshold: number }>(tools.slice(999).map((name): [string, { score: number; threshold: number }] => [name, { score: 1, threshold: 0.375 }]));
+  const records = toolRecords({ tools, picks, allowlisted: ["p1000"] });
+  assert.deepEqual(records.map((data) => Object.keys(data.picks ?? {})), [["p999"], ["p1000"]]);
+  assert.deepEqual(records[1].allowlisted, ["p1000"]);
+  for (const data of records) record(s, data);
+  const lines = historyBatchLines(readDecisionsHistory(s).batches[0]);
+  assert.ok(lines.includes("  p999  0.50 >= 0.375"));
+  assert.ok(lines.includes("  p1000  0.50 >= 0.375"));
+  assert.ok(lines.includes("  p0  not scored"));
 });
