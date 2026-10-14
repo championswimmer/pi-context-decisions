@@ -12,6 +12,7 @@ import { defaultSettings, saveSettings, type ContextDecisionsSettings, type Rele
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 import { SimSession, advertised, deltaMessages, simHost, turnEnd } from "./helpers/pi-sim.ts";
+import { setSetting } from "./helpers/settings-ui.ts";
 
 const COUNT = 12;
 const makeSkills = (count = COUNT): Skill[] => Array.from({ length: count }, (_, i) => ({
@@ -62,6 +63,8 @@ async function setup(t: { after(fn: () => Promise<void>): void }, options: Optio
     },
     end: (turn: Parameters<typeof turnEnd>[2] = {}) => turnEnd(sim, ctx, turn),
     async command(args: string) { await sim.command(args, ctx); },
+    /** A settings change through the real RPC settings menu (the dialog's save path); booleans toggle. */
+    set: (key: string, value?: string) => setSetting((args, c) => sim.command(args, c), ctx, key, value),
     deltas: () => deltaMessages(sim.session),
     appended: () => sim.appended,
     names: (entry: { details?: unknown }) => (entry.details as { added: string[] }).added,
@@ -113,7 +116,7 @@ test("a stale or aborted round commits nothing: the ledger comes only from commi
   const e = h.event("task");
   const pending = h.sim.emit("before_agent_start", e, h.ctx);
   await new Promise((resolve) => setTimeout(resolve, 5));
-  await h.command("relevance maxSkills 4"); // saving settings supersedes the in-flight round
+  await h.set("relevance.maxSkills", "4"); // saving settings supersedes the in-flight round
   await pending;
   assert.deepEqual(h.deltas(), [], "a superseded round appends no delta");
   assert.deepEqual([...readLedger(h.sim.session).added], []);
@@ -148,7 +151,7 @@ test("disabled, unconfigured and below-minimum keep everything advertised and th
   const first = await h.start("task");
   assert.equal(h.requests.length, 0); assert.equal(first.shown().length, COUNT); assert.deepEqual(h.deltas(), []);
   assert.deepEqual([...readLedger(h.sim.session).base].sort(), h.inventory.map((s) => s.name).sort());
-  await h.command("relevance minCandidates 0");
+  await h.set("relevance.minCandidates", "0");
   const later = await h.start("task two");
   assert.equal(h.requests.length, 0, "everything was already advertised: filtering later cannot score or drop anything");
   assert.equal(later.shown().length, COUNT); assert.equal(later.system.length, COUNT, "the stable base still lists them all");
@@ -156,10 +159,13 @@ test("disabled, unconfigured and below-minimum keep everything advertised and th
 test("disabled and unconfigured also record exposure; re-enabling never removes skills the model saw", async (t) => {
   for (const mode of ["disabled", "unconfigured"] as const) {
     const h = await setup(t, mode === "unconfigured" ? { unconfigured: true } : {});
-    if (mode === "disabled") await h.command("disable");
+    if (mode === "disabled") await h.set("enabled");
     const off = await h.start("task");
     assert.equal(off.shown().length, COUNT, mode);
-    if (mode === "disabled") await h.command("enable"); else await h.command("model pi fixture classifier");
+    if (mode === "disabled") await h.set("enabled"); else {
+      await saveSettings({ ...defaultSettings(), backend: { backend: "pi", provider: "fixture", id: "classifier" }, relevance: { ...defaultSettings().relevance, minCandidates: 0, maxSkills: 3 } }, h.path);
+      await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
+    }
     const on = await h.start("task two");
     assert.equal(on.shown().length, COUNT, `${mode}: nothing dropped`); assert.equal(h.requests.length, 0);
   }
@@ -350,7 +356,7 @@ test("turn_end never starts while another pass is still running, and a settings 
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual((await h.end({ toolResults: TOOL })).drafts, [], "busy: no duplicate pass");
   assert.equal(h.requests.length, 1);
-  await h.command("relevance maxSkills 5"); await pending;
+  await h.set("relevance.maxSkills", "5"); await pending;
   assert.deepEqual(h.deltas(), []);
 });
 test("a stale turn_end round (settings saved mid-pass) commits no entry and records nothing", async (t) => {
@@ -360,7 +366,7 @@ test("a stale turn_end round (settings saved mid-pass) commits no entry and reco
   const pending = h.end({ toolResults: TOOL, pendingMessages: [{ role: "user", content: "second task", timestamp: 7 }] });
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(h.requests.length, 2, "the queued task started a pass");
-  await h.command("relevance threshold 0.4");
+  await h.set("relevance.threshold", "0.4");
   const result = await pending;
   assert.deepEqual(result.drafts, []); assert.deepEqual(h.deltas().map(h.names), [nameList(0, 1, 2)], "only the committed prompt round is on the branch");
   assert.ok(h.signals.at(-1)!.aborted, "the superseded decision was cancelled");
@@ -394,7 +400,7 @@ test("a late answer from a backend that ignores cancellation is stale after a se
     const pending = boundary === "prompt" ? h.start("task") : (async () => { h.behavior.gate = undefined; await h.start("first"); h.behavior.gate = new Promise<void>((resolve) => { release = resolve; });
       return h.end({ toolResults: TOOL, pendingMessages: [{ role: "user", content: "queued", timestamp: 9 }] }); })();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    await h.command("relevance maxSkills 5");   // supersedes the pass; the stubborn backend still answers
+    await h.set("relevance.maxSkills", "5");   // supersedes the pass; the stubborn backend still answers
     release(); const outcome = await pending;
     const committed = h.deltas().map(h.names);
     assert.deepEqual(committed, boundary === "prompt" ? [] : [nameList(0, 1, 2)], `${boundary}: the superseded round committed nothing`);
@@ -478,18 +484,18 @@ test("session_tree clears transient task state: no tool-round pick from the prev
 test("no read/bash: nothing is recorded as exposed (Pi omits the section), so a later run with a reader still scores everything", async (t) => {
   for (const mode of ["unconfigured", "disabled", "below-minimum"] as const) {
     const h = await setup(t, { tools: ["edit"], ...(mode === "unconfigured" ? { unconfigured: true } : {}), ...(mode === "below-minimum" ? { relevance: { minCandidates: 20 } } : {}), settings: { globalAllowlist: ["skill-9"] } });
-    if (mode === "disabled") await h.command("disable");
+    if (mode === "disabled") await h.set("enabled");
     const blind = await h.start("task");
     assert.deepEqual(h.appended(), [], `${mode}: no base record without a reader`);
     assert.equal(blind.system.length, COUNT, `${mode}: Pi's array is left alone`);
     assert.equal(h.requests.length, 0);
     h.sim.tools.active = ["read", "bash"];
-    if (mode === "disabled") await h.command("enable");
+    if (mode === "disabled") await h.set("enabled");
     if (mode === "unconfigured") {
       await saveSettings({ ...defaultSettings(), globalAllowlist: ["skill-9"], backend: { backend: "pi", provider: "fixture", id: "classifier" }, relevance: { ...defaultSettings().relevance, minCandidates: 0, maxSkills: 3 } }, h.path);
       await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
     }
-    if (mode === "below-minimum") await h.command("relevance minCandidates 0");
+    if (mode === "below-minimum") await h.set("relevance.minCandidates", "0");
     const sighted = await h.start("task again");
     assert.ok(h.requests.length >= 1, `${mode}: scoring happens once a reader exists`);
     assert.deepEqual(sighted.shown(), ["skill-0", "skill-1", "skill-2", "skill-9"], mode);
@@ -522,7 +528,7 @@ test("settings saved or the run aborted while the allowlist is being read: no ba
     let release!: () => void; h.behavior.allowlistGate = new Promise<void>((resolve) => { release = resolve; });
     const pending = h.start("task");
     await new Promise((resolve) => setTimeout(resolve, 5));
-    if (cause === "settings") await h.command("relevance maxSkills 5"); else abort.abort();
+    if (cause === "settings") await h.set("relevance.maxSkills", "5"); else abort.abort();
     release(); await pending;
     assert.deepEqual(h.appended(), [], cause); assert.equal(h.requests.length, 0, cause); assert.deepEqual(h.deltas(), [], cause);
   }

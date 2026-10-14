@@ -1,72 +1,55 @@
-// `/decisions tools|mcp ...` headless/RPC commands, persistence, validation and names-only reports.
+// Tool/MCP settings through the dialog's save paths (RPC menus, terminal editors), plus the read-only `/decisions tools|mcp list` reports.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { loadSettings } from "../src/settings.ts";
-import { loadProjectAllowlist, projectAllowlistPath } from "../src/project-allowlist.ts";
+import { defaultSettings, loadSettings, updateSetting } from "../src/settings.ts";
+import { setModel } from "./helpers/settings-ui.ts";
+import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
 import { extTool, mcpTool, toolSetup, resourceTools, type ToolHarness } from "./helpers/tool-fixture.ts";
 
 const last = (h: ToolHarness) => h.messages.at(-1)!;
 const saved = async (h: ToolHarness) => (await loadSettings(h.path)).settings;
 
-test("tools on/off persists, never selects a model and never touches skill filtering; defaults stay off", async (t) => {
+test("the tool picker toggle persists, never selects a model and never touches skill filtering; defaults stay off", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false }, unconfigured: true, skills: true });
-  await h.command("tools on");
+  await h.set("tools.enabled");
   assert.equal((await saved(h)).tools.enabled, true); assert.equal((await saved(h)).backend, null, "enabling tool filtering never selects a model");
-  assert.match(last(h), /Tool filtering enabled\. No decision model is selected/);
   assert.equal((await saved(h)).relevance.enabled, true, "skill filtering is untouched");
-  await h.command("tools off"); assert.equal((await saved(h)).tools.enabled, false);
-  await h.command("model none");
+  await h.set("tools.enabled"); assert.equal((await saved(h)).tools.enabled, false);
+  await setModel((args, ctx) => h.sim.command(args, ctx), h.ctx, "none");
   assert.equal((await saved(h)).tools.enabled, false, "selecting a model never enables tool filtering");
 });
-test("tools settings: mode, cadence and scalars validate through the same strict rules; bad input changes nothing", async (t) => {
+test("tool settings: mode, cadence and scalars validate through the same strict rules; bad input changes nothing", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
-  await h.command("tools mode mcp"); await h.command("tools cadence initial"); await h.command("tools threshold 0.5"); await h.command("tools maxAdded 3");
-  await h.command("tools minCandidates 2"); await h.command("tools failMode open"); await h.command("tools maxDescriptionChars 120");
+  await h.set("tools.mode", "mcp"); await h.set("tools.cadence", "initial"); await h.set("tools.threshold", "0.5"); await h.set("tools.maxAdded", "3");
+  await h.set("tools.minCandidates", "2"); await h.set("tools.failMode", "open"); await h.set("tools.maxDescriptionChars", "120");
   assert.deepEqual({ ...(await saved(h)).tools }, { enabled: false, mode: "mcp", cadence: "initial", threshold: 0.5, maxAdded: 3, minCandidates: 2, failMode: "open", maxDescriptionChars: 120, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
-  for (const bad of ["tools mode everything", "tools cadence sometimes", "tools threshold 2", "tools threshold -1", "tools maxAdded 1001", "tools maxDescriptionChars 0", "tools bogus 1", "tools alwaysAllowedTools x", "tools mode"]) {
+  for (const [key, bad] of [["tools.threshold", "2"], ["tools.threshold", "-1"], ["tools.maxAdded", "1001"], ["tools.maxDescriptionChars", "0"], ["tools.mode", "everything"], ["tools.cadence", "sometimes"]] as const) {
     const before = JSON.stringify(await saved(h));
-    await h.command(bad);
-    assert.equal(JSON.stringify(await saved(h)), before, bad); assert.ok(h.messages.length > 0);
+    await h.set(key, bad);
+    assert.equal(JSON.stringify(await saved(h)), before, `${key} ${bad}`);
   }
+  assert.ok(h.messages.length >= 4, "numeric validation errors are reported");
   assert.doesNotMatch(JSON.stringify(h.messages), /PRIVATE|SECRET/);
+  // The allowlists are edited by the editors, never by a scalar setting.
+  assert.throws(() => updateSetting(defaultSettings(), "tools.alwaysAllowedTools", "x"), /Tool picker tab/);
 });
-test("tools allow: global and project lists persist separately, validate names, preserve each other and the skill list, and add/remove/clear/list work", async (t) => {
-  const h = await toolSetup(t, { tools: { enabled: false } });
-  await h.command("tools allow global add zeta alpha alpha");
+test("allowlist editors: tool, MCP server and skill lists persist per scope, keep each other, and are names-only", async (t) => {
+  const h = await toolSetup(t, { tools: { enabled: false }, extra: [extTool("alpha"), extTool("zeta"), mcpTool("dev-radius", "q", "direct")] });
+  await saveProjectAllowlist(h.root, { skills: ["skill-one"] });
+  await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "zeta" });
+  await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "alpha" });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["alpha", "zeta"]);
-  await h.command("tools allow global list"); assert.match(last(h), /Always-allowed tools, global \(2\): alpha, zeta/);
-  await h.command("tools allow global remove alpha"); assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"]);
-  await h.command("allow project add skill-one");
-  await h.command("tools allow project add proj_tool"); await h.command("mcp allow project add dev-radius");
-  assert.deepEqual(await loadProjectAllowlist(h.root), { names: ["skill-one"], tools: ["proj_tool"], mcpServers: ["dev-radius"], warnings: [] });
+  await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "alpha" });
+  assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"], "toggling removes");
+  await h.allowlist({ tab: "tools", row: "Always allowed tools · Project", toggle: "alpha" });
+  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers · Project", toggle: "dev-radius" });
+  assert.deepEqual(await loadProjectAllowlist(h.root), { names: ["skill-one"], tools: ["alpha"], mcpServers: ["dev-radius"], warnings: [] });
   const file = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8"));
-  assert.deepEqual(file, { alwaysAllowed: ["skill-one"], alwaysAllowedTools: ["proj_tool"], alwaysAllowedMcpServers: ["dev-radius"] });
-  await h.command("allow project clear"); assert.deepEqual((await loadProjectAllowlist(h.root)).tools, ["proj_tool"], "clearing skills keeps the tool list");
-  await h.command("tools allow project clear"); assert.deepEqual((await loadProjectAllowlist(h.root)).tools, []);
-  assert.deepEqual((await loadProjectAllowlist(h.root)).mcpServers, ["dev-radius"]);
-  assert.ok(JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8")).alwaysAllowed, "v0.3.0 readers still find alwaysAllowed");
-  for (const bad of ["tools allow global add bad\u0007name", `tools allow global add ${"x".repeat(129)}`, "tools allow nowhere list", "tools allow global add", "tools allow global frobnicate x"]) {
-    const before = JSON.stringify(await saved(h)); await h.command(bad); assert.equal(JSON.stringify(await saved(h)), before, bad);
-  }
-  assert.ok(h.messages.some((message) => /Tool names must be 1-128 characters/.test(message)));
-});
-test("mcp allow: server names validate, `-` and `_` spellings are one server, list and remove fold the same way", async (t) => {
-  const h = await toolSetup(t, { tools: { enabled: false } });
-  await h.command("mcp allow global add dev-radius dev_radius docs");
-  assert.deepEqual((await saved(h)).tools.alwaysAllowedMcpServers, ["dev-radius", "docs"]);
-  await h.command("mcp allow global remove dev_radius"); assert.deepEqual((await saved(h)).tools.alwaysAllowedMcpServers, ["docs"]);
-  for (const bad of ["mcp allow global add a.b", "mcp allow global add ../x", `mcp allow global add ${"s".repeat(65)}`, "mcp list extra", "mcp"]) {
-    const before = JSON.stringify(await saved(h)); await h.command(bad); assert.equal(JSON.stringify(await saved(h)), before, bad);
-  }
-  assert.ok(h.messages.some((message) => /MCP server names must match/.test(message)));
-});
-test("in mcp mode, allowlisting one tool of an MCP server says it promotes the whole server", async (t) => {
-  const h = await toolSetup(t, { tools: { mode: "mcp", enabled: true }, extra: [mcpTool("dev-radius", "q", "direct"), mcpTool("dev-radius", "r")] });
-  await h.command("tools allow global add mcp__dev_radius__q");
-  assert.match(last(h), /makes the whole MCP server available: dev-radius/);
-  const quiet = await toolSetup(t, { extra: [mcpTool("dev-radius", "q", "direct")] });
-  await quiet.command("tools allow global add mcp__dev_radius__q"); assert.doesNotMatch(last(quiet), /whole MCP server/);
+  assert.deepEqual(file, { alwaysAllowed: ["skill-one"], alwaysAllowedTools: ["alpha"], alwaysAllowedMcpServers: ["dev-radius"] });
+  assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"], "project saves leave the global list alone");
+  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers · Global", toggle: "dev-radius" });
+  assert.deepEqual((await saved(h)).tools.alwaysAllowedMcpServers, ["dev-radius"]);
 });
 test("tools list and mcp list are local, names-only and make no decision calls; tool and server counts are honest", async (t) => {
   const h = await toolSetup(t, { extra: [extTool("ext_a"), mcpTool("dev-radius", "q", "codemode"), mcpTool("docs", "s", "direct"), { name: "hid", exposure: "hidden" }, ...resourceTools()], scores: { ext_a: 2 } });
@@ -79,7 +62,7 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
   assert.doesNotMatch(report, /SECRET|parameters|instructions/);
   await h.command("mcp list");
   assert.match(last(h), /MCP servers \(2, filtering on · mode tools\)/); assert.match(last(h), /dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
-  assert.match(last(h), /allowlist them by name/);
+  assert.match(last(h), /allowlist them by name in the \/decisions Tool picker tab/);
   assert.equal(h.requests.length, calls, "listing never calls the decision model");
 });
 test("status shows tool filtering lines and the not-a-sandbox sentence; off says opt-in", async (t) => {
@@ -108,7 +91,7 @@ test("RPC mode keeps select/input menus for the tools group and never calls cust
     void answers; return want(options);
   };
   ctx.ui.input = async () => inputs.shift();
-  await h.command("settings");
+  await h.command("");
   const s = await saved(h);
   assert.deepEqual([s.tools.enabled, s.tools.mode, s.tools.threshold], [true, "mcp", 0.6]);
   assert.ok(picks.some((title) => /Tools & MCP settings/.test(title)));

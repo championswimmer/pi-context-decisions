@@ -38,7 +38,7 @@ export interface AdvancedField {
   options?: readonly AdvancedOption[];
 }
 /**
- * Every relevance knob except `pinned`, which stays on the headless pin/unpin commands. The four picking
+ * Every relevance knob except `pinned`, which stays on the `pin`/`unpin` commands. The four picking
  * controls come first (threshold, shard size, max added per round, cadence); safety limits follow.
  */
 export const ADVANCED_FIELDS: readonly AdvancedField[] = [

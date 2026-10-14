@@ -7,7 +7,8 @@ import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { pickerEntries } from "../src/extension/commands.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
-import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
+import { defaultSettings, loadSettings, saveSettings, updateSetting } from "../src/settings.ts";
+import { setModel, setSetting } from "./helpers/settings-ui.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
 
 async function fixture(t: { after(fn: () => Promise<void>): void }, options: { ui?: boolean; env?: Record<string, string | undefined>; registry?: Partial<ExtensionRegistry> } = {}) {
@@ -38,13 +39,18 @@ async function fixture(t: { after(fn: () => Promise<void>): void }, options: { u
   const pi: ExtensionHost = { on: (() => () => {}) as ExtensionAPI["on"], registerCommand(name, command) { commands.set(name, command); }, appendEntry() {}, getActiveTools: () => [] };
   registerContextDecisions(pi, { settingsPath: path, env: options.env ?? {}, report(_ctx, message) { messages.push(message); } });
   const command = async (args: string) => commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext);
-  return { path, messages, dialogs, picks, inputs, lookups, commands, ctx, command, inference: () => inference };
+  const run = (args: string, c: CommandContext) => commands.get("decisions")!.handler(args, c as ExtensionCommandContext);
+  /** Settings changes through the RPC menus (the dialog's save path); booleans toggle. */
+  const set = (key: string, value?: string) => setSetting(run, ctx, key, value);
+  const model = (label: string) => setModel(run, ctx, label);
+  const menu = (...choices: (string | undefined | ((options: string[]) => string | undefined))[]) => { picks.push(...choices, "Done"); return command(""); };
+  return { path, messages, dialogs, picks, inputs, lookups, commands, ctx, command, set, model, menu, inference: () => inference };
 }
 
+const row = (prefix: string) => (options: string[]) => options.find((label) => label.startsWith(prefix));
 test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits under Advanced…", async (t) => {
   const h = await fixture(t, { ui: true });
-  h.picks.push((choices) => choices.find((label) => label.startsWith("Context decisions:")), "Advanced…", "Back", "Done");
-  await h.command("");
+  await h.menu(row("Context decisions:"), "Advanced…", "Back");
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
   assert.match(h.dialogs[0].title, /settings/);
@@ -59,25 +65,42 @@ test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits
   assert.equal((await loadSettings(h.path)).settings.enabled, false);
   assert.equal(h.inputs.length, 0); assert.equal(h.inference(), 0);
 });
-test("RPC /decisions relevance opens Advanced directly and edits validate", async (t) => {
+test("the setter subcommands are gone: each is rejected with the usage line, changes nothing and opens nothing", async (t) => {
+  const h = await fixture(t);
+  const before = JSON.stringify((await loadSettings(h.path)).settings);
+  for (const args of ["settings", "settings enabled false", "relevance", "relevance threshold 0.5", "provider", "provider openai", "model none", "model pi custom local",
+    "enable", "disable", "allow global list", "allow project add x", "allowlist global", "tools", "tools on", "tools mode mcp", "tools allow global list", "mcp", "mcp allow global add x", "bogus"]) {
+    await h.command(args);
+    assert.match(h.messages.at(-1)!, /^Use \/decisions( status\|test\|tools\|mcp\|pin\|unpin|[^]*)/, args);
+    assert.equal(JSON.stringify((await loadSettings(h.path)).settings), before, args);
+  }
+  assert.equal(h.dialogs.length, 0); assert.equal(h.inference(), 0);
+  await h.command("tools list extra"); assert.match(h.messages.at(-1)!, /Use \/decisions tools list.*Tool picker tab/);
+  assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "test", "tools", "mcp", "pin", "unpin"]);
+  assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("al"), null);
+});
+test("headless /decisions prints the status instead of a menu", async (t) => {
+  const h = await fixture(t);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/); assert.equal(h.dialogs.length, 0);
+});
+test("RPC Advanced edits validate and persist; cancelling leaves settings alone", async (t) => {
   const h = await fixture(t, { ui: true });
-  h.picks.push((choices) => choices.find((label) => label.startsWith("relevance.chunkSize:")), "Back");
-  h.inputs.push("25");
-  await h.command("relevance");
-  assert.match(h.dialogs[0].title, /Advanced/);
+  h.inputs.push("25", undefined);
+  await h.menu("Advanced…", row("relevance.chunkSize:"), row("relevance.chunkSize:"), "Back");
+  assert.match(h.dialogs[0].title, /settings/); assert.match(h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.title, /Advanced/);
   assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 25);
 });
 
-test("headless enable/disable, batch size and all-parallel settings persist with bounds", async (t) => {
+test("RPC enable/disable, batch size and all-parallel settings persist with bounds", async (t) => {
   const h = await fixture(t);
-  await h.command("disable"); await h.command("relevance chunkSize 50"); await h.command("relevance concurrency 0");
-  await h.command("relevance threshold 0.625");
+  await h.set("enabled"); await h.set("relevance.chunkSize", "50"); await h.set("relevance.concurrency", "0");
+  await h.set("relevance.threshold", "0.625");
   let settings = (await loadSettings(h.path)).settings;
   assert.equal(settings.enabled, false); assert.equal(settings.relevance.chunkSize, 50); assert.equal(settings.relevance.concurrency, 0);
   assert.equal(settings.relevance.threshold, 0.625);
-  await h.command("relevance chunkSize 51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
-  await h.command("relevance concurrency 33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
-  await h.command("enable"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.enabled, true);
+  await h.set("relevance.chunkSize", "51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
+  await h.set("relevance.concurrency", "33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
+  await h.set("enabled"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.enabled, true);
   await h.command("status"); assert.match(h.messages.at(-1)!, /all shards parallel/); assert.equal(h.inference(), 0);
 });
 
@@ -87,8 +110,8 @@ for (const [provider, model, variable] of [
   ["openrouter", "typesafe/jev-1.13", "OPENROUTER_API_KEY"],
 ] as const) test(`missing ${provider} credentials never persist or enable an unusable selection`, async (t) => {
   const h = await fixture(t);
-  await h.command("disable");
-  await h.command(`model ${provider} ${model}`);
+  await h.set("enabled");
+  await h.model(`${provider} direct ${model}`);
   const settings = (await loadSettings(h.path)).settings;
   assert.equal(settings.backend, null); assert.equal(settings.enabled, false);
   assert.match(h.messages.at(-1)!, new RegExp(variable)); assert.match(h.messages.at(-1)!, new RegExp(`/login ${provider}`));
@@ -96,36 +119,37 @@ for (const [provider, model, variable] of [
 });
 
 test("missing-key provider labels include all three direct providers and exact setup guidance", async (t) => {
-  const h = await fixture(t);
-  await h.command("provider");
-  for (const provider of ["openai", "openrouter", "typesafe"]) assert.match(h.messages.at(-1)!, new RegExp(`${provider} · direct API \\[missing key\\]`));
-  assert.match(h.messages.at(-1)!, /OPENAI_API_KEY/); assert.match(h.messages.at(-1)!, /OPENROUTER_API_KEY/); assert.match(h.messages.at(-1)!, /TYPESAFE_API_KEY/);
-  assert.match(h.messages.at(-1)!, /Pi internal classifier pipeline/);
+  const h = await fixture(t, { ui: true });
+  await h.menu(row("Provider / execution:"), undefined);
+  const providers = h.dialogs.find((dialog) => /provider and execution path/.test(dialog.title))!;
+  for (const provider of ["openai", "openrouter", "typesafe"]) assert.match(providers.options.find((label) => label.startsWith(`${provider} · direct API`))!, /missing key/);
+  assert.ok(providers.options.some((label) => /Pi internal classifier pipeline/.test(label)));
   assert.equal(h.inference(), 0);
 });
 
 test("UI unavailable provider is visibly labelled and rejected before model/persistence", async (t) => {
   const h = await fixture(t, { ui: true });
-  h.picks.push((choices) => choices.find((label) => label.startsWith("openrouter · direct API")));
-  await h.command("provider");
-  assert.match(h.dialogs[0].options.find((label) => label.startsWith("openrouter"))!, /missing key/);
+  await h.menu(row("Provider / execution:"), (choices) => choices.find((label) => label.startsWith("openrouter · direct API")));
+  assert.match(h.dialogs[1].options.find((label) => label.startsWith("openrouter"))!, /missing key/);
   assert.match(h.messages.at(-1)!, /OPENROUTER_API_KEY.*\/login openrouter/);
-  assert.equal(h.dialogs.length, 1); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  h.picks.push((choices) => choices.find((label) => label.includes("OpenAI direct")));
-  await h.command("model"); assert.match(h.messages.at(-1)!, /OPENAI_API_KEY/);
+  assert.equal(h.dialogs.length, 3, "settings, providers, settings again: no model picker for an unusable provider"); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  await h.menu(row("Model:"), (choices) => choices.find((label) => label.includes("OpenAI direct")));
+  assert.match(h.messages.at(-1)!, /OPENAI_API_KEY/);
   assert.equal((await loadSettings(h.path)).settings.backend, null); assert.equal(h.inference(), 0);
 });
 
 test("provider UI separates four core workflows, filters models and does not re-enable filtering", async (t) => {
   const h = await fixture(t, { ui: true, registry: { async getProviderAuth(provider) { return { auth: { apiKey: `FIXTURE-${provider}` }, source: "API key" }; } } });
-  await h.command("disable");
-  h.picks.push((choices) => choices.find((label) => label.startsWith("openrouter · direct API")), (choices) => choices.find((label) => label.includes("openrouter direct typesafe/jev-1.13")));
-  await h.command("provider");
-  assert.ok(h.dialogs[0].options.some((label) => label.includes("Pi internal classifier pipeline")));
-  assert.ok(h.dialogs[0].options.some((label) => label.startsWith("typesafe · direct API")));
-  assert.ok(h.dialogs[0].options.some((label) => label.startsWith("openai · direct API")));
-  assert.equal(h.dialogs[1].options.filter((label) => label !== "None (no decision calls)").length, OPENROUTER_DECISION_MODELS.length);
-  assert.ok(h.dialogs[1].options.every((label) => label === "None (no decision calls)" || label.includes("OpenRouter direct")));
+  await h.set("enabled");
+  h.dialogs.length = 0;
+  await h.menu(row("Provider / execution:"), (choices) => choices.find((label) => label.startsWith("openrouter · direct API")), (choices) => choices.find((label) => label.includes("openrouter direct typesafe/jev-1.13")));
+  const providers = h.dialogs.find((dialog) => /provider and execution path/.test(dialog.title))!;
+  assert.ok(providers.options.some((label) => label.includes("Pi internal classifier pipeline")));
+  assert.ok(providers.options.some((label) => label.startsWith("typesafe · direct API")));
+  assert.ok(providers.options.some((label) => label.startsWith("openai · direct API")));
+  const models = h.dialogs.find((dialog) => /select model/.test(dialog.title))!;
+  assert.equal(models.options.filter((label) => label !== "None (no decision calls)").length, OPENROUTER_DECISION_MODELS.length);
+  assert.ok(models.options.every((label) => label === "None (no decision calls)" || label.includes("OpenRouter direct")));
   const settings = (await loadSettings(h.path)).settings;
   assert.deepEqual(settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" }); assert.equal(settings.enabled, false);
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/); assert.equal(h.inference(), 0);
@@ -137,35 +161,33 @@ test("Pi API keys precede env and OpenAI source-aware OAuth cannot substitute Co
     async getProviderAuth(provider) { providers.push(provider); return { auth: { apiKey: "FIXTURE-OAUTH" }, source: provider === "openai" ? "OAuth" : "API key" }; },
     isUsingOAuth() { return false; },
   } });
-  await h.command("provider openai"); await h.command("status");
+  await h.model("openai direct gpt-6-luna"); await h.command("status");
   assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openai", model: "gpt-6-luna" });
   assert.match(h.messages.at(-1)!, /Credentials: environment/);
-  await h.command("model pi openai gpt-6-luna"); assert.match(h.messages.at(-1)!, /OpenAI API key, not openai-codex\/ChatGPT OAuth/);
+  await h.model("Pi openai/gpt-6-luna"); assert.match(h.messages.at(-1)!, /OpenAI API key, not openai-codex\/ChatGPT OAuth/);
   const entries = await pickerEntries(h.ctx, { OPENAI_API_KEY: "FIXTURE-ENV" });
   assert.equal(entries.find((entry) => entry.selection.backend === "pi" && entry.selection.provider === "openai")!.authStatus, "missing");
   assert.equal(entries.find((entry) => entry.selection.backend === "openai")!.authStatus, "ok");
   assert.ok(!providers.includes("openai-codex")); assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
 });
 
-test("all direct and native provider headless choices require available keys, are atomic and inference-free", async (t) => {
+test("all direct and native provider choices require available keys, are atomic and inference-free", async (t) => {
   const h = await fixture(t, { registry: { async getProviderAuth(provider) { return { auth: { apiKey: `FIXTURE-${provider}` }, source: "API key" }; } } });
-  for (const [args, selection] of [
-    ["provider typesafe", { backend: "typesafe", model: "jev-latest" }],
-    ["provider openai", { backend: "openai", model: "gpt-6-luna" }],
-    ["provider openrouter typesafe/jev-1.13", { backend: "openrouter", model: "typesafe/jev-1.13" }],
-    ["provider pi custom local", { backend: "pi", provider: "custom", id: "local" }],
+  for (const [label, selection] of [
+    ["typesafe direct jev-latest", { backend: "typesafe", model: "jev-latest" }],
+    ["openai direct gpt-6-luna", { backend: "openai", model: "gpt-6-luna" }],
+    ["openrouter direct typesafe/jev-1.13", { backend: "openrouter", model: "typesafe/jev-1.13" }],
+    ["Pi custom/local", { backend: "pi", provider: "custom", id: "local" }],
   ] as const) {
-    await h.command(args); assert.deepEqual((await loadSettings(h.path)).settings.backend, selection);
+    await h.model(label); assert.deepEqual((await loadSettings(h.path)).settings.backend, selection);
   }
-  await h.command("model pi missing unavailable"); assert.match(h.messages.at(-1)!, /not registered/);
-  assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "pi", provider: "custom", id: "local" });
-  await h.command("model none"); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  await h.model("none"); assert.equal((await loadSettings(h.path)).settings.backend, null);
   assert.equal(h.inference(), 0); assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
 });
 
 test("request-time Pi key is honoured when the cached OAuth inventory is empty or stale", async (t) => {
   const h = await fixture(t, { registry: { async getProviderAuth() { return { auth: { apiKey: "FIXTURE-PI" }, source: "API key" }; }, isUsingOAuth() { return true; } } });
-  await h.command("model openai"); await h.command("status");
+  await h.model("openai direct gpt-6-luna"); await h.command("status");
   assert.match(h.messages.at(-1)!, /Credentials: Pi-resolved/);
   assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openai", model: "gpt-6-luna" });
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
@@ -173,26 +195,18 @@ test("request-time Pi key is honoured when the cached OAuth inventory is empty o
 
 test("RPC Advanced edits the four picking controls; cadence is a select, not free text, and legacy keys are refused", async (t) => {
   const h = await fixture(t, { ui: true });
-  h.picks.push(
-    (choices) => choices.find((label) => label.startsWith("relevance.threshold:")),
-    (choices) => choices.find((label) => label.startsWith("relevance.cadence:")),
-    (choices) => choices.find((label) => label.startsWith("tool-round")),
-    "Back",
-  );
   h.inputs.push("0.625");
-  await h.command("relevance");
-  const advanced = h.dialogs[0].options;
+  await h.menu("Advanced…", row("relevance.threshold:"), row("relevance.cadence:"), row("tool-round"), "Back");
+  const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.options;
   assert.deepEqual(advanced.slice(0, 5).map((label) => label.split(":")[0]), ["relevance.enabled", "relevance.threshold", "relevance.chunkSize", "relevance.maxSkills", "relevance.cadence"]);
   assert.ok(advanced.includes("relevance.threshold: 0.375")); assert.ok(advanced.includes("relevance.cadence: prompt"));
   const settings = (await loadSettings(h.path)).settings;
   assert.equal(settings.relevance.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
   assert.ok(h.dialogs.some((dialog) => /Run picker/.test(dialog.title) && dialog.options.some((option) => option.startsWith("prompt")) && dialog.options.some((option) => option.startsWith("tool-round"))));
-  for (const legacy of ["mode choice", "minLabel directly_relevant", "relatedThreshold 1", "directThreshold 1.5"]) {
-    await h.command(`relevance ${legacy}`); assert.match(h.messages.at(-1)!, /Removed setting.*threshold/);
-  }
-  assert.equal((await loadSettings(h.path)).settings.relevance.threshold, 0.625);
-  await h.command("relevance cadence every-token"); assert.match(h.messages.at(-1)!, /Invalid relevance.cadence/);
-  await h.command("relevance maxSkills 3"); await h.command("relevance chunkSize 10");
+  // Legacy keys exist only as load-time migration inputs; the shared validator refuses them as settings.
+  for (const legacy of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.throws(() => updateSetting(defaultSettings(), `relevance.${legacy}`, "1"), /Removed setting.*threshold/, legacy);
+  await h.set("relevance.cadence", "every-token"); assert.equal((await loadSettings(h.path)).settings.relevance.cadence, "tool-round", "no option matches: nothing changes");
+  await h.set("relevance.maxSkills", "3"); await h.set("relevance.chunkSize", "10");
   assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 10);
   await h.command("status"); assert.match(h.messages.at(-1)!, /threshold 0.625 \(0–1\), picker tool-round.*max 3 added per round/s);
 });

@@ -114,7 +114,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     },
     setStatus(ctx) {
       if (!ctx.hasUI) return;
-      const state = settingsError ? "settings error · repair with /decisions model" : !settings.enabled || !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions model" : last
+      const state = settingsError ? "settings error · open /decisions to repair" : !settings.enabled || !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions" : last
         ? `${last.reason} · +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : ` · ${last.advertised} advertised`}${last.cached ? " · cached" : ` · ${last.latencyMs}ms`}${last.errorCode ? ` · ${last.errorCode}` : ""}`
         : selectionLabel(settings.backend);
       ctx.ui.setStatus("context-decisions", state);

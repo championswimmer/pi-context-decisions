@@ -42,26 +42,13 @@ Run **`/decisions`** to open the settings. In Pi's terminal UI this is a **float
 | **Status…** | Credentials source, last decision and allowlist counts. Makes no inference calls. |
 | **Close** | Closes the dialog. |
 
-**Advanced…** lists, in order: **Skill filtering** on/off; **Relevance threshold** (0–1, inclusive; default 0.375); **Shard size** (skills per decision request, 1–50); **Max added per round** (new skills per picking round, ranked across all shards; always-allowed and already-added skills do not count); **Run picker** (`prompt` or `tool-round`); then the safety limits **On failure**, **Timeout**, **Concurrency**, **Minimum inventory** and the **prompt/description size** limits. Selecting a row edits it inline with validation (the same rules as `/decisions relevance <key> <value>`); **Run picker** and **On failure** are option lists where `open` carries a visible warning and is never reached by cycling. Legacy `pin`/`unpin` names stay on the text commands.
+**Advanced…** lists, in order: **Skill filtering** on/off; **Relevance threshold** (0–1, inclusive; default 0.375); **Shard size** (skills per decision request, 1–50); **Max added per round** (new skills per picking round, ranked across all shards; always-allowed and already-added skills do not count); **Run picker** (`prompt` or `tool-round`); then the safety limits **On failure**, **Timeout**, **Concurrency**, **Minimum inventory** and the **prompt/description size** limits. Selecting a row edits it inline with validation (validated by the same strict rules as the settings file); **Run picker** and **On failure** are option lists where `open` carries a visible warning and is never reached by cycling. The legacy `pinned` list is not in the dialog; it stays on the `pin`/`unpin` commands.
 
-The **Tool picker** tab is the opt-in tool/MCP filtering ([Tool & MCP filtering](#tool--mcp-filtering-opt-in)): its own on/off, mode, picker cadence, limits and the four always-allowed editors, directly on the tab rather than behind a nested screen. It shares the decision provider/model chosen on the Skill picker tab. This is the extension's only command; headless use supports the same actions through arguments.
+The **Tool picker** tab is the opt-in tool/MCP filtering ([Tool & MCP filtering](#tool--mcp-filtering-opt-in)): its own on/off, mode, picker cadence, limits and the four always-allowed editors, directly on the tab rather than behind a nested screen. It shares the decision provider/model chosen on the Skill picker tab. This is the extension's only command. It deliberately has no setter subcommands: everything that can be changed lives in the dialog (or its RPC menus), and the few arguments left are listed under [Commands](#commands).
 
-Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on/off rows, **Tab**/**Shift+Tab**/**←/→** switch tabs (only on a tab, not inside an editor or sub-screen), **Esc** goes back (and closes from either tab). While the dialog has focus, **Esc and Ctrl+C act on the dialog, not on the running agent**: close it to interrupt or type a prompt. Running `/decisions` again while it is open focuses the existing dialog instead of opening a second one. Reloading or shutting down the session closes the dialog and cancels its in-flight work. RPC clients cannot show tabs, so they get the same grouping as select menus (Advanced and Tools & MCP are sub-menus) through select/input requests; print/JSON use the text commands.
+Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on/off rows, **Tab**/**Shift+Tab**/**←/→** switch tabs (only on a tab, not inside an editor or sub-screen), **Esc** goes back (and closes from either tab). While the dialog has focus, **Esc and Ctrl+C act on the dialog, not on the running agent**: close it to interrupt or type a prompt. Running `/decisions` again while it is open focuses the existing dialog instead of opening a second one. Reloading or shutting down the session closes the dialog and cancels its in-flight work. RPC clients cannot show tabs, so they get the same grouping as select menus (Advanced and Tools & MCP are sub-menus) through select/input requests, except the allowlist editors, which need the terminal UI. In print/JSON mode `/decisions` prints the status; to change settings there, edit the files (below) and `/reload`.
 
 **No backend is selected by default**, so startup and prompts make no decision calls until you configure one. Selection persists across sessions and opts in to sending bounded task/skill metadata on eligible prompts. Choosing a provider/model does not change the enabled toggle. Providers and models are labelled **configured** or **missing key**; unavailable selections are rejected without changing settings. Configure the relevant `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `TYPESAFE_API_KEY` in the environment, or use `/login <provider>` in Pi. Credentials remain Pi-first/environment-second; OpenAI requires its API key, not Codex/ChatGPT OAuth.
-
-```text
-/decisions                                    # floating settings dialog; status headless
-/decisions provider                           # provider/path picker; availability headless
-/decisions model                              # opens the dialog on the model screen (TUI); select menu (RPC)
-/decisions provider openai                     # direct Luna with available API key
-/decisions model pi typesafe jev-latest         # Pi internal classifier
-/decisions model typesafe jev-1.13.0            # direct TypeSafe
-/decisions model openai gpt-6-luna              # direct OpenAI
-/decisions model openrouter typesafe/jev-1.13
-/decisions model none                          # stop decision calls
-/decisions status
-```
 
 Native Pi classifiers are listed independently of the chat model; Pi's `/model` excludes classifiers. The picker preserves all non-OpenRouter native classifiers. For OpenRouter, **only the checked-in eight surviving models** are allowed in the picker and settings. A “via Pi” entry appears only if the exact classifier is registered; direct entries are always offered, annotated with credential availability. We do not replace Pi's OpenRouter provider or its chat/image models. Missing native models are a configuration error, not an automatic switch to a paid direct backend.
 
@@ -99,25 +86,21 @@ Pi's OpenRouter System One parser is stricter than the direct alpha parser; some
 
 ## Settings and relevance policy
 
+### Commands
+
+Everything that can be changed lives in the `/decisions` dialog, so the command has almost no arguments:
+
 ```text
-/decisions settings                           # dialog (TUI); menu (RPC); JSON summary headless
-/decisions relevance                          # opens Advanced directly (TUI/RPC)
-/decisions settings enabled false
-/decisions enable
-/decisions disable
-/decisions relevance threshold 0.375          # normalized 0–1, inclusive (default 0.375)
-/decisions relevance chunkSize 50              # shard size: skills per decision request, 1–50
-/decisions relevance maxSkills 12              # most NEW skills added per picking round
-/decisions relevance cadence prompt            # or tool-round: also after completed tool rounds
-/decisions relevance minCandidates 8
-/decisions relevance concurrency 0            # all shards parallel (default)
-/decisions relevance concurrency 2            # optional concurrent-shard cap, 1–32
-/decisions relevance timeoutMs 8000
-/decisions relevance failMode open             # explicit: add every remaining skill when scoring fails
-/decisions pin typescript
-/decisions unpin typescript
-/decisions test                                # explicit synthetic bool call; may incur cost
+/decisions                  # floating settings dialog (TUI); select/input menus (RPC); status (print/JSON)
+/decisions status           # credentials, last decision, allowlist counts, tool filtering; no inference calls
+/decisions test             # explicit synthetic bool call to the selected model; may incur cost
+/decisions tools list       # read-only, names-only tool inventory and availability
+/decisions mcp list         # read-only MCP server inventory and availability
+/decisions pin <skill>      # legacy always-included skill name, not in the dialog
+/decisions unpin <skill>
 ```
+
+Removed in favour of the dialog: `settings`, `relevance <key> <value>`, `provider`, `model`, `enable`, `disable`, `allow`, `allowlist`, and every `tools`/`mcp` setter. They now answer with a usage line and change nothing. In a terminal there is nothing to type; RPC clients use the same menus; print/JSON runs edit `settings.json` and the project allowlist file by hand and `/reload`.
 
 Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically written with mode `0600`. Defaults:
 
@@ -129,7 +112,7 @@ Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically
 - Whole round deadline **8000ms**, requested shards of **50 skills**. Concurrency **0** means every shard starts in parallel: 300 candidates use six shards; 400 use eight. Set concurrency 1–32 to limit simultaneous shards. A lower declared provider/client question limit reduces effective shard size, without omitting candidates.
 - Configurable prompt ≤4000 characters and each description ≤400; names ≤64, JSON state ≤65536 characters per batch, inventory ≤1000 unique candidates. These are local safety bounds, not provider token-limit guarantees.
 
-Invalid persisted settings are reported explicitly and advertisements fail closed until repaired with commands or a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
+Invalid persisted settings are reported explicitly and advertisements fail closed until repaired in the dialog or with a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
 
 ### Global and project skill allowlists
 
@@ -141,17 +124,7 @@ From `/decisions`, select **Always allowed · Global** or **Always allowed · Pr
 
 The editor starts in **A-Z**, with immediate local fuzzy search across names and descriptions. **Typing and changing tabs never make decision calls.** Press **Ctrl+R** (or Enter from the search box) for **Relevance** ranking of all loaded skills in the chosen scope against the search term. This explicitly uses the same selected decision backend and 50-skill parallel batches, and may incur charges—even when automatic filtering is disabled. Only search text and skill names/descriptions are sent. Empty searches and missing models/credentials make no call; inline guidance leaves local fuzzy search usable. Query changes mark old results stale; restarting/closing cancels in-flight work.
 
-Keys: **↓** enter list, **↑/↓** navigate, **Space** toggle, **Enter** expand description, **Tab** switch A-Z/Relevance, **Ctrl+K** clear search, **Ctrl+S** save in place. **Esc** returns to search; Esc again closes and discards unsaved changes. Selection changes do not save automatically, and ranking never changes selections. The picker uses Pi's terminal UI; RPC/headless clients can use text commands:
-
-```text
-/decisions allowlist global                    # terminal editor
-/decisions allowlist project
-/decisions allow global list
-/decisions allow global add typescript
-/decisions allow global remove typescript
-/decisions allow project add database-migrations
-/decisions allow project clear
-```
+Keys: **↓** enter list, **↑/↓** navigate, **Space** toggle, **Enter** expand description, **Tab** switch A-Z/Relevance, **Ctrl+K** clear search, **Ctrl+S** save in place. **Esc** returns to search; Esc again closes and discards unsaved changes. Selection changes do not save automatically, and ranking never changes selections. The editors need Pi's terminal UI. RPC and print/JSON clients edit `globalAllowlist` in the settings file or `alwaysAllowed` in `<cwd>/.pi/pi-context-decisions.json` by hand, then `/reload`.
 
 Before the first prompt the editor uses Pi's loaded skill commands. Afterward it uses an in-memory, metadata-only pre-filter inventory snapshot; after `/reload`, a fresh prompt updates it. Project skills still follow Pi project trust. These lists change advertisements only; explicit skill invocation, tools, and MCP access are unchanged.
 
@@ -163,7 +136,7 @@ This changes **advertisements, not permissions**: explicit `/skill:name`, readin
 
 ## Tool & MCP filtering (opt-in)
 
-**Off by default and independent of skill filtering.** It has its own switch (`/decisions tools on`, or the **Tool picker** tab in the dialog); only the master `enabled` switch, the selected decision model and the shared scoring limits (timeout, shard size, concurrency, prompt size) are common. Turning it on never selects a model (without one, every tool simply stays available), and selecting a model never turns it on. While it is off the extension never calls `getAllTools`/`setActiveTools`, writes no entries and lets every call through.
+**Off by default and independent of skill filtering.** It has its own switch (the **Tool picker** tab in the `/decisions` dialog); only the master `enabled` switch, the selected decision model and the shared scoring limits (timeout, shard size, concurrency, prompt size) are common. Turning it on never selects a model (without one, every tool simply stays available), and selecting a model never turns it on. While it is off the extension never calls `getAllTools`/`setActiveTools`, writes no entries and lets every call through.
 
 **Modes** (`tools.mode`):
 
@@ -184,19 +157,9 @@ Candidates that register later (an MCP server connecting late, a new tool) are s
 
 **Allowlists** (both modes, global in `settings.json`, project in `<cwd>/.pi/pi-context-decisions.json` as `alwaysAllowedTools`/`alwaysAllowedMcpServers`; the file still always contains `alwaysAllowed` for older readers): always-available tools and always-available MCP servers, never scored. Scope means where the list applies, not where a tool came from (that is not observable). Tool names are 1-128 characters without whitespace; server names are `[A-Za-z0-9_-]{1,64}` (`dev-radius` and `dev_radius` are the same server). An entry that starts with `mcp__` is **exclusively a canonical namespace key** (`mcp__prod` is the server `prod`); a raw server literally named `mcp__prod` has the namespace `mcp__mcp__prod` and must be allowlisted by that key.
 
-```text
-/decisions tools                          # dialog (TUI), settings menu (RPC), status (headless)
-/decisions tools on|off
-/decisions tools mode tools|mcp
-/decisions tools cadence initial|prompt|tool-round
-/decisions tools threshold|maxAdded|minCandidates|failMode|maxDescriptionChars <value>
-/decisions tools list                     # local names-only inventory and availability
-/decisions tools allow <global|project> list|add <tool...>|remove <tool...>|clear
-/decisions mcp list
-/decisions mcp allow <global|project> list|add <server...>|remove <server...>|clear
-```
+The tab edits the switch, mode, cadence, limits and the four allowlists. `/decisions tools list` and `/decisions mcp list` print a local, names-only inventory with availability (no decision calls); there are no other `tools`/`mcp` arguments.
 
-**How it works**, using only public Pi APIs: undecided *declared* tools (direct/model-only) are removed from Pi's active set with `pi.setActiveTools` before the request (only ever removing tools this extension decided against, and restoring only tools it removed); `selectedTools`, `context_with_system` and provider payloads are never touched. Codemode/deferred tools stay callable and discoverable in Pi whether or not they are active, so **every call is also gated in `tool_call`**, including calls nested in codemode scripts; a blocked call returns a short reason naming the allowlist command. A tool nobody has scored yet is scored once (shared by parallel calls) before the verdict. A hidden names-only notice tells the model which *indirect* (codemode/tool-search) MCP servers and tools are available, and says that directly declared, built-in and unfiltered extension tools are unaffected. The MCP resource tools stay internal (always declared) but are **routed by their `server` argument**: reading a server that is not available is blocked, and **listing resources without naming a server is always blocked while filtering is on**, because the complete server inventory (resource-only and disconnected servers) cannot be verified. A server that exposes only resources is unobservable and must be allowlisted; an allowlisted server is also recorded by canonical key on the branch, so removing the entry later never revokes access that was already available.
+**How it works**, using only public Pi APIs: undecided *declared* tools (direct/model-only) are removed from Pi's active set with `pi.setActiveTools` before the request (only ever removing tools this extension decided against, and restoring only tools it removed); `selectedTools`, `context_with_system` and provider payloads are never touched. Codemode/deferred tools stay callable and discoverable in Pi whether or not they are active, so **every call is also gated in `tool_call`**, including calls nested in codemode scripts; a blocked call returns a short reason pointing the user to the Tool picker tab's allowlists. A tool nobody has scored yet is scored once (shared by parallel calls) before the verdict. A hidden names-only notice tells the model which *indirect* (codemode/tool-search) MCP servers and tools are available, and says that directly declared, built-in and unfiltered extension tools are unaffected. The MCP resource tools stay internal (always declared) but are **routed by their `server` argument**: reading a server that is not available is blocked, and **listing resources without naming a server is always blocked while filtering is on**, because the complete server inventory (resource-only and disconnected servers) cannot be verified. A server that exposes only resources is unobservable and must be allowlisted; an allowlisted server is also recorded by canonical key on the branch, so removing the entry later never revokes access that was already available.
 
 **Privacy.** The decision model receives the latest bounded user text plus, in `tools` mode, tool names, bounded descriptions and the MCP server label, or in `mcp` mode the namespace key, server label, namespace description and bounded tool names. Never parameter schemas, annotations, namespace instructions, provenance paths, server configs, arguments, results, assistant text or transcripts. Names and descriptions are third-party data and are sent as data, not instructions. Diagnostics carry counts and safe codes.
 
@@ -210,7 +173,7 @@ Candidates that register later (an MCP server connecting late, a new tool) are s
 - **Superseded rounds.** A round overtaken by a settings or allowlist save, a disable, a mode change or a branch change commits and reconciles nothing; a run that is merely cancelled reconciles only from what the branch already committed.
 - **Unreadable settings** never silently drop filtering a branch already has: it keeps enforcing its ledger and adds nothing.
 - **Fail closed.** A failed or cancelled round adds nothing; `failMode: open` adds the remaining candidates but never for configuration errors or cancellation.
-- **SDK embedders.** Codemode, `tool_search` or MCP added as plain extension factories get `<inline:...>` provenance and are therefore treated as external (and filtered); register them as built-in extensions (`{ builtin: true }`) or allowlist them (`/decisions tools allow global add codemode`).
+- **SDK embedders.** Codemode, `tool_search` or MCP added as plain extension factories get `<inline:...>` provenance and are therefore treated as external (and filtered); register them as built-in extensions (`{ builtin: true }`) or allowlist them (add `codemode` to the Tool picker tab's global tools allowlist).
 - **Server labels.** Pi's public namespace has no original-name alias, so a server `dev-radius` is labelled `dev_radius` in reasons and lists; allowlisting accepts either spelling.
 - **Handler order.** Pi runs file/package extensions before its built-in MCP/codemode extensions; an SDK-inline instance runs after them. `turn_start` cannot close the first-prompt gap because the first request's declarations are fixed before it.
 - **Not covered by compaction re-delivery.** The availability notice is not re-delivered if compaction summarizes it away (calls stay gated).
