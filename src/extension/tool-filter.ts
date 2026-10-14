@@ -18,6 +18,7 @@ import type { ProjectAllowlistLoad } from "../project-allowlist.ts";
 import type { ContextDecisionsSettings, ToolFilterMode } from "../settings.ts";
 import type { CommandContext, ExtensionHost, LastToolDecision, ToolReport } from "./contracts.ts";
 import { queuedUserTask } from "./queued-task.ts";
+import { beginDecisionLoader, endDecisionLoader } from "./decision-loader.ts";
 import { TOOLS_LEDGER_ENTRY, buildToolNotice, readToolLedger, toolRecords, type ToolLedgerData, type ToolLedgerState, type ToolNotice } from "./tool-ledger.ts";
 
 export interface ToolFilterDeps {
@@ -170,6 +171,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     if (!client) return "failed";
     if (key === failedKey && trigger !== "prompt" && trigger !== "queued" && trigger !== "initial") return "failed";
     let round: ToolAdditionResult;
+    // Every trigger (prompt, initial, queued, tool-round, catch-up, lazy gate) scores through here: Pi's braille
+    // working row reads "Deciding Context" while the round is in flight and restores itself on release.
+    beginDecisionLoader(ctx);
     try {
       round = await scoreToolAdditions(task, candidates, client, {
         subject: mode === "mcp" ? "mcp_server" : "tool", threshold: settings.tools.threshold, maxAdded: settings.tools.maxAdded, failMode: settings.tools.failMode,
@@ -178,7 +182,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       }, { store: cache, key });
     } catch (error2) {
       round = { added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes: [], considered: [], errorCode: safeCode(error2) };
-    }
+    } finally { endDecisionLoader(); }
     // A superseded (settings/allowlist save, branch change, session replacement) or cancelled round commits nothing.
     if (options.generation !== deps.generation() || options.signal.aborted) return "superseded";
     if (round.errorCode && round.errorCode !== "aborted") failedKey = key;

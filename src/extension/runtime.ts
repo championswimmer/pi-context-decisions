@@ -15,6 +15,7 @@ import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type Ledg
 import { selectionLabel, type Controller, type ExtensionDependencies, type ExtensionHost, type LastDecision } from "./contracts.ts";
 import { queuedUserTask } from "./queued-task.ts";
 import { createToolFilter } from "./tool-filter.ts";
+import { beginDecisionLoader, endDecisionLoader, resetDecisionLoader } from "./decision-loader.ts";
 
 function sumUsage(responses: DecisionResponse[]): DecisionUsage | undefined {
   if (!responses.length) return undefined;
@@ -126,6 +127,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   const commands = registerCommands(pi, controller, deps.env);
   pi.on("session_start", async (_event, ctx) => {
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
+    resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
     scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset();
     await projectWriteQueue;
@@ -146,6 +148,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
     // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
     commands.closeDialogs();
+    resetDecisionLoader();
     abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset();
     if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
   });
@@ -278,7 +281,11 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         growBase(invocable.map((skill) => skill.name));
       } else if (task.trim() && reader) {
         const remaining = invocable.filter((skill) => !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
-        round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
+        // Pi's own braille working row shows "Deciding Context" for as long as the round is in flight.
+        beginDecisionLoader(ctx);
+        try {
+          round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
+        } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;
         if (round.errorCode && round.errorCode !== "aborted") failedKey = cacheKey(task, current);
@@ -337,7 +344,10 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
           const pinnedSet = new Set(await pinsFor(ctx, current, skills, false));
           if (currentGeneration !== generation || signal.aborted) return; // superseded while reading the allowlist: score nothing
           const remaining = skills.filter((skill) => !skill.disableModelInvocation && !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
-          round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key });
+          beginDecisionLoader(ctx);
+          try {
+            round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key });
+          } finally { endDecisionLoader(); }
           if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
         }
       }
