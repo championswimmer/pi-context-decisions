@@ -59,12 +59,12 @@ test("mcp allow: server names validate, `-` and `_` spellings are one server, li
   for (const bad of ["mcp allow global add a.b", "mcp allow global add ../x", `mcp allow global add ${"s".repeat(65)}`, "mcp list extra", "mcp"]) {
     const before = JSON.stringify(await saved(h)); await h.command(bad); assert.equal(JSON.stringify(await saved(h)), before, bad);
   }
-  assert.ok(h.messages.some((message) => /MCP server names must match/.test(message)));
+  assert.ok(h.messages.some((message) => /MCP server names, mcp__ namespace keys and ext__ extension keys must match/.test(message)));
 });
 test("in mcp mode, allowlisting one tool of an MCP server says it promotes the whole server", async (t) => {
   const h = await toolSetup(t, { tools: { mode: "mcp", enabled: true }, extra: [mcpTool("dev-radius", "q", "direct"), mcpTool("dev-radius", "r")] });
   await h.command("tools allow global add mcp__dev_radius__q");
-  assert.match(last(h), /makes the whole MCP server available: dev-radius/);
+  assert.match(last(h), /makes the whole MCP server or extension available: dev-radius/);
   const quiet = await toolSetup(t, { extra: [mcpTool("dev-radius", "q", "direct")] });
   await quiet.command("tools allow global add mcp__dev_radius__q"); assert.doesNotMatch(last(quiet), /whole MCP server/);
 });
@@ -75,10 +75,11 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
   await h.command("tools list");
   const report = last(h);
   assert.match(report, /Tools \(3 external, 5 internal always allowed, 1 hidden; filtering on · mode tools\)/);
-  assert.match(report, /ext_a · extension · direct · available/); assert.match(report, /mcp__dev_radius__q · MCP dev-radius · codemode · unavailable/);
+  assert.match(report, /ext_a · extension ext_a · direct · available/); assert.match(report, /mcp__dev_radius__q · MCP dev-radius · codemode · unavailable/);
   assert.doesNotMatch(report, /SECRET|parameters|instructions/);
   await h.command("mcp list");
-  assert.match(last(h), /MCP servers \(2, filtering on · mode tools\)/); assert.match(last(h), /dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
+  assert.match(last(h), /MCP servers and extensions \(3, filtering on · mode tools\)/); assert.match(last(h), /MCP dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
+  assert.match(last(h), /extension ext_a \(ext__ext_a\) · 1 tools/, "extensions are listed beside servers, by their canonical key");
   assert.match(last(h), /allowlist them by name/);
   assert.equal(h.requests.length, calls, "listing never calls the decision model");
 });

@@ -63,7 +63,7 @@ export async function loadProjectAllowlist(cwd: string): Promise<ProjectAllowlis
     try { tools = data.alwaysAllowedTools === undefined ? [] : normalizeToolAllowlist(data.alwaysAllowedTools as unknown[]); }
     catch { throw new SettingsError("Project tool allowlist names must be 1-128 characters without whitespace or control characters"); }
     try { mcpServers = data.alwaysAllowedMcpServers === undefined ? [] : normalizeServerAllowlist(data.alwaysAllowedMcpServers as unknown[]); }
-    catch { throw new SettingsError("Project MCP server allowlist names must match [A-Za-z0-9_-]{1,64}"); }
+    catch { throw new SettingsError("Project MCP server allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix"); }
     return { names: data.alwaysAllowed === undefined ? [] : normalizeAllowlist(data.alwaysAllowed as unknown[]), tools, mcpServers, warnings };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return EMPTY();

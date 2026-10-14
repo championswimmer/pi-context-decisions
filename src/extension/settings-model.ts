@@ -66,18 +66,18 @@ export function advancedField(key: string): AdvancedField | undefined { return A
  * shared scoring limits (timeout, shard size, concurrency, prompt size) are common.
  */
 export const TOOL_FIELDS: readonly AdvancedField[] = [
-  { key: "enabled", group: "tools", label: "Tool filtering", kind: "bool", hint: "Off by default and independent of skill filtering. When on, external tools or MCP servers are made available per prompt by the decision model; Pi's built-in tools are never filtered. Calls to unavailable tools are blocked. This is not a sandbox." },
+  { key: "enabled", group: "tools", label: "Tool filtering", kind: "bool", hint: "Off by default and independent of skill filtering. When on, external tools, MCP servers or extensions are made available per prompt by the decision model; Pi's built-in tools are never filtered. Calls to unavailable tools are blocked. This is not a sandbox." },
   { key: "mode", group: "tools", label: "Mode", kind: "options", hint: "What is decided.", options: [
     { value: "tools", description: "Every external tool is decided on its own, whichever MCP server or extension it comes from (default)." },
-    { value: "mcp", description: "Whole MCP servers are on or off. Other extension tools are never filtered." },
+    { value: "mcp", description: "Groups are decided as a whole: every MCP server and every extension (all its tools together) is on or off. Extension tools without public provenance are never filtered." },
   ] },
-  { key: "cadence", group: "tools", label: "Run picker", kind: "options", hint: "When more tools or servers are added. They are only ever added, never removed.", options: [
+  { key: "cadence", group: "tools", label: "Run picker", kind: "options", hint: "When more tools, servers or extensions are added. They are only ever added, never removed.", options: [
     { value: "initial", description: "Pick once from your first prompt; later tools are scored against that first prompt only." },
     { value: "prompt", description: "On each new user prompt, including queued steering/follow-up messages (default)." },
     { value: "tool-round", description: "Also after each completed tool round: adds the next-best candidates for the same task from cached scores. The decision model only ever receives your bounded user text plus tool/server names and descriptions; never arguments, results or assistant text." },
   ] },
-  { key: "threshold", group: "tools", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A tool or server is added when its relevance score is at least this. 0.375 is the default." },
-  { key: "maxAdded", group: "tools", label: "Max added per round", kind: "int", hint: "0–1000 new tools (or servers) added by one round, best first. Allowlisted and already-available ones do not count." },
+  { key: "threshold", group: "tools", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A tool, server or extension is added when its relevance score is at least this. 0.375 is the default." },
+  { key: "maxAdded", group: "tools", label: "Max added per round", kind: "int", hint: "0–1000 new tools (or servers/extensions) added by one round, best first. Allowlisted and already-available ones do not count." },
   { key: "minCandidates", group: "tools", label: "Minimum candidates", kind: "int", hint: "0–1000. Below this many candidates nothing is scored and all of them stay available." },
   { key: "failMode", group: "tools", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
     { value: "closed", description: "Add nothing when scoring fails (default, recommended)." },

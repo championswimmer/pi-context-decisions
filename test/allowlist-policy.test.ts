@@ -211,3 +211,11 @@ test("an oversized combined project file cannot be written", async (t) => {
   const tools = Array.from({ length: 1000 }, (_, i) => `tool_${String(i).padStart(4, "0")}_${"y".repeat(110)}`);
   await assert.rejects(saveProjectAllowlist(cwd, { tools, mcpServers: servers }), /64 KiB/);
 });
+
+test("project file: a canonical key (mcp__/ext__ + a 64-character name) is valid and round-trips; raw names beyond 64 and 65-character remainders are not", async (t) => {
+  const cwd = await root(t); const full = "x".repeat(64);
+  await saveProjectAllowlist(cwd, { mcpServers: [`mcp__${full}`, "ext__Notes", full] });
+  assert.deepEqual((await loadProjectAllowlist(cwd)).mcpServers, [`mcp__${full}`, "ext__notes"].sort());
+  await assert.rejects(saveProjectAllowlist(cwd, { mcpServers: [`mcp__${"x".repeat(65)}`] }), /bounded|allowlist names/);
+  await assert.rejects(saveProjectAllowlist(cwd, { mcpServers: ["y".repeat(65)] }), /bounded|allowlist names/);
+});

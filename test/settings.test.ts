@@ -245,7 +245,14 @@ test("MCP server allowlist names match [A-Za-z0-9_-]{1,64}; `-` and `_` spelling
   assert.deepEqual(parse(["docs", "dev-radius", "dev_radius", "mcp__dev_radius", "A1"]), ["A1", "dev-radius", "docs"], "dev_radius and the canonical mcp__dev_radius fold into the first spelling");
   assert.deepEqual(parse(["dev_radius", "dev-radius"]), ["dev_radius"]);
   assert.equal(parse(["a".repeat(64)]).length, 1);
-  for (const name of ["", "a".repeat(65), "a b", "a.b", "a/b", "a\nb", "ünï", "a:b", 3]) assert.throws(() => parse([name]), /MCP server allowlist names/, JSON.stringify(name));
+  for (const name of ["", "a".repeat(65), "a b", "a.b", "a/b", "a\nb", "ünï", "a:b", 3]) assert.throws(() => parse([name]), /MCP server \/ extension allowlist names/, JSON.stringify(name));
+});
+test("the canonical prefix is allowed IN ADDITION to the 64-character name bound, in settings", () => {
+  const parse = (names: unknown) => parseSettings({ tools: { alwaysAllowedMcpServers: names } }).tools.alwaysAllowedMcpServers;
+  const full = "x".repeat(64);
+  assert.deepEqual(parse([`mcp__${full}`, full]), [`mcp__${full}`], "the canonical key and the raw name are one server");
+  assert.deepEqual(parse([`ext__${full}`, "ext__Notes"]), [`ext__${full}`, "ext__notes"].sort());
+  for (const name of [`mcp__${"x".repeat(65)}`, `ext__${"x".repeat(65)}`, `MCP__${full}`, `mcp_${full}x`]) assert.throws(() => parse([name]), /allowlist names/, name.length + name.slice(0, 8));
 });
 test("updateSetting edits tools scalars through the same validation; allowlist arrays are rejected", () => {
   const settings = defaultSettings();

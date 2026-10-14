@@ -199,7 +199,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     const mode = settings.tools.mode;
     let ledger = merged(ctx);
     let avail = availability(inv, mode, ledger, allow);
-    // Additive base: allowlisted names, promoted namespaces and (mcp mode) extension tools are recorded, so allowlist removal or a mode switch never removes availability.
+    // Additive base: allowlisted names, promoted groups and (mcp mode) ungrouped extension tools are recorded, so allowlist removal or a mode switch never removes availability.
     if (how === "on") {
       const growth = baseGrowth(inv, mode, ledger, allow, avail);
       for (const name of growth.tools) pend.tools.add(name);
@@ -224,10 +224,13 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     let hiddenUnavailable = false;
     if (how === "on") {
       for (const group of inv.groups.values()) {
-        if (!group.tools.some((name) => !inv.byName.get(name)!.declarable)) continue;
-        if (avail.isGroupAvailable(group.key)) announce.add(group.key); else hiddenUnavailable = true;
+        const indirect = group.tools.map((name) => inv.byName.get(name)!).filter((tool) => !tool.declarable);
+        if (!indirect.length) continue;
+        // Whole group available: announced by its key. Otherwise only members still unavailable are hidden (available ones are announced one by one below).
+        if (avail.isGroupAvailable(group.key)) announce.add(group.key);
+        else if (indirect.some((tool) => !avail.isAvailable(tool))) hiddenUnavailable = true;
       }
-      // In `mcp` mode only namespaces are decided; non-MCP extension tools are never filtered and need no mention.
+      // In `mcp` (group) mode only groups (MCP servers and extensions) are decided; ungrouped extension tools are never filtered and need no mention.
       if (mode === "tools") {
         for (const tool of inv.tools) {
           if (tool.kind === "internal" || tool.declarable || (tool.group && avail.isGroupAvailable(tool.group))) continue;
@@ -342,7 +345,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         }
         blockable = tool;
         // Late arrival: score it (one shared round) before deciding. Never when the registry is degraded, the task is unknown, the backend unusable or the key already failed.
-        const key = tool.kind === "mcp" && mode === "mcp" ? tool.group! : tool.name;
+        const key = tool.group && mode === "mcp" ? tool.group : tool.name;
         const task = cadenceTask(settings, c.ledger);
         if (state === "on" && !degraded && settings.backend && task) {
           const taskKey = cacheKey(task, settings);
@@ -368,9 +371,11 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
             if (c.avail.isAvailable(c.inv.byName.get(tool.name) ?? tool)) { deps.changed(ctx); return undefined; }
           }
         }
-        const server = tool.kind === "mcp" && mode === "mcp" ? inv.groups.get(tool.group!)?.label : undefined;
-        const reason = server
-          ? `MCP server "${clean(server)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it with /decisions mcp allow <global|project> add ${clean(server)}.`
+        const group = tool.group && mode === "mcp" ? inv.groups.get(tool.group) : undefined;
+        const reason = group
+          ? group.type === "mcp"
+            ? `MCP server "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it with /decisions mcp allow <global|project> add ${clean(group.label)}.`
+            : `Extension "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled its tools for this task. Continue without it, or ask the user to allow it with /decisions mcp allow <global|project> add ${clean(group.key)}.`
           : `Tool "${clean(tool.name, 128)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it with /decisions tools allow <global|project> add ${clean(tool.name, 128)}.`;
         return { block: true, reason: reason.slice(0, BLOCK_REASON_LIMIT) };
       } catch {
@@ -566,7 +571,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       if (deps.getSettingsError()) return "tools: settings error";
       if (!settings.backend) return "tools: select model · /decisions model";
       if (!counts) return `tools: ${settings.tools.mode} · ${settings.tools.cadence}`;
-      return `tools: ${counts.available}/${counts.external} ${counts.mode === "mcp" ? "servers" : "tools"} available${last ? (last.cached ? " · cached" : last.errorCode ? ` · ${last.errorCode}` : ` · ${last.latencyMs}ms`) : ""}`;
+      return `tools: ${counts.available}/${counts.external} ${counts.mode === "mcp" ? "groups" : "tools"} available${last ? (last.cached ? " · cached" : last.errorCode ? ` · ${last.errorCode}` : ` · ${last.latencyMs}ms`) : ""}`;
     },
     async describe(ctx) {
       const settings = deps.getSettings();
@@ -586,16 +591,16 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const avail = availability(inv, mode, ledger, allow);
       const rows = inv.tools.map((tool): ToolReport["rows"][number] => ({
         name: tool.name, kind: tool.kind, exposure: tool.exposure, description: tool.description,
-        ...(tool.group ? { server: inv.groups.get(tool.group)?.label } : {}),
+        ...(tool.group ? { group: tool.group, groupLabel: inv.groups.get(tool.group)?.label, ...(tool.kind === "mcp" ? { server: inv.groups.get(tool.group)?.label } : {}) } : {}),
         state: tool.kind === "internal" ? "always" : state === "off" ? "available"
           : allow.tools.has(tool.name) || (tool.group && [...allow.servers].some((entry) => canonicalServerKey(entry) === tool.group)) ? "allowlisted"
           : avail.isAvailable(tool) ? "available" : "unavailable",
       }));
       const groups = [...inv.groups.values()].map((group) => ({
-        key: group.key, label: group.label, tools: group.tools.length, toolNames: [...group.tools].sort().slice(0, 50), verified: group.verified,
+        key: group.key, type: group.type, label: group.label, tools: group.tools.length, toolNames: [...group.tools].sort().slice(0, 50), verified: group.verified,
         available: state === "off" || avail.isGroupAvailable(group.key), allowlisted: [...allow.servers].some((entry) => canonicalServerKey(entry) === group.key),
       }));
-      return { supported: true, state, mode, rows, groups, hidden: inv.hidden, ungrouped: inv.tools.filter((tool) => tool.kind === "extension").length, withheld: ledger.withheld.size };
+      return { supported: true, state, mode, rows, groups, hidden: inv.hidden, ungrouped: inv.tools.filter((tool) => tool.kind === "extension" && !tool.group).length, withheld: ledger.withheld.size };
     },
   };
   return filter;

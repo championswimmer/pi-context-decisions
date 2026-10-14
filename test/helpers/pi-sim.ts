@@ -95,7 +95,7 @@ export interface SimHost {
 export interface SimToolInfo {
   name: string; description?: string; exposure?: "direct" | "model-only" | "codemode" | "deferred" | "hidden";
   namespace?: { name: string; description?: string; instructions?: string; aliases?: string[] };
-  sourceInfo?: { path: string; source: string; scope?: string; origin?: string };
+  sourceInfo?: { path: string; source: string; scope?: string; origin?: string; baseDir?: string };
   parameters?: unknown; promptGuidelines?: string[]; annotations?: unknown; reachesTools?: boolean;
 }
 /** Pi core/builtin provenance, as Pi's loader assigns it. */

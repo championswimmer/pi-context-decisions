@@ -175,7 +175,7 @@ test("notice scope: it speaks only about indirect (codemode/deferred) candidates
   await m.start("task");
   const mcpText = String(m.notices()[0].content);
   assert.match(mcpText, /MCP servers: mcp__docs/); assert.doesNotMatch(mcpText, /ext_a/); assert.match(mcpText, /unfiltered extension tools are unaffected/);
-  assert.equal(await m.gate("ext_a"), undefined);
+  assert.match((await m.gate("ext_a"))!.reason, /^Extension "ext_a" is unavailable/, "an extension is a decided group in mcp mode, exactly like a server");
 });
 test("resource-only servers: allowlist keys are recorded durably, so removing the entry never revokes access that was available; a gate-time use is flushed too", async (t) => {
   const h = await toolSetup(t, { tools: { alwaysAllowedMcpServers: ["files"] }, extra: resourceTools() });

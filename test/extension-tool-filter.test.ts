@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { projectAllowlistPath } from "../src/project-allowlist.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
 import { CORE, extTool, mcpTool, resourceTools, toolSetup } from "./helpers/tool-fixture.ts";
-import { builtinSource } from "./helpers/pi-sim.ts";
+import { builtinSource, extensionSource, type SimToolInfo } from "./helpers/pi-sim.ts";
 
 const A = extTool("ext_a"), B = extTool("ext_b"), C = extTool("ext_c");
 const BLOCKED = /^Tool "(\w+)" is unavailable: pi-context-decisions tool filtering has not enabled it/;
@@ -55,24 +55,41 @@ test("maxAdded caps new additions per round, ranked across candidates; the thres
   await h.start("task again");
   assert.deepEqual(h.ledger().at(-1)?.tools, ["ext_a"], "cached scores: the next-best qualifying tool arrives next round");
 });
-test("mcp mode: namespaces are the candidates; extension tools are never filtered; adding a namespace enables all its tools, late members included", async (t) => {
+test("mcp mode: MCP servers AND extensions are the candidates; adding a group enables all its tools, late members included", async (t) => {
   const h = await toolSetup(t, { tools: { mode: "mcp" }, extra: [A, mcpTool("dev-radius", "q", "direct"), mcpTool("dev-radius", "r", "codemode"), mcpTool("docs", "s", "direct")], scores: { mcp__dev_radius: 2 } });
   await h.start("search the radar");
-  assert.deepEqual(h.scored(), ["mcp__dev_radius", "mcp__docs"]);
+  assert.deepEqual(h.scored(), ["ext__ext_a", "mcp__dev_radius", "mcp__docs"]);
   const request = JSON.stringify(h.requests[0]);
-  assert.match(request, /Tools: mcp__dev_radius__q, mcp__dev_radius__r/, "namespace candidate lists its tool names"); assert.doesNotMatch(request, /ext_a/);
-  assert.deepEqual(h.active(), [...CORE, "ext_a", "mcp__dev_radius__q"], "the declared tool of the unselected server is withheld, ext_a is untouched");
-  assert.equal(await h.gate("ext_a"), undefined); assert.equal(await h.gate("mcp__dev_radius__r"), undefined);
+  assert.match(request, /Tools: mcp__dev_radius__q, mcp__dev_radius__r/, "namespace candidate lists its tool names");
+  assert.match(request, /Extension ext_a\. Tools: ext_a/, "an extension is a candidate exactly like a server: its name and its tool names");
+  assert.deepEqual(h.active(), [...CORE, "mcp__dev_radius__q"], "the declared tools of the unselected server and extension are withheld");
+  assert.equal(await h.gate("mcp__dev_radius__r"), undefined);
+  assert.match((await h.gate("ext_a"))!.reason, /^Extension "ext_a" is unavailable: .* \/decisions mcp allow <global\|project> add ext__ext_a\./);
   const blocked = await h.gate("mcp__docs__s");
   assert.match(blocked!.reason, /^MCP server "docs" is unavailable/);
   h.sim.registerTool(mcpTool("dev-radius", "late", "direct"));
   await h.end({ toolResults: [{}] });
   assert.ok(h.active().includes("mcp__dev_radius__late"), "a late member of an available namespace needs no scoring");
   assert.equal(await h.gate("mcp__dev_radius__late"), undefined);
-  // Switching to tools mode keeps everything that was available.
+  // Switching to tools mode keeps everything that was available, and decides the rest per tool.
   await h.command("tools mode tools");
   await h.start("again");
-  assert.equal(await h.gate("mcp__dev_radius__r"), undefined); assert.equal(await h.gate("ext_a"), undefined);
+  assert.equal(await h.gate("mcp__dev_radius__r"), undefined); assert.match((await h.gate("ext_a"))!.reason, BLOCKED);
+});
+test("mcp mode: scoring an extension adds ALL its tools (late ones too); a tool with no provenance is never filtered", async (t) => {
+  const loose: SimToolInfo = { name: "loose", description: "no provenance", exposure: "direct" };
+  const one = { ...extTool("plug_one"), sourceInfo: { ...extensionSource("plug"), path: "/ext/plug.ts" } }, two = { ...extTool("plug_two", "codemode"), sourceInfo: { ...extensionSource("plug"), path: "/ext/plug.ts" } };
+  const h = await toolSetup(t, { tools: { mode: "mcp" }, extra: [one, two, A, loose, extTool("lazy_x", "codemode")], scores: { ext__plug: 2 } });
+  await h.start("use plug");
+  assert.deepEqual(h.scored(), ["ext__plug", "ext__ext_a", "ext__lazy_x"], "one candidate per extension, none for the provenance-less tool");
+  assert.deepEqual(h.active(), [...CORE, "plug_one", "loose"], "ext_a is withheld; the plug extension and the provenance-less tool stay");
+  assert.equal(await h.gate("plug_two"), undefined); assert.equal(await h.gate("loose"), undefined);
+  assert.deepEqual(h.ledger()[0].groups, ["ext__plug"]); assert.deepEqual(h.ledger()[0].tools, ["loose"], "only the ungrouped tool is recorded one by one");
+  h.sim.registerTool({ ...extTool("plug_three"), sourceInfo: { ...extensionSource("plug"), path: "/ext/plug.ts" } });
+  await h.end({ toolResults: [{}] });
+  assert.ok(h.active().includes("plug_three"), "a late member of an available extension needs no scoring");
+  assert.deepEqual(noticeText(h.notices()[0]).match(/extensions: ([\w_, ]+)\./)?.[1], "ext__plug", "the notice names the extension by its canonical key, never a path");
+  assert.doesNotMatch(JSON.stringify(h.requests), /\/ext\/|sourceInfo/);
 });
 const projectFile = async (root: string, body: Record<string, unknown>) => { await mkdir(join(root, ".pi"), { recursive: true }); await writeFile(projectAllowlistPath(root), JSON.stringify({ alwaysAllowed: [], ...body })); };
 
@@ -267,7 +284,7 @@ test("enabling mid-session: tools the model may already have seen stay active an
   await h.start("continue the work");
   assert.deepEqual(h.active(), [...CORE, "ext_a", "ext_b"], "nothing the model already saw is withdrawn");
   assert.equal(h.requests.length, 0, "nothing is left to decide");
-  assert.deepEqual(h.ledger(), [{ v: 1, tools: ["ext_a", "ext_b", "mcp__srv__x"], groups: ["mcp__srv"] }]);
+  assert.deepEqual(h.ledger(), [{ v: 1, tools: ["ext_a", "ext_b", "mcp__srv__x"], groups: ["ext__ext_a", "ext__ext_b", "mcp__srv"] }]);
   assert.equal(await h.gate("ext_b"), undefined); assert.equal(await h.gate("mcp__srv__x"), undefined);
   h.sim.registerTool(extTool("ext_late"));
   await h.end({ toolResults: [{}] });
@@ -399,7 +416,7 @@ test("notice: increments announce newly available codemode tools and servers at 
   await h.start("task");
   assert.match(noticeText(h.notices()[0]), /only these are available now: tools: lazy_a\./);
   h.scores.lazy_b = 2; await h.start("second");
-  assert.equal(h.notices().length, 2); assert.equal(noticeText(h.notices()[1]), "Tool availability (pi-context-decisions): these indirect MCP servers or tools are now also available: tools: lazy_b.");
+  assert.equal(h.notices().length, 2); assert.equal(noticeText(h.notices()[1]), "Tool availability (pi-context-decisions): these indirect MCP servers, extensions or tools are now also available: tools: lazy_b.");
   assert.deepEqual((h.notices()[1].details as { tools: string[] }).tools, ["lazy_b"]);
   // A late codemode tool decided at turn_end is announced through a boundary draft.
   const late = extTool("lazy_late", "codemode"); h.sim.registerTool(late); h.scores.lazy_late = 2;
@@ -411,7 +428,7 @@ test("notice: increments announce newly available codemode tools and servers at 
   assert.match(noticeText(m.notices()[0]), /only these are available now: MCP servers: mcp__dev_radius\./);
   assert.deepEqual(m.notices()[0].details, { v: 1, tools: [], groups: ["mcp__dev_radius"] });
   await m.start("second");
-  assert.equal(noticeText(m.notices()[1]), "Tool availability (pi-context-decisions): these indirect MCP servers or tools are now also available: MCP servers: mcp__docs.");
+  assert.equal(noticeText(m.notices()[1]), "Tool availability (pi-context-decisions): these indirect MCP servers, extensions or tools are now also available: MCP servers: mcp__docs.");
   assert.doesNotMatch(JSON.stringify(m.notices()), /mcp__wiki|mcp__dev_radius__q|dev-radius server/);
 });
 test("notice: lists are bounded to 100 names, then 'and N more'", async (t) => {

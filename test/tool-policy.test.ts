@@ -7,7 +7,10 @@ const builtin = (name: string): ToolInfoLike => ({ name, exposure: "direct", sou
 const ext = (name: string, exposure = "direct"): ToolInfoLike => ({ name, exposure, sourceInfo: { source: "extension", path: `/ext/${name}.ts` } });
 const mcp = (server: string, tool: string, exposure = "codemode"): ToolInfoLike => ({ name: `mcp__${server.replace(/-/g, "_")}__${tool}`, exposure,
   namespace: { name: `mcp__${server.replace(/-/g, "_")}`, aliases: [server] }, sourceInfo: { source: "builtin", path: "builtin:mcp" } });
+const bare = (name: string): ToolInfoLike => ({ name, exposure: "direct" });
+// ext_a/ext_b/ext_lazy are three single-tool extensions (groups ext__ext_a, ext__ext_b, ext__ext_lazy); `shared_*` come from ONE extension; `loose` has no provenance.
 const inv = classifyTools([builtin("read"), builtin("bash"), ext("ext_a"), ext("ext_b"), ext("ext_lazy", "codemode"), mcp("dev-radius", "q", "direct"), mcp("dev-radius", "r"), mcp("docs", "s", "direct"), mcp("docs", "t")]);
+const shared = classifyTools([ext("ext_a"), { name: "shared_1", exposure: "direct", sourceInfo: { source: "auto", path: "/ext/shared.ts" } }, { name: "shared_2", exposure: "codemode", sourceInfo: { source: "auto", path: "/ext/shared.ts" } }, bare("loose")]);
 const ledger = (tools: string[] = [], groups: string[] = []): AvailabilityLedger => ({ tools: new Set(tools), groups: new Set(groups) });
 const allow = (tools: string[] = [], servers: string[] = []): EffectiveAllowlists => ({ tools: new Set(tools), servers: new Set(servers) });
 const open = (mode: "tools" | "mcp", l = ledger(), a = allow()) => {
@@ -38,10 +41,35 @@ test("server allowlist spelling: `-`, `_` and the canonical key are equivalent; 
   for (const entry of ["dev", "radius", "docs", "mcp__dev"]) assert.equal(serverAllowlisted(allow([], [entry]), "mcp__dev_radius"), false, entry);
   assert.equal(serverAllowlisted(NO_ALLOWLISTS, "mcp__dev_radius"), false);
 });
-test("mcp mode: extension tools are never filtered, namespaces are decided as a whole", () => {
-  assert.deepEqual(open("mcp").names, ["read", "bash", "ext_a", "ext_b", "ext_lazy"]);
-  assert.deepEqual(open("mcp", ledger([], ["mcp__docs"])).names, ["read", "bash", "ext_a", "ext_b", "ext_lazy", "mcp__docs__s", "mcp__docs__t"]);
-  assert.deepEqual(open("mcp", ledger(), allow([], ["dev-radius"])).names.filter((name) => name.startsWith("mcp__")), ["mcp__dev_radius__q", "mcp__dev_radius__r"]);
+test("mcp mode: MCP servers AND extensions are decided as whole groups; only provenance-less extension tools are never filtered", () => {
+  assert.deepEqual(open("mcp").names, ["read", "bash"], "no extension tool is available without a decision any more");
+  assert.deepEqual(open("mcp", ledger([], ["mcp__docs"])).names, ["read", "bash", "mcp__docs__s", "mcp__docs__t"]);
+  assert.deepEqual(open("mcp", ledger([], ["ext__ext_a"])).names, ["read", "bash", "ext_a"]);
+  assert.deepEqual(open("mcp", ledger(), allow([], ["ext__ext_b", "dev-radius"])).names, ["read", "bash", "ext_b", "mcp__dev_radius__q", "mcp__dev_radius__r"]);
+  const loose = availability(shared, "mcp", ledger(), allow());
+  assert.deepEqual(shared.tools.filter((tool) => loose.isAvailable(tool)).map((tool) => tool.name), ["loose"], "an ungrouped extension tool has no group to decide");
+  const tools = availability(shared, "tools", ledger(), allow());
+  assert.deepEqual(shared.tools.filter((tool) => tools.isAvailable(tool)).map((tool) => tool.name), [], "in tools mode it is decided by name");
+});
+test("extension groups behave like MCP namespaces: an allowlisted key enables every member (late ones too); a lone tool never does in tools mode", () => {
+  const key = "ext__shared";
+  for (const mode of ["tools", "mcp"] as const) {
+    const a = availability(shared, mode, ledger(), allow([], [key]));
+    assert.deepEqual(shared.tools.filter((tool) => a.isAvailable(tool)).map((tool) => tool.name), ["shared_1", "shared_2", ...(mode === "mcp" ? ["loose"] : [])], mode);
+    assert.equal(a.isGroupAvailable(key), true); assert.equal(a.promoted.size, 0);
+  }
+  const lone = availability(shared, "tools", ledger(), allow(["shared_1"]));
+  assert.equal(lone.isGroupAvailable(key), false); assert.equal(lone.isAvailable(shared.byName.get("shared_2")!), false); assert.equal(lone.isAvailable(shared.byName.get("shared_1")!), true);
+  // mcp mode: ANY allowlisted or recorded member promotes the whole extension.
+  for (const [l, al] of [[ledger(), allow(["shared_2"])], [ledger(["shared_2"]), allow()]] as const) {
+    const m = availability(shared, "mcp", l, al);
+    assert.equal(m.isAvailable(shared.byName.get("shared_1")!), true); assert.deepEqual([...m.promoted], [key]);
+  }
+  assert.deepEqual([...remaining(shared, "mcp", availability(shared, "mcp", ledger(), allow()))].sort(), ["ext__ext_a", "ext__shared"]);
+});
+test("serverAllowlisted also matches ext__ keys (lowercased, `-`/`_` folded) and never an MCP namespace of the same name", () => {
+  assert.equal(serverAllowlisted(allow([], ["ext__Shared"]), "ext__shared"), true); assert.equal(serverAllowlisted(allow([], ["ext__shared"]), "mcp__shared"), false);
+  assert.equal(serverAllowlisted(allow([], ["shared"]), "ext__shared"), false, "a bare name is a raw MCP server, never an extension");
 });
 test("mcp mode: ANY allowlisted or ledger tool of a namespace promotes the whole namespace (never half-on)", () => {
   for (const [l, a] of [[ledger(), allow(["mcp__dev_radius__r"])], [ledger(["mcp__dev_radius__r"]), allow()]] as const) {
@@ -58,21 +86,23 @@ test("tool allowlists work in both modes; an allowlist name that is not register
   assert.equal(open("tools", ledger(), allow(["ghost"])).names.length, 2);
   assert.equal(open("mcp", ledger(), allow(["ghost"])).avail.groups.size, 0);
 });
-test("remaining: tool names in tools mode (never internal), namespace keys in mcp mode", () => {
+test("remaining: tool names in tools mode (never internal), group keys (MCP and extension) in mcp mode", () => {
   const t = open("tools", ledger(["ext_a"], ["mcp__docs"]));
   assert.deepEqual([...remaining(inv, "tools", t.avail)].sort(), ["ext_b", "ext_lazy", "mcp__dev_radius__q", "mcp__dev_radius__r"]);
   const m = open("mcp", ledger([], ["mcp__docs"]));
-  assert.deepEqual([...remaining(inv, "mcp", m.avail)], ["mcp__dev_radius"]);
-  assert.equal(remaining(inv, "mcp", open("mcp", ledger([], ["mcp__docs", "mcp__dev_radius"])).avail).size, 0);
+  assert.deepEqual([...remaining(inv, "mcp", m.avail)].sort(), ["ext__ext_a", "ext__ext_b", "ext__ext_lazy", "mcp__dev_radius"]);
+  assert.equal(remaining(inv, "mcp", open("mcp", ledger([], ["mcp__docs", "mcp__dev_radius", "ext__ext_a", "ext__ext_b", "ext__ext_lazy"])).avail).size, 0);
 });
-test("baseGrowth records allowlisted names and available namespaces once; mcp mode also records extension tools", () => {
+test("baseGrowth records allowlisted names and available groups once; mcp mode also records provenance-less extension tools only", () => {
   const l = ledger(); const a = allow(["ext_a", "ghost"], ["docs"]);
   const tools = availability(inv, "tools", l, a);
   assert.deepEqual(baseGrowth(inv, "tools", l, a, tools), { tools: ["ext_a"], groups: ["mcp__docs"] });
   const mcpMode = availability(inv, "mcp", l, a);
-  assert.deepEqual(baseGrowth(inv, "mcp", l, a, mcpMode), { tools: ["ext_a", "ext_b", "ext_lazy"], groups: ["mcp__docs"] });
-  // Already recorded names are not repeated, and a promoted namespace becomes a recorded group.
-  const known = ledger(["ext_a", "ext_b", "ext_lazy"], ["mcp__docs"]);
+  assert.deepEqual(baseGrowth(inv, "mcp", l, a, mcpMode), { tools: ["ext_a"], groups: ["ext__ext_a", "mcp__docs"] }, "ext_a is allowlisted by name and promotes its extension");
+  const withLoose = availability(shared, "mcp", l, allow());
+  assert.deepEqual(baseGrowth(shared, "mcp", l, allow(), withLoose), { tools: ["loose"], groups: [] }, "grouped extension tools are covered by their group, never recorded one by one");
+  // Already recorded names are not repeated, and a promoted group becomes a recorded group.
+  const known = ledger(["ext_a"], ["mcp__docs", "ext__ext_a"]);
   assert.deepEqual(baseGrowth(inv, "mcp", known, a, availability(inv, "mcp", known, a)), { tools: [], groups: [] });
   const promoted = availability(inv, "mcp", ledger(), allow(["mcp__dev_radius__q"]));
   assert.deepEqual(baseGrowth(inv, "mcp", ledger(), allow(["mcp__dev_radius__q"]), promoted).groups, ["mcp__dev_radius"]);
