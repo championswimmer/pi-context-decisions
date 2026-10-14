@@ -82,6 +82,7 @@ test("round 1 adds the best skills; the system prompt keeps only the stable base
   assert.deepEqual(first.shown(), nameList(0, 1, 2));
   const [delta] = h.deltas();
   assert.equal(delta.display, false); assert.deepEqual(h.names(delta), nameList(0, 1, 2));
+  assert.deepEqual(Object.keys((delta.details as { picks?: object }).picks ?? {}), nameList(0, 1, 2), "every newly added prompt pick records its score and threshold");
   const added = h.inventory.slice(0, 3);
   assert.equal(delta.content, `Additional skills are now available; previously listed skills remain available.\n\n${formatSkillsForPrompt(added, "read").trim()}`);
   assert.match(String(delta.content), /<location>\/private\/0\/SKILL\.md<\/location>/, "canonical locations reach the chat model");
@@ -313,6 +314,7 @@ test("queued steering/follow-up user text is picked at turn_end from THAT text; 
   const first = await h.end({ toolResults: TOOL, pendingMessages: [queued] });
   assert.equal(h.requests.length, calls + 1); assert.equal(h.requests.at(-1)!.state.task, "Now deploy to Kubernetes");
   assert.equal(first.drafts.length, 1); assert.deepEqual((first.drafts[0].details as { added: string[] }).added, ["skill-7"]);
+  assert.deepEqual((first.drafts[0].details as { picks?: unknown }).picks, { "skill-7": { score: 2, threshold: 0.375 } }, "the scored pick records its raw score and the threshold it met");
   assert.equal(first.drafts[0].customType, SKILLS_MESSAGE_TYPE); assert.equal(first.drafts[0].display, false); assert.equal(first.continued, false);
   assert.ok(!h.scoredNames(calls).some((name) => nameList(0, 1).includes(name)), "round-1 additions are not re-scored");
   const again = await h.end({ toolResults: TOOL, pendingMessages: [queued] });

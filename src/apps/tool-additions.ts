@@ -1,6 +1,6 @@
 // Additive, incremental scoring for tool/MCP candidates. Pure (no Pi imports); the extension owns the ledger.
 import { rankSkills, type RelevanceClient, type RelevanceItem, type RelevanceOptions, type RelevanceSubject } from "./relevance.ts";
-import { DEFAULT_RELEVANCE_THRESHOLD, safeCode, selectRelevant, validItems, validThreshold } from "./skill-filter.ts";
+import { DEFAULT_RELEVANCE_THRESHOLD, pickMap, safeCode, selectRelevant, validItems, validThreshold, type AdditionPick } from "./skill-filter.ts";
 import type { ToolCandidate } from "./tool-inventory.ts";
 
 export interface ToolAdditionOptions extends RelevanceOptions {
@@ -29,6 +29,8 @@ export interface ToolAdditionResult {
   batchSizes: number[];
   /** Identifiers that were actually evaluated (scored now or reused) in a successful round. */
   considered: string[];
+  /** Raw score and threshold of each added identifier (absent for fail-open and grants that bypass scoring). */
+  picks: Map<string, AdditionPick>;
 }
 /**
  * Scores keyed by task/backend/limits/subject. A later round for the SAME key only scores candidates it has not
@@ -62,7 +64,7 @@ export async function scoreToolAdditions(
   const started = Date.now();
   const batchSizes: number[] = [];
   const done = (fields: Partial<ToolAdditionResult>): ToolAdditionResult =>
-    ({ added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes, considered: [], ...fields });
+    ({ added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes, considered: [], picks: new Map(), ...fields });
   const threshold = options.threshold ?? DEFAULT_RELEVANCE_THRESHOLD;
   const maxAdded = options.maxAdded ?? 8;
   if ((options.subject as string) !== "tool" && (options.subject as string) !== "mcp_server") return done({ errorCode: "config" });
@@ -104,5 +106,5 @@ export async function scoreToolAdditions(
   const order = new Map(unique.map((candidate, index) => [candidate.name, index]));
   items.sort((a, b) => order.get(a.name)! - order.get(b.name)!);
   const { chosen, eligible } = selectRelevant(items, threshold, maxAdded);
-  return done({ added: chosen.map((item) => item.name), eligible, scored: misses.length, reused: cachedItems.size, considered: unique.map((candidate) => candidate.name) });
+  return done({ added: chosen.map((item) => item.name), eligible, scored: misses.length, reused: cachedItems.size, considered: unique.map((candidate) => candidate.name), picks: pickMap(chosen, threshold) });
 }

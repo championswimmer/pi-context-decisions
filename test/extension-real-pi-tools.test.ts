@@ -109,7 +109,7 @@ test("R1 real Pi: the first request declares core tools and the chosen tool only
   assert.deepEqual(h.decisions.map((d) => d.names), [["ext_a", "ext_b", "mcp__srv__x"]], "one decision call scored every external candidate and no internal tool");
   assert.deepEqual(h.session.getActiveToolNames().filter((name) => !CORE.includes(name)), ["ext_a"]);
   const ledger = h.sessionManager.getBranch().filter((entry) => entry.type === "custom" && entry.customType === "context-decisions-tools");
-  assert.deepEqual(ledger.map((entry) => (entry as { data?: unknown }).data), [{ v: 1, tools: ["ext_a"], withheld: ["ext_b", "mcp__srv__x"] }]);
+  assert.deepEqual(ledger.map((entry) => (entry as { data?: unknown }).data), [{ v: 1, tools: ["ext_a"], withheld: ["ext_b", "mcp__srv__x"], picks: { ext_a: { score: 2, threshold: 0.375 } } }]);
   const history = readDecisionsHistory(h.sessionManager);
   assert.deepEqual(history.batches.map((b) => [b.turn, b.items.tools, b.items.noticeTools]), [[1, ["ext_a"], []]], "availability is recorded without inventing a notice for declared tools");
 });

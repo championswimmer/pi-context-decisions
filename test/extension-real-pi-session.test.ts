@@ -119,7 +119,9 @@ test("real Pi: an always-allowed skill is the stable system-prompt base, recorde
   assert.deepEqual(h.decisions[0].skills, ["skill-0", "skill-1", "skill-2", "skill-3", "skill-4"], "the pin is never scored");
   const history = readDecisionsHistory(h.sessionManager);
   assert.equal(history.batches.length, 1, "base record before user and delta after user form ONE batch");
-  assert.deepEqual(history.batches[0].items.base, ["skill-5"], "history confirms base delivery in the actual Pi system section");
+  assert.deepEqual(history.batches[0].items.pinned, ["skill-5"], "history confirms the pinned/allowlisted base in the actual Pi system section");
+  assert.equal(history.batches[0].marks?.pinned?.get("skill-5"), "pinned/allowlisted", "a pin is never shown with a number");
+  assert.deepEqual(history.batches[0].items.base, []);
   assert.deepEqual(history.batches[0].items.skills, ["skill-0", "skill-1"]);
   const system = JSON.stringify(h.contexts[0].messages.filter((m) => m.role === "system"));
   assert.match(system, /<name>skill-5<\/name>/); assert.doesNotMatch(system, /skill-0/);

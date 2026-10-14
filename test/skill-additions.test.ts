@@ -115,3 +115,21 @@ test("cancellation wins over cached scores, before and after the lookup", async 
   const raced = await scoreAdditions("t2", skills, lateClient, { signal: late.signal, timeoutMs: 5000 });
   assert.equal(raced.errorCode, "aborted"); assert.deepEqual(raced.added, []);
 });
+
+test("each newly added skill carries its raw score and the normalized threshold it was selected under; cached rounds keep theirs", async () => {
+  const { client } = recording();
+  const cache = new RelevanceScoreCache();
+  const first = await scoreAdditions("task", skills.slice(3), client, { threshold: 0.375, maxSkills: 2 }, { store: cache, key: "k" });
+  assert.deepEqual([...first.picks!.keys()], first.added.map((skill) => skill.name), "only the added skills carry a pick");
+  for (const skill of first.added) assert.deepEqual(first.picks!.get(skill.name), { score: scores(skill.name), threshold: 0.375 });
+  const second = await scoreAdditions("task", skills.slice(3), client, { threshold: 0.375, maxSkills: 2 }, { store: cache, key: "k" });
+  assert.equal(second.cached, true);
+  for (const skill of second.added) assert.deepEqual(second.picks!.get(skill.name), { score: scores(skill.name), threshold: 0.375 });
+});
+
+test("fail-open adds carry no pick: nothing was scored for them", async () => {
+  const failing: RelevanceClient = { async decide() { throw Object.assign(new Error("boom"), { code: "http" }); } };
+  const result = await scoreAdditions("task", skills.slice(3), failing, { failMode: "open", threshold: 0.375 });
+  assert.equal(result.failedOpen, true);
+  assert.equal(result.picks?.size ?? 0, 0);
+});

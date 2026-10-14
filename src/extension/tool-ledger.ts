@@ -1,4 +1,5 @@
 import type { BranchEntryLike } from "./skill-ledger.ts";
+import type { AdditionPick } from "../apps/skill-filter.ts";
 
 /**
  * Per-branch tool availability ledger, derived only from the active session branch (like the skill ledger).
@@ -23,6 +24,10 @@ export interface ToolLedgerData {
   released?: string[];
   /** Candidates already evaluated by the `initial` pick (so catch-up never re-picks them). */
   considered?: string[];
+  /** Tools/groups of THIS record that were made available by an allowlist (bypass scoring; never given a pick). */
+  allowlisted?: string[];
+  /** Raw score and threshold (numbers only) of each tool/group made available by a scored pick, keyed by name. */
+  picks?: Record<string, AdditionPick>;
   /** The first user task after filtering became active on this branch (`initial` cadence). */
   initialTask?: string;
 }
@@ -76,7 +81,7 @@ export function readToolLedger(session: ToolsLedgerSession): ToolLedgerState {
   return state;
 }
 const unique = (values: Iterable<string>): string[] => [...new Set(values)];
-export interface ToolRecordFields { tools?: Iterable<string>; groups?: Iterable<string>; withheld?: Iterable<string>; released?: Iterable<string>; considered?: Iterable<string>; initialTask?: string }
+export interface ToolRecordFields { tools?: Iterable<string>; groups?: Iterable<string>; withheld?: Iterable<string>; released?: Iterable<string>; considered?: Iterable<string>; allowlisted?: Iterable<string>; picks?: ReadonlyMap<string, AdditionPick>; initialTask?: string }
 /**
  * Persistent records, split into chunks of at most MAX_NAMES names per list so NOTHING is ever truncated (a 1001st withheld tool must stay
  * owned, and a 1001st available/considered name must stay available). The reader applies every record in order, so chunking is lossless.
@@ -84,12 +89,23 @@ export interface ToolRecordFields { tools?: Iterable<string>; groups?: Iterable<
  */
 export function toolRecords(fields: ToolRecordFields): ToolLedgerData[] {
   const lists = (["tools", "groups", "withheld", "released", "considered"] as const).map((key) => [key, fields[key] ? unique(fields[key]!) : []] as const);
+  const allowed = new Set(fields.allowlisted ?? []);
   const count = Math.max(0, ...lists.map(([, list]) => Math.ceil(list.length / MAX_NAMES)));
   const initialTask = fields.initialTask?.trim() ? fields.initialTask.slice(0, MAX_TASK_CHARS) : undefined;
   const records: ToolLedgerData[] = [];
   for (let index = 0; index < Math.max(count, initialTask ? 1 : 0); index++) {
     const data: ToolLedgerData = { v: 1 };
-    for (const [key, list] of lists) { const chunk = list.slice(index * MAX_NAMES, (index + 1) * MAX_NAMES); if (chunk.length) data[key] = chunk; }
+    const placed = new Set<string>();
+    for (const [key, list] of lists) {
+      const chunk = list.slice(index * MAX_NAMES, (index + 1) * MAX_NAMES);
+      if (chunk.length) data[key] = chunk;
+      if (key === "tools" || key === "groups") for (const name of chunk) placed.add(name);
+    }
+    // Picks and allowlist marks travel in the record that lists their name (never split from it), so chunking stays lossless and the reader needs no cross-record lookup.
+    const picks = [...placed].filter((name) => fields.picks?.has(name)).map((name) => [name, { ...fields.picks!.get(name)! }] as const);
+    if (picks.length) data.picks = Object.fromEntries(picks);
+    const allowlisted = [...placed].filter((name) => allowed.has(name));
+    if (allowlisted.length) data.allowlisted = allowlisted;
     if (index === 0 && initialTask) data.initialTask = initialTask;
     records.push(data);
   }

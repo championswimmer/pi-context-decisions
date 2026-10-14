@@ -11,7 +11,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { IncrementalScoreCache, scoreToolAdditions, type ToolAdditionResult } from "../apps/tool-additions.ts";
 import { classifyTools, candidatesFor, canonicalServerKey, serverKey, type ClassifiedTool, type ToolInventory } from "../apps/tool-inventory.ts";
 import { availability, baseGrowth, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type Availability, type EffectiveAllowlists } from "../apps/tool-policy.ts";
-import { taskWithoutExpandedSkill, safeCode } from "../apps/skill-filter.ts";
+import { taskWithoutExpandedSkill, safeCode, type AdditionPick } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
 import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
 import type { ProjectAllowlistLoad } from "../project-allowlist.ts";
@@ -67,7 +67,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   const { pi } = deps;
   const cache = new IncrementalScoreCache();
   /** Not-yet-flushed ledger additions (lazy gate rounds, a round whose turn was cut short). Dropped on branch change. */
-  const fresh = () => ({ marker: false, tools: new Set<string>(), groups: new Set<string>(), considered: new Set<string>(), withheld: new Set<string>(), released: new Set<string>(), initialTask: undefined as string | undefined });
+  const fresh = () => ({ marker: false, tools: new Set<string>(), groups: new Set<string>(), considered: new Set<string>(), withheld: new Set<string>(), released: new Set<string>(), initialTask: undefined as string | undefined, picks: new Map<string, AdditionPick>(), allowlisted: new Set<string>() });
   let pend = fresh();
   let runTask: string | undefined;
   let failedKey: string | undefined;
@@ -113,6 +113,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     const undo: (() => void)[] = [];
     return {
       add(set: Set<string>, value: string) { if (!set.has(value)) { set.add(value); undo.push(() => { set.delete(value); }); } },
+      put<V>(map: Map<string, V>, key: string, value: V) { const had = map.has(key), previous = map.get(key); map.set(key, value); undo.push(() => { if (had) map.set(key, previous as V); else map.delete(key); }); },
       marker() { const owner = pend; if (!owner.marker) { owner.marker = true; undo.push(() => { owner.marker = false; }); } },
       initialTask(task: string) { const owner = pend; if (owner.initialTask === undefined) { owner.initialTask = task; undo.push(() => { if (owner.initialTask === task) owner.initialTask = undefined; }); } },
       undo() { while (undo.length) undo.pop()!(); },
@@ -150,6 +151,8 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     return { inv, settings, mode, ledger, allow, avail: availability(inv, mode, ledger, allow) };
   };
   const addAvailable = (mode: ToolFilterMode, names: Iterable<string>, j?: Journal) => { for (const name of names) { const set = mode === "mcp" ? pend.groups : pend.tools; if (j) j.add(set, name); else set.add(name); } };
+  /** A group bypasses scoring as allowlisted when its server/extension key is allowlisted or one of its tools is (a promotion from the ledger alone is base, not allowlisted). */
+  const groupAllowlisted = (inv: ToolInventory, key: string, allow: EffectiveAllowlists) => serverAllowlisted(allow, key) || (inv.groups.get(key)?.tools ?? []).some((name) => allow.tools.has(name));
 
   /**
    * Score undecided candidates. `only` narrows to specific identifiers; `needScore` restricts to candidates a decision call would be
@@ -181,12 +184,17 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         concurrency: settings.relevance.concurrency, timeoutMs: settings.relevance.timeoutMs, maxQuestions: 50, signal: options.signal,
       }, { store: cache, key });
     } catch (error2) {
-      round = { added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes: [], considered: [], errorCode: safeCode(error2) };
+      round = { added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes: [], considered: [], picks: new Map(), errorCode: safeCode(error2) };
     } finally { endDecisionLoader(); }
     // A superseded (settings/allowlist save, branch change, session replacement) or cancelled round commits nothing.
     if (options.generation !== deps.generation() || options.signal.aborted) return "superseded";
     if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
     addAvailable(mode, round.added, options.journal);
+    for (const name of round.added) {
+      const pick = round.picks.get(name);
+      if (!pick) continue; // fail-open adds carry no score
+      if (options.journal) options.journal.put(pend.picks, name, pick); else pend.picks.set(name, pick);
+    }
     if (options.recordConsidered && !round.errorCode) for (const name of round.considered) { if (options.journal) options.journal.add(pend.considered, name); else pend.considered.add(name); }
     const usage = deps.sumUsage(responses);
     last = {
@@ -206,11 +214,12 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     // Additive base: allowlisted names, promoted groups and (mcp mode) ungrouped extension tools are recorded, so allowlist removal or a mode switch never removes availability.
     if (how === "on") {
       const growth = baseGrowth(inv, mode, ledger, allow, avail);
-      for (const name of growth.tools) pend.tools.add(name);
-      for (const key of growth.groups) pend.groups.add(key);
+      // Allowlist grants bypass scoring and are recorded as `allowlisted`, never with a score.
+      for (const name of growth.tools) { pend.tools.add(name); if (allow.tools.has(name)) pend.allowlisted.add(name); }
+      for (const key of growth.groups) { pend.groups.add(key); if (groupAllowlisted(inv, key, allow)) pend.allowlisted.add(key); }
       // Allowlisted servers with no registered tools (resource-only) are recorded by canonical key too, so removing the allowlist entry later
       // does not revoke access that was available on this branch.
-      for (const entry of allow.servers) { const key = canonicalServerKey(entry); if (!ledger.groups.has(key)) pend.groups.add(key); }
+      for (const entry of allow.servers) { const key = canonicalServerKey(entry); if (!ledger.groups.has(key)) { pend.groups.add(key); pend.allowlisted.add(key); } }
       ledger = merged(ctx); avail = availability(inv, mode, ledger, allow);
     }
     const active = pi.getActiveTools();
@@ -264,10 +273,14 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
    * registers later in the same run is never mistaken for "filtering was enabled mid-session" (which would record it as already seen).
    */
   const toRecords = (taken: Pending, ledger: ToolLedgerState): ToolLedgerData[] => {
+    const tools = [...taken.tools].filter((name) => !ledger.tools.has(name));
+    const groups = [...taken.groups].filter((key) => !ledger.groups.has(key));
+    const recorded = new Set([...tools, ...groups]);
     const records = toolRecords({
-      tools: [...taken.tools].filter((name) => !ledger.tools.has(name)), groups: [...taken.groups].filter((key) => !ledger.groups.has(key)),
+      tools, groups,
       considered: [...taken.considered].filter((name) => !ledger.considered.has(name)),
       withheld: [...taken.withheld].filter((name) => !ledger.withheld.has(name)), released: [...taken.released].filter((name) => ledger.withheld.has(name)),
+      allowlisted: [...taken.allowlisted].filter((name) => recorded.has(name)), picks: taken.picks,
       initialTask: ledger.initialTask === undefined ? taken.initialTask : undefined,
     });
     const had = taken.marker || taken.tools.size + taken.groups.size + taken.considered.size + taken.withheld.size + taken.released.size > 0 || taken.initialTask !== undefined;
@@ -327,7 +340,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           const usable = (key: string): boolean => {
             // Durable and additive: a canonical key recorded on this branch (allowlisted resource-only servers included) stays usable.
             if (c.ledger.groups.has(key)) return true;
-            if (serverAllowlisted(allow, key)) { if (state === "on") pend.groups.add(key); return true; }
+            if (serverAllowlisted(allow, key)) { if (state === "on") { pend.groups.add(key); pend.allowlisted.add(key); } return true; }
             const group = inv.groups.get(key);
             if (!group) return false; // unknown or resource-only server: fail closed unless allowlisted or previously recorded
             return c.avail.isGroupAvailable(key) || (mode === "tools" && group.tools.some((name) => c.avail.isAvailable(inv.byName.get(name)!)));

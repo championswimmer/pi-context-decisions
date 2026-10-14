@@ -205,7 +205,7 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
 
 for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview and scrollable details reuse the focused overlay while the transcript grows`, async () => {
   const ops: SettingsDialogOps = { ...fakeOps(), async history() { return { batches: [{ turn: 4, answered: true,
-    items: { skills: Array.from({ length: 120 }, (_, n) => `skill-${n}`), base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }; } };
+    items: { skills: Array.from({ length: 120 }, (_, n) => `skill-${n}`), pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }; } };
   const s = await scenario(rows, 0, "history", ops);
   const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + rows).join("\n"); };
   await new Promise((resolve) => setImmediate(resolve)); s.tui.renderNow(); await s.terminal.flush();

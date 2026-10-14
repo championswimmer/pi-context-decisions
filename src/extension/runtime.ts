@@ -259,15 +259,15 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       };
       if (superseded()) { bail(); return; }
       const ledger = ledgerFor(ctx);
-      const growBase = (names: Iterable<string>) => {
+      const growBase = (names: Iterable<string>, pinnedNames = false) => {
         if (!reader) return;
         const fresh = [...new Set(names)].filter((name) => inventoryNames.has(name) && !ledger.base.has(name));
         if (!fresh.length) return;
-        pi.appendEntry(SKILLS_BASE_ENTRY, { v: 1, names: fresh });
+        pi.appendEntry(SKILLS_BASE_ENTRY, pinnedNames ? { v: 1, names: fresh, pinned: true } : { v: 1, names: fresh });
         for (const name of fresh) ledger.base.add(name);
       };
       const applyBase = () => setSystemSkills(ledger.base);
-      growBase(pinned); // allowlist removals never shrink the base: advertisements are only ever added
+      growBase(pinned, true); // allowlist removals never shrink the base: advertisements are only ever added
       const lostSkills = reader ? ledger.lost.flatMap((name) => skillRefs.get(name) ?? []) : [];
       const { client, error: configError } = resolveClient(ctx, current, responses);
       let reason: LastDecision["reason"] = "skipped";
@@ -295,7 +295,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       // Re-check cancellation right before committing: cached scores or restoration must not slip past an abort.
       const cancelled = signal.aborted;
       const added = cancelled ? [] : round?.added ?? [];
-      const delta = reader && !cancelled ? buildSkillsDelta(added, lostSkills, reader) : undefined;
+      const delta = reader && !cancelled ? buildSkillsDelta(added, lostSkills, reader, round?.picks) : undefined;
       const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
       record(round, {
         reason, candidates: round?.candidates ?? invocable.length, kept: added.length,
@@ -353,7 +353,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       }
       if (currentGeneration !== generation || signal.aborted) return; // stale or cancelled (even with cached scores): commit nothing
       const added = round?.added ?? [];
-      const delta = buildSkillsDelta(added, lostSkills, reader);
+      const delta = buildSkillsDelta(added, lostSkills, reader, round?.picks);
       if (round) {
         const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
         record(round, {

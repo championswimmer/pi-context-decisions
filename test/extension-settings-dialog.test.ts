@@ -602,7 +602,7 @@ test("deep links to the tool picker open it as the sole root; tool and MCP allow
 });
 
 const historyFixture = (turn = 3, count = 1): DecisionsHistory => ({ batches: [{ turn, answered: true,
-  items: { skills: Array.from({ length: count }, (_, n) => `skill-${n}`), base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] });
+  items: { skills: Array.from({ length: count }, (_, n) => `skill-${n}`), pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] });
 
 test("history lists newest non-empty batches first, drills into every name, and refreshes explicitly without mutations", async () => {
   let snapshot = historyFixture(3, 1001);

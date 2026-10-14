@@ -24,6 +24,11 @@ export function selectRelevant(items: readonly RelevanceItem[], threshold: numbe
     .sort((a, b) => b.item.score - a.item.score || a.index - b.index);
   return { chosen: eligible.slice(0, maxSkills).map(({ item }) => item), eligible: eligible.length };
 }
+/** A newly added item: its raw 0–2 score and the normalized (0–1) threshold it was selected under. */
+export interface AdditionPick { score: number; threshold: number }
+export function pickMap(chosen: readonly RelevanceItem[], threshold: number): Map<string, AdditionPick> {
+  return new Map(chosen.map((item) => [item.name, { score: item.score, threshold }] as [string, AdditionPick]));
+}
 function uniqueSkills<T extends { name: string }>(skills: readonly T[]): T[] {
   const names = new Set<string>();
   return skills.filter((skill) => {
