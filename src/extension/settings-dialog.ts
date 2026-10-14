@@ -10,6 +10,7 @@ import type { BackendSelection } from "../core/backends/factory.ts";
 import type { ContextDecisionsSettings } from "../settings.ts";
 import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext } from "./contracts.ts";
+import { HISTORY_NOTE, historyBatchLines, historyBatchSummary, historyBatchTitle, type DecisionsHistory, type HistoryBatch } from "./decisions-history.ts";
 import {
   ADVANCED_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
   sanitizeTerminalText, type SettingsGroup,
@@ -27,8 +28,9 @@ export type SettingsRoute =
   | { kind: "main" } | { kind: "advanced" } | { kind: "tools" } | { kind: "provider" }
   | { kind: "model"; filter?: { backend: BackendSelection["backend"]; provider?: string } }
   | { kind: "edit"; key: string; group?: SettingsGroup } | { kind: "options"; key: string; group?: SettingsGroup }
-  | { kind: "status" } | { kind: "allowlist"; scope: AllowlistScope; list?: AllowlistKind };
-export type InitialRoute = "main" | "advanced" | "tools" | "provider" | "model" | { allowlist: AllowlistScope; list?: AllowlistKind };
+  | { kind: "status" } | { kind: "history" } | { kind: "history-batch"; batch: HistoryBatch }
+  | { kind: "allowlist"; scope: AllowlistScope; list?: AllowlistKind };
+export type InitialRoute = "main" | "advanced" | "tools" | "provider" | "model" | "history" | { allowlist: AllowlistScope; list?: AllowlistKind };
 export type DialogResult = "closed" | "shutdown";
 
 export interface DialogSnapshot { settings: ContextDecisionsSettings; settingsError?: string; hasCwd: boolean }
@@ -45,6 +47,8 @@ export interface SettingsDialogOps {
   listModels(filter: Extract<SettingsRoute, { kind: "model" }>["filter"], signal: AbortSignal): Promise<ModelRow[]>;
   selectModel(selection: BackendSelection | null, signal: AbortSignal): Promise<{ message: string }>;
   statusLines(signal: AbortSignal): Promise<string[]>;
+  /** Local committed branch snapshot. No live decisions, credentials or settings mutations. */
+  history?(signal: AbortSignal): Promise<DecisionsHistory>;
   allowlist(scope: AllowlistScope, signal: AbortSignal): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">>;
   /** Editors for the tool and MCP server allowlists. Absent in hosts without tool filtering. */
   toolAllowlist?(list: Exclude<AllowlistKind, "skills">, scope: AllowlistScope, signal: AbortSignal): Promise<Omit<AllowlistPickerDeps, "report" | "maxRows">>;
@@ -73,6 +77,7 @@ interface Frame {
   providers?: ProviderRow[];
   models?: ModelRow[];
   lines?: string[];
+  history?: DecisionsHistory;
   input?: Input;
   child?: Component & Focusable & { dispose(): void };
 }
@@ -178,6 +183,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     else if (route.kind === "provider") load(frame, (signal) => ops.listProviders(signal), (rows) => { frame.providers = rows; frame.selected = 0; });
     else if (route.kind === "model") load(frame, (signal) => ops.listModels(route.filter, signal), (rows) => { frame.models = rows; frame.selected = 0; });
     else if (route.kind === "status") load(frame, (signal) => ops.statusLines(signal), (lines) => { frame.lines = lines.map((line) => sanitizeTerminalText(line, 800)); frame.scroll = 0; });
+    else if (route.kind === "history") load(frame, (signal) => ops.history ? ops.history(signal) : Promise.reject(new Error("Session history is unavailable")), (history) => { frame.history = history; frame.selected = 0; frame.offset = 0; });
+    else if (route.kind === "history-batch") { frame.lines = historyBatchLines(route.batch); frame.scroll = 0; }
     else if (route.kind === "edit") {
       const input = new Input({ prompt: "Value: " });
       input.setValue(String(fieldValue(snap.settings, route.group ?? "relevance", route.key)));
@@ -246,6 +253,14 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   const itemsFor = (frame: Frame): Item[] => {
     const route = frame.route;
     const settings = snap.settings;
+    if (route.kind === "history") {
+      if (!frame.history) return [{ label: frame.loading ? "Reading committed branch…" : "History unavailable", disabled: "Ctrl+R retries reading the active branch. No decision calls are made.", run: () => {} }];
+      if (!frame.history.batches.length) return [{ label: "No committed additions on this branch", disabled: "Empty turns are omitted. Ctrl+R refreshes the committed branch snapshot.", run: () => {} }];
+      return [...frame.history.batches].reverse().map((batch) => ({
+        label: historyBatchTitle(batch), value: historyBatchSummary(batch), description: HISTORY_NOTE,
+        run: () => push({ kind: "history-batch", batch }),
+      }));
+    }
     if (route.kind === "main") return [
       { label: "Context decisions", value: settings.enabled ? "On" : "Off", toggle: true, tone: settings.enabled ? "ok" : "muted",
         description: "Immediately enables or disables skill filtering. Choosing a provider or model never changes this.",
@@ -345,6 +360,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "model": return "Decisions › Model";
       case "edit": case "options": return `Decisions › ${route.group === "tools" ? "Tool picker" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
+      case "history": return "Decisions › History";
+      case "history-batch": return `Decisions › History › ${historyBatchTitle(route.batch)}`;
       case "allowlist": return `Decisions › Always allowed${route.list === "tools" ? " tools" : route.list === "mcp" ? " MCP servers & extensions" : ""} · ${route.scope === "global" ? "Global" : "Project"}`;
     }
   };
@@ -353,6 +370,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "main": case "tools": return "Tab switch · ↑↓ move · Enter select · Space toggle · Esc close";
       case "edit": return "Enter save · Esc cancel";
       case "status": return "↑↓ scroll · Enter refresh · Esc back";
+      case "history": return "↑↓ batch · Enter details · Ctrl+R refresh · Esc back";
+      case "history-batch": return "↑↓ / PgUp/PgDn scroll · Home/End · Esc back";
       case "allowlist": return "Esc back";
       default: return "↑↓ move · Enter select · Space toggle · Esc back";
     }
@@ -400,7 +419,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     frame.selected = Math.min(Math.max(0, frame.selected), Math.max(0, items.length - 1));
     const selected = items[frame.selected];
     const longest = items.reduce((max, item) => Math.max(max, visibleWidth(sanitizeTerminalText(item.label, 120))), 0);
-    const valueWidth = Math.min(28, items.reduce((max, item) => Math.max(max, visibleWidth(sanitizeTerminalText(item.value ?? "", 160))), 0));
+    // In history the turn number is the primary navigation cue: counts must yield before it is clipped.
+    const valueWidth = Math.min(frame.route.kind === "history" ? Math.max(0, inner - 22) : 28,
+      items.reduce((max, item) => Math.max(max, visibleWidth(sanitizeTerminalText(item.value ?? "", 160))), 0));
     // Labels get every column the values do not need, so long provider names are not clipped needlessly.
     const labelCol = Math.max(8, Math.min(longest, inner - 2 - 2 - valueWidth));
     const row = (item: Item, index: number): string => {
@@ -464,7 +485,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         ]);
         // Keep priorities honest on tiny heights: input and banner outrank label and hint.
         if (bodyBudget < 4) body = fit(bodyBudget, [{ lines: [], min: 0 }, { lines: [], min: 0 }, { lines: frame.input.render(inner), min: 1 }, { lines: bannerLines(frame, inner), min: 1 }]);
-      } else if (route.kind === "status") {
+      } else if (route.kind === "status" || route.kind === "history-batch") {
         const banner = bannerLines(frame, inner);
         const lines = frame.lines ? frame.lines.flatMap((line) => wrapTextWithAnsi(line, inner)) : [theme.fg("muted", frame.loading ? "Collecting status without inference calls…" : "Nothing to show")];
         const room = Math.max(1, bodyBudget - Math.min(banner.length, Math.max(0, bodyBudget - 1)));
@@ -501,12 +522,15 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         if (matchesKey(data, "left")) { selectTab("main"); return; }
         if (matchesKey(data, "right")) { selectTab("tools"); return; }
       }
-      if (frame.route.kind === "status") {
+      if (frame.route.kind === "history" && matchesKey(data, "ctrl+r")) { frame.banner = undefined; enter(frame); redraw(); return; }
+      if (frame.route.kind === "status" || frame.route.kind === "history-batch") {
         if (keys.matches(data, "tui.select.up")) frame.scroll = Math.max(0, frame.scroll - 1);
         else if (keys.matches(data, "tui.select.down")) frame.scroll += 1;
         else if (keys.matches(data, "tui.select.pageUp")) frame.scroll = Math.max(0, frame.scroll - 5);
         else if (keys.matches(data, "tui.select.pageDown")) frame.scroll += 5;
-        else if (keys.matches(data, "tui.select.confirm") && !frame.loading) enter(frame);
+        else if (matchesKey(data, "home")) frame.scroll = 0;
+        else if (matchesKey(data, "end")) frame.scroll = Number.MAX_SAFE_INTEGER;
+        else if (frame.route.kind === "status" && keys.matches(data, "tui.select.confirm") && !frame.loading) enter(frame);
         redraw();
         return;
       }

@@ -11,6 +11,7 @@ import { createCodemodeExtension, createMcpExtension, createToolSearchExtension,
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
+import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import { defaultSettings, defaultToolSettings, saveSettings, type ToolFilterSettings } from "../src/settings.ts";
 
@@ -109,6 +110,8 @@ test("R1 real Pi: the first request declares core tools and the chosen tool only
   assert.deepEqual(h.session.getActiveToolNames().filter((name) => !CORE.includes(name)), ["ext_a"]);
   const ledger = h.sessionManager.getBranch().filter((entry) => entry.type === "custom" && entry.customType === "context-decisions-tools");
   assert.deepEqual(ledger.map((entry) => (entry as { data?: unknown }).data), [{ v: 1, tools: ["ext_a"], withheld: ["ext_b", "mcp__srv__x"] }]);
+  const history = readDecisionsHistory(h.sessionManager);
+  assert.deepEqual(history.batches.map((b) => [b.turn, b.items.tools, b.items.noticeTools]), [[1, ["ext_a"], []]], "availability is recorded without inventing a notice for declared tools");
 });
 
 test("R2 real Pi: a tool registered during the first tool execution is reconciled at turn_end and reaches the SECOND request of the same run", async (t) => {

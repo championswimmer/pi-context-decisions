@@ -16,13 +16,14 @@ import { createSettingsDialogManager, type DialogLife, type InitialRoute, type M
 import { ADVANCED_FIELDS, TOOL_FIELDS, describeError, fieldValue, sanitizeTerminalText, toolsSummary, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
+import { readDecisionsHistory, historyReportLines } from "./decisions-history.ts";
 
 /**
  * Everything a setting can be changed with lives in the settings dialog (RPC: its select/input menus), so the
  * text command surface is only what the dialog cannot do: read-only reports, the explicit paid self-test and the
  * legacy `pinned` list. `tools`/`mcp` accept only `list`.
  */
-const COMMANDS = ["status", "test", "tools", "mcp", "pin", "unpin"];
+const COMMANDS = ["status", "history", "test", "tools", "mcp", "pin", "unpin"];
 type DirectProvider = "openai" | "typesafe" | "openrouter";
 function cleanLabel(value: string): string { return sanitizeTerminalText(value, 400); }
 const safeError = describeError;
@@ -41,6 +42,7 @@ export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefin
     hasUI: { value: hasUI, enumerable: true }, mode: { value: mode, enumerable: true }, cwd: { value: cwd, enumerable: true },
     ui: { get: () => guard(() => ctx.ui), enumerable: true },
     modelRegistry: { get: () => guard(() => ctx.modelRegistry), enumerable: true },
+    sessionManager: { get: () => guard(() => ctx.sessionManager), enumerable: true },
     signal: { value: signal, enumerable: true },
   });
 }
@@ -404,6 +406,11 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
     },
     async selectModel(selection, signal) { return { message: await saveModel(controller, scoped(signal), selection, env) }; },
     statusLines: (signal) => statusLines(controller, scoped(signal), env),
+    async history(signal) {
+      const session = scoped(signal).sessionManager;
+      if (!session) throw new SettingsError("This Pi host does not expose session history");
+      return readDecisionsHistory(session);
+    },
     allowlist: (scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal),
     toolAllowlist: (list, scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal, list),
   };
@@ -447,7 +454,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
     controller.report(ctx, toolListLines(await controller.describeTools(ctx), which).join("\n"));
   };
   pi.registerCommand("decisions", {
-    description: "Context decisions settings dialog (also: status, test, tools list, mcp list)",
+    description: "Context decisions settings dialog (also: status, history, test, tools list, mcp list)",
     getArgumentCompletions(prefix) { const values = COMMANDS.filter((value) => value.startsWith(prefix)); return values.length ? values.map((value) => ({ value, label: value })) : null; },
     async handler(args, ctx) {
       await controller.ensureLoaded();
@@ -461,6 +468,13 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
           return;
         }
         if (action === "status" && !tokens.length) await status(controller, ctx, env);
+        else if (action === "history" && !tokens.length) {
+          if (terminal(ctx)) await openDialog(ctx, "history");
+          else {
+            if (!ctx.sessionManager) throw new SettingsError("This Pi host does not expose session history");
+            controller.report(ctx, historyReportLines(readDecisionsHistory(ctx.sessionManager)).join("\n"));
+          }
+        }
         else if (action === "tools" || action === "mcp") await listCommand(ctx, action, tokens);
         else if ((action === "pin" || action === "unpin") && tokens.length === 1) {
           await controller.update((current) => ({ ...current, relevance: { ...current.relevance, pinned: action === "pin" ? [...new Set([...current.relevance.pinned, tokens[0]])] : current.relevance.pinned.filter((name) => name !== tokens[0]) } }));

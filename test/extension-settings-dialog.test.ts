@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, visibleWidth, stripTerminalSequences } from "@earendil-works/pi-tui";
 import type { ScopedSkill } from "../src/apps/allowlist.ts";
 import type { RelevanceItem } from "../src/apps/relevance.ts";
 import { defaultSettings, SettingsError, updateSetting, type ContextDecisionsSettings } from "../src/settings.ts";
@@ -9,6 +9,7 @@ import {
   createSettingsDialogComponent, createSettingsDialogManager, type DialogResult, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps,
 } from "../src/extension/settings-dialog.ts";
 import type { AllowlistPickerDeps } from "../src/extension/allowlist-picker.ts";
+import type { DecisionsHistory, HistoryBatch } from "../src/extension/decisions-history.ts";
 
 const KEY = { tab: "\t", shiftTab: "\x1b[Z", left: "\x1b[D", right: "\x1b[C", down: "\x1b[B", up: "\x1b[A", enter: "\r", esc: "\x1b", space: " ", backspace: "\x7f", save: "\x13", rank: "\x12", pageDown: "\x1b[6~" };
 const theme = { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value } as Parameters<typeof createSettingsDialogComponent>[1];
@@ -598,4 +599,64 @@ test("deep links to the tool picker open it as the sole root; tool and MCP allow
   assert.match(g.text(), /Always allowed MCP servers & extensions · Global/);
   g.press(KEY.esc); assert.match(g.text(), /Decisions › Tool picker/); assert.equal(g.results.length, 0);
   g.component.navigate("main"); assert.match(g.text(), /Decisions › Skill picker/); g.component.dispose();
+});
+
+const historyFixture = (turn = 3, count = 1): DecisionsHistory => ({ batches: [{ turn, answered: true,
+  items: { skills: Array.from({ length: count }, (_, n) => `skill-${n}`), base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] });
+
+test("history lists newest non-empty batches first, drills into every name, and refreshes explicitly without mutations", async () => {
+  let snapshot = historyFixture(3, 1001);
+  const older = historyFixture(1).batches[0]; snapshot.batches.unshift(older);
+  let reads = 0;
+  const f = fakeOps({ async history() { reads++; return snapshot; } });
+  const h = mount(f, { initialRoute: "history", rows: 24 });
+  assert.match(h.text(), /Reading committed branch/); await h.until(/Before turn 3/);
+  assert.match(h.text(), /❯ Before turn 3/); assert.ok(h.text().indexOf("Before turn 3") < h.text().indexOf("Before turn 1"));
+  h.press(KEY.enter); assert.match(h.text(), /Skills advertised/); assert.match(h.text(), /skill-0/);
+  h.press("\x1b[F"); assert.match(h.text(), /skill-1000/);
+  h.press("\x1b[H"); assert.match(h.text(), /Skills advertised/);
+  h.press(KEY.pageDown); assert.doesNotMatch(h.text(), /skill-0\s/);
+  h.press(KEY.esc); assert.match(h.text(), /❯ Before turn 3/);
+  snapshot = historyFixture(5); h.press(KEY.rank); await h.until(/Before turn 5/);
+  assert.doesNotMatch(h.text(), /Before turn 3/); assert.equal(reads, 2);
+  assert.deepEqual(f.calls.filter((c) => c.startsWith("updateSetting") || c === "toggleEnabled"), []);
+  h.press(KEY.esc); assert.match(h.text(), /Decisions › Skill picker/);
+  h.press(KEY.esc); assert.deepEqual(h.results, ["closed"]); h.component.dispose();
+});
+
+test("history empty/error/loading states are inline, refreshable and drop late completion on navigation/shutdown", async () => {
+  const pending = deferred<DecisionsHistory>(); const signals: AbortSignal[] = [];
+  let call = 0;
+  const f = fakeOps({ async history(signal) { signals.push(signal); call++; if (call === 1) return pending.promise; if (call === 2) throw new Error("PRIVATE"); return { batches: [] }; } });
+  const h = mount(f, { initialRoute: "history" }); assert.match(h.text(), /Reading committed branch/);
+  h.press(KEY.rank); await h.until(/Context-decisions operation failed/);
+  assert.equal(signals[0].aborted, true); assert.doesNotMatch(h.text(), /PRIVATE/);
+  pending.resolve(historyFixture(999)); await tick(); assert.doesNotMatch(h.text(), /999/, "superseded refresh is discarded");
+  h.press(KEY.rank); await h.until(/No committed additions on this branch/);
+  h.component.close("shutdown"); h.press(KEY.rank); await tick();
+  assert.equal(call, 3); assert.deepEqual(h.results, ["shutdown"]);
+});
+
+test("history overview and details stay sanitized and width/height-bounded at narrow and tiny terminal sizes", async () => {
+  const batch: HistoryBatch = { ...historyFixture(2).batches[0], timestamp: "2026-10-12T00:00:00.000Z" };
+  batch.items.skills = ["界".repeat(180) + "\x1b\n\u202e"];
+  batch.items.tools = ["name\r\x07"];
+  for (const rows of [4, 10, 16, 24, 40]) {
+    const h = mount(fakeOps({ async history() { return { batches: [batch] }; } }), { initialRoute: "history", rows });
+    await tick();
+    assert.match(h.text(30), /Before turn 2/, "the turn number outranks summary counts at narrow widths");
+    for (const details of [false, true]) {
+      if (details) h.press(KEY.enter);
+      for (const width of [1, 7, 16, 30, 60, 120]) {
+        const lines = h.component.render(width);
+        assert.ok(lines.length <= dialogHeightBudget(rows), `${rows}x${width}: ${lines.length}`);
+        for (const line of lines) {
+          assert.ok(visibleWidth(line) <= width, `${width}: ${JSON.stringify(line)}`);
+          // truncateToWidth may add its own trusted SGR reset.
+          assert.doesNotMatch(stripTerminalSequences(line), /\x1b|\r|\x07|\u202e/);
+        }
+      }
+    }
+    h.component.dispose();
+  }
 });

@@ -83,7 +83,7 @@ test("headless status shows allowlist counts; the removed allow/allowlist subcom
   await saveSettings({ ...defaultSettings(), globalAllowlist: ["alpha", "unseen"] }, h.path); await saveProjectAllowlist(h.root, ["project-only"]);
   await h.emitReload();
   await h.command("status"); assert.match(h.messages.at(-1)!, /global 2, project 1/);
-  for (const args of ["allow global add x", "allow project clear", "allow global list", "allowlist global"]) { await h.command(args); assert.match(h.messages.at(-1)!, /^Use \/decisions status\|test\|tools\|mcp\|pin\|unpin/, args); }
+  for (const args of ["allow global add x", "allow project clear", "allow global list", "allowlist global"]) { await h.command(args); assert.match(h.messages.at(-1)!, /^Use \/decisions status\|history\|test\|tools\|mcp\|pin\|unpin/, args); }
   assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha", "unseen"]);
   assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]); assert.equal(h.overlays.length, 0); assert.deepEqual(h.requests, []);
   const projectFile = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8")); assert.deepEqual(projectFile, { alwaysAllowed: ["project-only"] });

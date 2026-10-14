@@ -68,8 +68,8 @@ test("real entry factory registers one command and seven hooks (two for opt-in t
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
   assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "turn_end", "tool_call", "agent_end"]);
-  // The dialog owns every setting: only status, the paid self-test, read-only listings and the legacy pin list remain as arguments.
-  assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "test", "tools", "mcp", "pin", "unpin"]);
+  // The dialog owns every setting: only status/history, the paid self-test, read-only listings and the legacy pin list remain as arguments.
+  assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "history", "test", "tools", "mcp", "pin", "unpin"]);
   assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("mo"), null);
 });
 test("real Pi context registry is type-compatible without a cast in production", () => {

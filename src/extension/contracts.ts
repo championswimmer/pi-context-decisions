@@ -20,7 +20,7 @@ export interface CommandContext {
   ui: Pick<ExtensionUIContext, "select" | "input" | "notify" | "setStatus"> & Partial<Pick<ExtensionUIContext, "custom">>;
   modelRegistry: ExtensionRegistry;
   signal?: AbortSignal;
-  /** Present in real command contexts; used only to read the active branch's tool availability ledger. */
+  /** Present in real command contexts; read-only active-branch history and tool availability. */
   sessionManager?: ExtensionContext["sessionManager"];
 }
 export interface LastDecision {

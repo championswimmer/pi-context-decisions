@@ -71,12 +71,12 @@ test("the setter subcommands are gone: each is rejected with the usage line, cha
   for (const args of ["settings", "settings enabled false", "relevance", "relevance threshold 0.5", "provider", "provider openai", "model none", "model pi custom local",
     "enable", "disable", "allow global list", "allow project add x", "allowlist global", "tools", "tools on", "tools mode mcp", "tools allow global list", "mcp", "mcp allow global add x", "bogus"]) {
     await h.command(args);
-    assert.match(h.messages.at(-1)!, /^Use \/decisions( status\|test\|tools\|mcp\|pin\|unpin|[^]*)/, args);
+    assert.match(h.messages.at(-1)!, /^Use \/decisions( status\|history\|test\|tools\|mcp\|pin\|unpin|[^]*)/, args);
     assert.equal(JSON.stringify((await loadSettings(h.path)).settings), before, args);
   }
   assert.equal(h.dialogs.length, 0); assert.equal(h.inference(), 0);
   await h.command("tools list extra"); assert.match(h.messages.at(-1)!, /Use \/decisions tools list.*Tool picker tab/);
-  assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "test", "tools", "mcp", "pin", "unpin"]);
+  assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "history", "test", "tools", "mcp", "pin", "unpin"]);
   assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("al"), null);
 });
 test("headless /decisions prints the status instead of a menu", async (t) => {

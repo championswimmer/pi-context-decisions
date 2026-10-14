@@ -13,6 +13,7 @@ import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import { defaultSettings, saveSettings } from "../src/settings.ts";
 import { SKILLS_MESSAGE_TYPE } from "../src/extension/skill-ledger.ts";
+import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
 
 async function realPi(t: { after(fn: () => Promise<void>): void }, cadence: "prompt" | "tool-round", script: (ctx: { session: () => AgentSession }) => Parameters<ReturnType<typeof createFauxCore>["setResponses"]>[0], globalAllowlist: string[] = [], earlier?: (pi: Parameters<ExtensionFactory>[0]) => void) {
   const root = await mkdtemp(join(tmpdir(), "real-pi-")); t.after(() => rm(root, { recursive: true, force: true }));
@@ -76,6 +77,8 @@ test("real Pi, tool-round cadence: the next-best skills arrive between the tool 
   const second = h.contexts[1].messages.filter((m) => m.role === "user").map(h.text);
   assert.match(second.at(-1)!, /<name>skill-2<\/name>[\s\S]*<name>skill-3<\/name>/);
   assert.equal(h.faux.state.callCount, 2);
+  const history = readDecisionsHistory(h.sessionManager);
+  assert.deepEqual(history.batches.map((b) => [b.turn, b.items.skills]), [[1, ["skill-0", "skill-1"]], [2, ["skill-2", "skill-3"]]], "history follows real Pi commit boundaries");
 });
 test("real Pi: steering text queued during a run is picked at turn_end from that text, over the remaining candidates only", async (t) => {
   let h!: Awaited<ReturnType<typeof realPi>>;
@@ -114,6 +117,10 @@ test("real Pi: an always-allowed skill is the stable system-prompt base, recorde
   await h.session.prompt("write something about thing 0");
   assert.deepEqual(h.branch(), ["custom", "user", 'delta["skill-0","skill-1"]', "assistant"], "one base record, then the user message, then the delta");
   assert.deepEqual(h.decisions[0].skills, ["skill-0", "skill-1", "skill-2", "skill-3", "skill-4"], "the pin is never scored");
+  const history = readDecisionsHistory(h.sessionManager);
+  assert.equal(history.batches.length, 1, "base record before user and delta after user form ONE batch");
+  assert.deepEqual(history.batches[0].items.base, ["skill-5"], "history confirms base delivery in the actual Pi system section");
+  assert.deepEqual(history.batches[0].items.skills, ["skill-0", "skill-1"]);
   const system = JSON.stringify(h.contexts[0].messages.filter((m) => m.role === "system"));
   assert.match(system, /<name>skill-5<\/name>/); assert.doesNotMatch(system, /skill-0/);
   await h.session.prompt("another task");

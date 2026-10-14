@@ -202,3 +202,23 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
   for (const line of view()) assert.ok(line.length <= 80);
   assert.equal(s.tui.hasOverlay(), true); s.dialog.dispose();
 });
+
+for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview and scrollable details reuse the focused overlay while the transcript grows`, async () => {
+  const ops: SettingsDialogOps = { ...fakeOps(), async history() { return { batches: [{ turn: 4, answered: true,
+    items: { skills: Array.from({ length: 120 }, (_, n) => `skill-${n}`), base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }; } };
+  const s = await scenario(rows, 0, "history", ops);
+  const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + rows).join("\n"); };
+  await new Promise((resolve) => setImmediate(resolve)); s.tui.renderNow(); await s.terminal.flush();
+  assert.match(view(), /Before turn 4/);
+  s.tui.getFocusedComponent()!.handleInput!("\r"); s.tui.renderNow(); await s.terminal.flush();
+  assert.match(view(), /Before turn 4/);
+  s.tui.getFocusedComponent()!.handleInput!("\x1b[F"); s.tui.renderNow(); await s.terminal.flush();
+  assert.match(view(), /skill-119/);
+  const bounds = s.handle.getBounds()!;
+  assert.ok(bounds.height <= dialogHeightBudget(rows));
+  for (let n = 30; n < 50; n++) { s.append(n); s.tui.renderNow(); await s.terminal.flush(); }
+  assert.match(view(), /skill-119/); assert.match(view(), /transcript line 049/);
+  assert.equal(s.tui.getFocusedComponent(), s.dialog); assert.equal(s.editor.getValue(), "");
+  s.dialog.close("closed"); s.tui.renderNow(); await s.terminal.flush();
+  assert.doesNotMatch(view(), /Decisions|skill-119/); assert.equal(s.tui.getFocusedComponent(), s.editor);
+});

@@ -93,6 +93,7 @@ Everything that can be changed lives in the `/decisions` dialog, so the command 
 ```text
 /decisions                  # floating settings dialog (TUI); select/input menus (RPC); status (print/JSON)
 /decisions status           # credentials, last decision, allowlist counts, tool filtering; no inference calls
+/decisions history          # read-only, committed additions on this branch; no inference calls
 /decisions test             # explicit synthetic bool call to the selected model; may incur cost
 /decisions tools list       # read-only, names-only tool inventory and availability
 /decisions mcp list         # read-only MCP server and extension group inventory and availability
@@ -113,6 +114,21 @@ Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically
 - Configurable prompt ≤4000 characters and each description ≤400; names ≤64, JSON state ≤65536 characters per batch, inventory ≤1000 unique candidates. These are local safety bounds, not provider token-limit guarantees.
 
 Invalid persisted settings are reported explicitly and advertisements fail closed until repaired in the dialog or with a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
+
+### Decisions history
+
+**`/decisions history`** opens a read-only history route in the same floating dialog (never a second overlay). Newest non-empty batches come first: **↑/↓/PgUp/PgDn** selects a batch, **Enter** shows its names, **↑/↓/PgUp/PgDn/Home/End** scrolls details, **Esc** returns, and **Ctrl+R** on the list refreshes the committed branch snapshot. Empty turns, unsuccessful picks and uncommitted drafts are omitted. RPC gets a notification report; print/JSON writes the same report to stderr, not the protocol stream. Reports are sanitized and capped at 240 lines / 24,000 characters plus a truncation notice; the terminal viewer can browse every stored batch and name.
+
+A batch groups additions **before each assistant response**, numbered from 1 on the active branch. Additions at `turn_end` (including queued steering) belong to the next response, even if Pi commits them before the queued user message. A batch without a following response is marked **no response yet**. This is committed history, **not proof that a provider request consumed it**, and not a view of what remains visible now. Reload/resume/fork/tree navigation derive history from the current branch; compaction or context edits do not erase historical additions. No new history file or runtime event buffer is maintained.
+
+The details distinguish:
+
+- **Skills advertised** in hidden user-role context messages, versus **re-delivered** skills (not newly picked). These are advertisements of name/description/location metadata, **not loaded skill bodies**.
+- **Skills in the system base**, not scored picks: shown only when their base ledger record is confirmed by a subsequent committed Pi system `skills` section. A base record alone is not evidence that another extension left those skills advertised.
+- **Tool / MCP-server / extension availability** from the opt-in tool ledger, including allowlisted, unconfigured, fail-open and mid-session-base grants; the old records do not identify the reason or retain scores. Availability does not mean a declaration or description was added to model context. Group names are canonical `mcp__…` / `ext__…` keys.
+- **Tool/group notice membership** separately, from committed names-only context notices. Long notices summarize lists in their text, and stored notice membership is bounded; the chunked availability ledger retains all names. Notices do not declare tools. Withholding, release bookkeeping, considered-only records and empty baseline notices are not additions.
+
+History never sends task text or metadata to a decision model, and does not display prompts, assistant text, tool arguments/results, skill bodies, or stored descriptions/paths. It cannot reconstruct old scores, exact scoring triggers, or grants made while tool filtering was off. Tool filtering remains relevance routing, **not a sandbox or permission boundary**.
 
 ### Global and project skill allowlists
 

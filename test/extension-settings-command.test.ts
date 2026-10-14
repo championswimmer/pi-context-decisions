@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { simHost } from "./helpers/pi-sim.ts";
 import type { Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
@@ -93,7 +93,7 @@ async function harness(t: { after(fn: () => Promise<void>): void }, options: {
   const dialog = async (index = 0) => waitFor(() => components[index], "settings dialog component");
   const text = (component: Component, width = 100) => component.render(width).join("\n");
   const until = async (component: Component, pattern: RegExp) => waitFor(() => pattern.test(text(component)) && text(component), `${pattern}`);
-  return { root, path, commands, messages, requests, decisionSignals, state, reads, calls, customOptions, components, ctx, command, emit, dialog, text, until,
+  return { root, path, sim, commands, messages, requests, decisionSignals, state, reads, calls, customOptions, components, ctx, command, emit, dialog, text, until,
     get finish() { return finish!; } };
 }
 
@@ -222,4 +222,50 @@ test("headless commands keep their text output without a dialog", async (t) => {
   await h.command("pin alpha"); assert.match(h.messages.at(-1)!, /Pinned skills updated/);
   await h.command("tools list"); assert.match(h.messages.at(-1)!, /Tools \(/);
   assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);
+});
+
+test("/decisions history reuses the settings overlay, shows committed additions and never scores or reads the agent signal", async (t) => {
+  const h = await harness(t, { configured: true });
+  const session = SessionManager.inMemory(h.root);
+  h.ctx.sessionManager = session;
+  session.appendCustomMessageEntry("context-decisions-skills", "PRIVATE description", false, { v: 1, added: ["alpha"], redelivered: [] });
+  const first = h.command(""); const dialog = await h.dialog();
+  await h.command("history"); await h.until(dialog, /Before turn 1/);
+  assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1);
+  dialog.handleInput!(KEY.enter); await h.until(dialog, /Skills advertised/);
+  assert.match(h.text(dialog), /alpha/); assert.doesNotMatch(h.text(dialog), /PRIVATE/);
+  dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions › History/);
+  dialog.handleInput!(KEY.esc); await h.until(dialog, /Context decisions/);
+  dialog.handleInput!(KEY.esc); await first;
+  assert.equal(h.reads.signal, 0); assert.equal(h.requests.length, 0);
+  assert.equal(h.calls.select + h.calls.input, 0);
+  assert.deepEqual(h.sim.calls, { getAllTools: 0, setActiveTools: 0 });
+});
+
+for (const mode of ["rpc", "print"] as const) test(`/decisions history in ${mode} is a read-only report, never terminal UI`, async (t) => {
+  const h = await harness(t, { mode });
+  const session = SessionManager.inMemory(h.root); h.ctx.sessionManager = session;
+  session.appendCustomEntry("context-decisions-tools", { v: 1, considered: ["not-picked"] });
+  const before = session.getBranch().length;
+  await h.command("history"); assert.match(h.messages.at(-1)!, /No committed additions/);
+  session.appendCustomMessageEntry("context-decisions-skills", "PRIVATE", false, { v: 1, added: ["alpha\x1b\r\n\u202e"], redelivered: [] });
+  await h.command("history");
+  assert.match(h.messages.at(-1)!, /alpha/); assert.doesNotMatch(h.messages.at(-1)!, /PRIVATE|not-picked|\x1b|\r|\u202e/);
+  assert.equal(session.getBranch().length, before + 1, "reading never appends history records");
+  assert.equal(h.requests.length, 0); assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);
+  assert.deepEqual(h.commands.get("decisions")!.getArgumentCompletions!("hist"), [{ value: "history", label: "history" }]);
+  await h.command("history clear"); assert.match(h.messages.at(-1)!, /Use \/decisions/);
+  assert.equal((await loadSettings(h.path)).settings.backend, null);
+});
+
+test("history's session access is guarded after shutdown, and an unreadable branch stays an inline safe error", async (t) => {
+  const h = await harness(t);
+  Object.defineProperty(h.ctx, "sessionManager", { configurable: true, get() { if (!h.state.valid) h.reads.afterInvalid++; throw new Error("PRIVATE branch read"); }, set() {} });
+  const run = h.command("history"); const dialog = await h.dialog();
+  await h.until(dialog, /Context-decisions operation failed/);
+  assert.deepEqual(h.messages, []); assert.doesNotMatch(h.text(dialog), /PRIVATE/);
+  await h.emit("session_shutdown"); h.state.valid = false;
+  await run;
+  dialog.handleInput!("\x12"); await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.reads.afterInvalid, 0); assert.equal(h.reads.signal, 0);
 });
