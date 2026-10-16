@@ -10,6 +10,26 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v0.3.0...v1.0.0
 
+### [v1.4.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.4.0) — Minor release (2026-10-16)
+
+#### Highlights
+
+- Simplified `/decisions` into three peer tabs: **Skills**, **Tools**, and **Advanced**, with matching RPC menus.
+- Skills and tool/MCP/extension filtering can now be enabled independently.
+- One shared `decision.*` policy controls threshold, batching, concurrency, timeout, failure mode, and prompt/description limits across the framework. Feature-specific caps and minimum inventory gates retain their existing defaults.
+- Existing settings migrate in memory without rewriting files on load. Explicit shared settings take precedence; the old disabled master switch migrates both independent switches off.
+- Decisions history includes per-item skill/tool scores.
+
+
+<!-- Release notes generated using configuration in .github/release.yml at v1.4.0 -->
+
+#### What's Changed
+##### Merged pull requests
+* Show per-item skill/tool scores in decisions history by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/6
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v1.3.0...v1.4.0
+
 ### [v1.3.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.3.0) — Minor release (2026-10-14)
 
 <!-- Release notes generated using configuration in .github/release.yml at v1.3.0 -->
