@@ -13,7 +13,7 @@ import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
-import { ADVANCED_FIELDS, TOOL_FIELDS, describeError, fieldValue, sanitizeTerminalText, toolsSummary, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
+import { ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, describeError, fieldValue, sanitizeTerminalText, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
 import { readDecisionsHistory, historyReportLines } from "./decisions-history.ts";
@@ -306,18 +306,31 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
 }
 const EDITOR_UNAVAILABLE = "The allow list editors need the terminal UI. Without it, edit globalAllowlist in the settings file or alwaysAllowed in <cwd>/.pi/pi-context-decisions.json, then /reload";
 /** RPC fallback: the same grouping as the terminal dialog, built from select/input requests. */
-async function fieldsMenu(controller: Controller, ctx: CommandContext, group: SettingsGroup) {
-  const fields: readonly AdvancedField[] = group === "tools" ? TOOL_FIELDS : ADVANCED_FIELDS;
-  const title = group === "tools" ? "Decisions · Tools & MCP settings" : "Decisions · Advanced relevance settings";
+async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Skills" | "Tools" | "Advanced", env?: Record<string, string | undefined>) {
+  const fields: readonly AdvancedField[] = tab === "Tools" ? TOOL_FIELDS : tab === "Skills" ? SKILL_FIELDS : ADVANCED_FIELDS;
+  const title = `Decisions · ${tab} settings`;
   for (;;) {
     const settings = controller.getSettings();
-    const labels = fields.map((field) => `${group}.${field.key}: ${group === "relevance" && field.key === "concurrency" && settings.relevance.concurrency === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, group, field.key))}`);
-    const pick = await ctx.ui.select(title, [...labels, "Back"], { signal: ctx.signal });
+    const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}`);
+    const provider = `Provider / execution: ${settings.backend?.backend ?? "not configured"}`;
+    const model = `Model: ${selectionLabel(settings.backend)}`;
+    const extras = tab === "Advanced" ? [provider, model] : tab === "Skills" ? ["Allow list (Global)", "Allow list (Project)", "Status"]
+      : ["Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers & extensions · Global", "Always allowed MCP servers & extensions · Project"];
+    const pick = await ctx.ui.select(title, [...(tab === "Advanced" ? extras : []), ...labels, ...(tab !== "Advanced" ? extras : []), "Back"], { signal: ctx.signal });
     if (!pick || pick === "Back") return;
     try {
+      if (pick === provider) { await chooseProvider(controller, ctx, env); continue; }
+      if (pick === model) {
+        const backend = settings.backend;
+        await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
+        continue;
+      }
+      if (pick === "Status") { await status(controller, ctx, env); continue; }
+      if (extras.includes(pick)) throw new SettingsError(EDITOR_UNAVAILABLE);
       const index = labels.indexOf(pick);
       if (index < 0) throw new SettingsError("Invalid settings selection");
       const field = fields[index];
+      const group = field.group;
       const key = `${group}.${field.key}`;
       const old = fieldValue(settings, group, field.key);
       if (typeof old === "boolean") await controller.update((current) => updateSetting(current, key, String(!old)));
@@ -338,33 +351,11 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, group: Se
     } catch (error) { controller.report(ctx, safeError(error), "error"); }
   }
 }
-const advancedMenu = (controller: Controller, ctx: CommandContext) => fieldsMenu(controller, ctx, "relevance");
 async function settingsMenu(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
-  if (!ctx.hasUI) { controller.report(ctx, JSON.stringify(controller.getSettings(), null, 2)); return; }
   for (;;) {
-    const settings = controller.getSettings();
-    const toggle = `Context decisions: ${settings.enabled ? "On" : "Off"}`;
-    const provider = `Provider / execution: ${settings.backend?.backend === "pi" ? `Pi internal · ${cleanLabel(settings.backend.provider)}` : settings.backend ? `${settings.backend.backend} direct` : "not configured"}`;
-    const model = `Model: ${selectionLabel(settings.backend)}`;
-    const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
-    const globalAllow = `Allow list (Global) · ${settings.globalAllowlist.length}`;
-    const projectAllow = `Allow list (Project) · ${project?.names.length ?? 0}`;
-    const tools = `Tools & MCP…: ${toolsSummary(settings)}`;
-    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, "Advanced…", tools, "Status", "Done"], { signal: ctx.signal });
+    const pick = await ctx.ui.select("Decisions · settings", ["Skills", "Tools", "Advanced", "Done"], { signal: ctx.signal });
     if (!pick || pick === "Done") return;
-    try {
-      if (pick === toggle) {
-        await controller.update((current) => ({ ...current, enabled: !current.enabled }));
-        controller.setStatus(ctx); controller.report(ctx, `Context decisions ${!settings.enabled ? "enabled" : "disabled"}`);
-      } else if (pick === provider) await chooseProvider(controller, ctx, env);
-      else if (pick === model) {
-        const backend = settings.backend;
-        await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
-      } else if (pick === globalAllow || pick === projectAllow) throw new SettingsError(EDITOR_UNAVAILABLE);
-      else if (pick === "Advanced…") await advancedMenu(controller, ctx);
-      else if (pick === tools) await fieldsMenu(controller, ctx, "tools");
-      else if (pick === "Status") await status(controller, ctx, env);
-    } catch (error) { controller.report(ctx, safeError(error), "error"); }
+    if (pick === "Skills" || pick === "Tools" || pick === "Advanced") await fieldsMenu(controller, ctx, pick, env);
   }
 }
 
@@ -381,7 +372,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
       const warning = result.error ?? result.warnings[0];
       return { count: result.names.length, tools: result.tools.length, mcpServers: result.mcpServers.length, ...(warning ? { warning: sanitizeTerminalText(warning, 300) } : {}) };
     },
-    async toggleEnabled() { await controller.update((current) => ({ ...current, enabled: !current.enabled })); refreshStatus(); },
+    async toggleEnabled() { await controller.update((current) => ({ ...current, relevance: { ...current.relevance, enabled: !current.relevance.enabled } })); refreshStatus(); },
     async updateSetting(key, text) { await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
     async listProviders(signal): Promise<ProviderRow[]> {
       const choices = await providerChoices(scoped(signal), env);

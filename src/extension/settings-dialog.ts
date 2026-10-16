@@ -1,5 +1,5 @@
 // Floating /decisions settings dialog: ONE overlay with an internal route stack.
-// The two roots, "main" (Skill picker) and "tools" (Tool picker), are peer tabs; every other route is pushed above the active tab.
+// The three roots, "main" (Skills), "tools" (Tools) and "advanced", are peer tabs; other routes are pushed above the active tab.
 // Never opens nested ctx.ui.select/input/custom: Pi's custom `done` removes the TOPMOST overlay,
 // so stacked dialogs could close the wrong one. Close only through `done`, exactly once.
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -12,7 +12,7 @@ import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-
 import type { CommandContext } from "./contracts.ts";
 import { HISTORY_NOTE, historyBatchLines, historyBatchSummary, historyBatchTitle, type DecisionsHistory, type HistoryBatch } from "./decisions-history.ts";
 import {
-  ADVANCED_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
+  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
   sanitizeTerminalText, type SettingsGroup,
 } from "./settings-model.ts";
 
@@ -228,22 +228,25 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const toRoute = (route: InitialRoute): SettingsRoute => route === "main" ? { kind: "main" }
     : typeof route === "object" ? { kind: "allowlist", scope: route.allowlist, ...(route.list ? { list: route.list } : {}) } : { kind: route };
-  /** The tab (root route) a destination belongs to: tool/MCP lists and the tool settings live under the Tool picker tab. */
-  const rootFor = (route: InitialRoute): "main" | "tools" => route === "tools" || (typeof route === "object" && route.list !== undefined && route.list !== "skills") ? "tools" : "main";
+  type Tab = "main" | "tools" | "advanced";
+  const tabs: readonly Tab[] = ["main", "tools", "advanced"];
+  const isTab = (kind: string): kind is Tab => tabs.includes(kind as Tab);
+  /** Deep links inherit their feature's root; backend selection is shared. */
+  const rootFor = (route: InitialRoute): Tab => route === "advanced" || route === "provider" || route === "model" ? "advanced"
+    : route === "tools" || (typeof route === "object" && route.list !== undefined && route.list !== "skills") ? "tools" : "main";
   const navigate = (route: InitialRoute) => {
     if (closed) return;
     while (stack.length) leave(stack.pop()!);
     const root = newFrame({ kind: rootFor(route) });
     stack.push(root); enter(root);
-    if (route !== "main" && route !== "tools") { const frame = newFrame(toRoute(route)); stack.push(frame); enter(frame); }
+    if (typeof route === "object" || !isTab(route)) { const frame = newFrame(toRoute(route)); stack.push(frame); enter(frame); }
     applyFocus(); redraw();
   };
-  /** Swap the root frame between the two peer tabs. Only possible on a tab root, so sub-routes, inputs and editors are never affected. */
-  const selectTab = (kind: "main" | "tools" | "toggle") => {
+  /** Replace the sole root, never push a tab or affect an editor. All directions wrap. */
+  const selectTab = (direction: -1 | 1) => {
     if (closed || stack.length !== 1) return;
     const current = stack[0];
-    const next = kind === "toggle" ? (current.route.kind === "main" ? "tools" : "main") : kind;
-    if (current.route.kind === next) return;
+    const next = tabs[(tabs.indexOf(current.route.kind as Tab) + direction + tabs.length) % tabs.length];
     leave(current);
     const root = newFrame({ kind: next });
     stack[0] = root; enter(root); applyFocus(); redraw();
@@ -261,19 +264,23 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         run: () => push({ kind: "history-batch", batch }),
       }));
     }
+    const fields = (values: typeof ADVANCED_FIELDS): Item[] => values.map((field) => ({
+      label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
+      ...(field.key === "failMode" && fieldValue(settings, field.group, field.key) === "open" ? { tone: "warn" as const } : {}),
+      run: () => {
+        if (field.kind === "bool") mutate(frame, () => field.group === "relevance" ? ops.toggleEnabled() : ops.updateSetting(`${field.group}.${field.key}`, String(!fieldValue(settings, field.group, field.key))), () => ok(frame, "Saved"));
+        else if (field.kind === "options") push({ kind: "options", group: field.group, key: field.key });
+        else push({ kind: "edit", group: field.group, key: field.key });
+      },
+    }));
     if (route.kind === "main") return [
-      { label: "Context decisions", value: settings.enabled ? "On" : "Off", toggle: true, tone: settings.enabled ? "ok" : "muted",
-        description: "Immediately enables or disables skill filtering. Choosing a provider or model never changes this.",
-        run: () => mutate(frame, () => ops.toggleEnabled(), () => ok(frame, `Context decisions ${snap.settings.enabled ? "enabled" : "disabled"}`)) },
-      { label: "Provider / execution", value: backendLabel(settings.backend), description: "Choose Pi's classifier pipeline or a direct TypeSafe, OpenAI or OpenRouter endpoint.", run: () => push({ kind: "provider" }) },
-      { label: "Model", value: modelLabel(settings.backend), description: "Pick the decision model. Providers without a key are labelled and cannot be selected.", run: () => push({ kind: "model", filter: backendFilter(settings.backend) }) },
+      ...fields(SKILL_FIELDS),
       { label: "Always allowed · Global", value: String(settings.globalAllowlist.length), description: "Skills always advertised in every project, never scored. Not a restriction list.", run: () => push({ kind: "allowlist", scope: "global" }) },
       { label: "Always allowed · Project", value: !snap.hasCwd ? "n/a" : project.loading ? "…" : `${project.count ?? "?"}${project.warning ? " ⚠" : ""}`,
         tone: project.warning ? "warn" : undefined,
         description: project.warning ?? "Skills always advertised for this working directory only. Not a restriction list.",
         ...(snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." }),
         run: () => push({ kind: "allowlist", scope: "project" }) },
-      { label: "Advanced…", description: "Relevance threshold, shard size, max added per round, picker cadence and safety limits.", run: () => push({ kind: "advanced" }) },
       { label: "Status…", description: "Credentials, last decision and allowlist counts. Makes no inference calls.", run: () => push({ kind: "status" }) },
       { label: "Close", run: () => close("closed") },
     ];
@@ -287,29 +294,16 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         { label: "Always allowed MCP servers & extensions · Project", value: projectValue(project.mcpServers), description: project.warning ?? "MCP servers and extensions always available for this working directory only.", list: "mcp", scope: "project" },
       ];
       return [
-        ...TOOL_FIELDS.map((field): Item => ({
-          label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
-          ...(field.key === "failMode" && settings.tools.failMode === "open" ? { tone: "warn" as const } : {}),
-          ...(field.key === "enabled" ? { tone: settings.tools.enabled ? "ok" as const : "muted" as const } : {}),
-          run: () => {
-            if (field.kind === "bool") mutate(frame, () => ops.updateSetting(`tools.${field.key}`, String(!settings.tools.enabled)), () => ok(frame, `Tool filtering ${snap.settings.tools.enabled ? "enabled" : "disabled"}`));
-            else if (field.kind === "options") push({ kind: "options", group: "tools", key: field.key });
-            else push({ kind: "edit", group: "tools", key: field.key });
-          },
-        })),
+        ...fields(TOOL_FIELDS),
         ...lists.map((row): Item => ({ label: row.label, value: row.value, description: row.description, ...(row.scope === "project" ? noCwd : {}), ...(row.scope === "project" && project.warning ? { tone: "warn" as const } : {}),
           run: () => push({ kind: "allowlist", scope: row.scope, list: row.list }) })),
       ];
     }
-    if (route.kind === "advanced") return ADVANCED_FIELDS.map((field) => ({
-      label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
-      ...(field.key === "failMode" && settings.relevance.failMode === "open" ? { tone: "warn" as const } : {}),
-      run: () => {
-        if (field.kind === "bool") mutate(frame, () => ops.updateSetting(`relevance.${field.key}`, String(!fieldValue(settings, "relevance", field.key))), () => ok(frame, "Saved"));
-        else if (field.kind === "options") push({ kind: "options", group: "relevance", key: field.key });
-        else push({ kind: "edit", group: "relevance", key: field.key });
-      },
-    }));
+    if (route.kind === "advanced") return [
+      { label: "Provider / execution", value: backendLabel(settings.backend), description: "Shared decision backend for skills, tools and allowlist ranking.", run: () => push({ kind: "provider" }) },
+      { label: "Model", value: modelLabel(settings.backend), description: "Shared decision model. Choosing one never enables filtering.", run: () => push({ kind: "model", filter: backendFilter(settings.backend) }) },
+      ...fields(ADVANCED_FIELDS),
+    ];
     if (route.kind === "provider") {
       if (!frame.providers) return [{ label: frame.loading ? "Checking credentials…" : "No providers available", disabled: frame.loading ? "Checking credentials without any inference calls…" : "No providers available.", run: () => {} }];
       return frame.providers.map((row) => ({
@@ -353,12 +347,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   const crumb = (frame: Frame): string => {
     const route = frame.route;
     switch (route.kind) {
-      case "main": return "Decisions › Skill picker";
+      case "main": return "Decisions › Skills";
       case "advanced": return "Decisions › Advanced";
-      case "tools": return "Decisions › Tool picker";
+      case "tools": return "Decisions › Tools";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "edit": case "options": return `Decisions › ${route.group === "tools" ? "Tool picker" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
+      case "edit": case "options": return `Decisions › ${stack[0]?.route.kind === "main" ? "Skills" : stack[0]?.route.kind === "tools" ? "Tools" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "history": return "Decisions › History";
       case "history-batch": return `Decisions › History › ${historyBatchTitle(route.batch)}`;
@@ -367,7 +361,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const hint = (frame: Frame): string => {
     switch (frame.route.kind) {
-      case "main": case "tools": return "Tab switch · ↑↓ move · Enter select · Space toggle · Esc close";
+      case "main": case "tools": case "advanced": return "Tab switch · ↑↓ move · Enter select · Space toggle · Esc close";
       case "edit": return "Enter save · Esc cancel";
       case "status": return "↑↓ scroll · Enter refresh · Esc back";
       case "history": return "↑↓ batch · Enter details · Ctrl+R refresh · Esc back";
@@ -378,7 +372,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
   const wrap = (text: string, width: number, limit: number): string[] => wrapTextWithAnsi(sanitizeTerminalText(text, 1200), Math.max(1, width)).slice(0, Math.max(0, limit));
   const bannerLines = (frame: Frame, width: number): string[] => {
-    const banner = frame.banner ?? ((frame.route.kind === "main" || frame.route.kind === "tools") && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair the settings file, or choose a model in /decisions.`, tone: "error" as const } : undefined);
+    const banner = frame.banner ?? (isTab(frame.route.kind) && snap.settingsError ? { text: `Settings error: ${snap.settingsError}. Repair the settings file, or choose a model in /decisions.`, tone: "error" as const } : undefined);
     if (!banner) return [];
     const color = banner.tone === "error" ? "error" : banner.tone === "success" ? "success" : "warning";
     return wrap(banner.text, width, 4).map((line) => theme.fg(color, line));
@@ -408,7 +402,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     return sections.flatMap((section, i) => section.lines.slice(0, taken[i]));
   };
 
-  const TABS = [{ kind: "main", label: "Skill picker" }, { kind: "tools", label: "Tool picker" }] as const;
+  const TABS = [{ kind: "main", label: "Skills" }, { kind: "tools", label: "Tools" }, { kind: "advanced", label: "Advanced" }] as const;
   /** One line: the active tab is a `selectedBg` chip, the other is muted; both have the same padding so switching never shifts layout. */
   const tabStrip = (frame: Frame, inner: number): string => {
     const text = TABS.map((tab) => tab.kind === frame.route.kind ? theme.bg("selectedBg", theme.fg("text", `  ${tab.label}  `)) : theme.fg("muted", `  ${tab.label}  `)).join(" ");
@@ -491,7 +485,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         const room = Math.max(1, bodyBudget - Math.min(banner.length, Math.max(0, bodyBudget - 1)));
         frame.scroll = Math.min(Math.max(0, frame.scroll), Math.max(0, lines.length - room));
         body = fit(bodyBudget, [{ lines: lines.slice(frame.scroll, frame.scroll + room), min: 1 }, { lines: banner, min: 1 }]);
-      } else if ((route.kind === "main" || route.kind === "tools") && bodyBudget >= 3) body = [tabStrip(frame, inner), ...listBody(frame, inner, bodyBudget - 1)];
+      } else if (isTab(route.kind) && bodyBudget >= 3) body = [tabStrip(frame, inner), ...listBody(frame, inner, bodyBudget - 1)];
       else body = listBody(frame, inner, bodyBudget);
       body = body.slice(0, bodyBudget);
       return [borderLine("╭", "╮", crumb(frame), tag, w), ...body.map((line) => bodyLine(line, inner)), bottomLine(hint(frame), w)];
@@ -517,10 +511,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         return;
       }
       if (keys.matches(data, "tui.select.cancel")) { if (stack.length > 1) pop(); else close("closed"); return; }
-      if (stack.length === 1 && (frame.route.kind === "main" || frame.route.kind === "tools")) {
-        if (matchesKey(data, "tab") || matchesKey(data, "shift+tab")) { selectTab("toggle"); return; }
-        if (matchesKey(data, "left")) { selectTab("main"); return; }
-        if (matchesKey(data, "right")) { selectTab("tools"); return; }
+      if (stack.length === 1 && isTab(frame.route.kind)) {
+        if (matchesKey(data, "tab") || matchesKey(data, "right")) { selectTab(1); return; }
+        if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) { selectTab(-1); return; }
       }
       if (frame.route.kind === "history" && matchesKey(data, "ctrl+r")) { frame.banner = undefined; enter(frame); redraw(); return; }
       if (frame.route.kind === "status" || frame.route.kind === "history-batch") {

@@ -131,30 +131,30 @@ test("real renderer: keyboard input reaches the dialog while it owns focus, not 
   s.tui.renderNow(); await s.terminal.flush();
   assert.equal(s.editor.getValue(), "", "typing must not reach the editor while the dialog is focused");
   const viewport = s.terminal.snapshot().lines.join("\n");
-  assert.match(viewport, /❯ Model/);
+  assert.match(viewport, /❯ Always allowed · Global/);
   s.dialog.close("closed"); s.tui.renderNow();
   s.tui.getFocusedComponent()!.handleInput!("x"); assert.equal(s.editor.getValue(), "x");
 });
 
-test("real renderer 80x24: the Tool picker tab renders inside the overlay bounds", async () => {
+test("real renderer 80x24: the Tools tab renders inside the overlay bounds", async () => {
   const s = await scenario(24, 0, "tools");
   const { lines, viewportTop } = s.terminal.snapshot();
   const viewport = lines.slice(viewportTop, viewportTop + 24);
-  assert.ok(viewport.some((line) => /Decisions › Tool picker/.test(line)), viewport.join("\n"));
-  assert.ok(viewport.some((line) => /Skill picker\s+Tool picker/.test(line)), "tab strip is visible");
+  assert.ok(viewport.some((line) => /Decisions › Tools/.test(line)), viewport.join("\n"));
+  assert.ok(viewport.some((line) => /Skills\s+Tools/.test(line)), "tab strip is visible");
   assert.ok(viewport.some((line) => /Tool filtering\s+Off/.test(line)));
   s.dialog.dispose();
 });
 
-test("real renderer 80x24: Tab through the focused overlay switches Skill picker ⇄ Tool picker inside the same overlay bounds", async () => {
+test("real renderer 80x24: Tab through the focused overlay switches Skills ⇄ Tools inside the same overlay bounds", async () => {
   const s = await scenario(24, 0);
   const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + 24); };
-  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line) && !/\[/.test(line)));
+  assert.ok(view().some((line) => /Skills\s+Tools/.test(line) && !/\[/.test(line)));
   s.tui.getFocusedComponent()!.handleInput!("\t"); s.tui.renderNow(); await s.terminal.flush();
-  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line)) && view().some((line) => /Tool filtering\s+Off/.test(line)), view().join("\n"));
+  assert.ok(view().some((line) => /Skills\s+Tools/.test(line)) && view().some((line) => /Tool filtering\s+Off/.test(line)), view().join("\n"));
   assert.equal(s.editor.getValue(), "", "Tab must not reach the editor underneath"); assert.equal(s.tui.hasOverlay(), true);
   s.tui.getFocusedComponent()!.handleInput!("\x1b[Z"); s.tui.renderNow(); await s.terminal.flush();
-  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line) && !/\[/.test(line)));
+  assert.ok(view().some((line) => /Skills\s+Tools/.test(line) && !/\[/.test(line)));
   s.dialog.dispose();
 });
 
@@ -163,17 +163,17 @@ test("real renderer: the selected tab has a real cell background (not brackets) 
   const find = async (label: string) => {
     s.tui.renderNow(); await s.terminal.flush();
     const { lines, viewportTop } = s.terminal.snapshot();
-    const row = lines.findIndex((line, i) => i >= viewportTop && /Skill picker\s+Tool picker/.test(line));
+    const row = lines.findIndex((line, i) => i >= viewportTop && /Skills\s+Tools/.test(line));
     assert.ok(row >= 0, "tab strip row");
     assert.doesNotMatch(lines[row], /[\[\]]/);
     const col = lines[row].indexOf(label);
     return { row, col, mid: s.terminal.bgAt(row, col + 2), edgeLeft: s.terminal.bgAt(row, col - 1), edgeRight: s.terminal.bgAt(row, col + label.length) };
   };
-  let skill = await find("Skill picker"), tool = await find("Tool picker");
+  let skill = await find("Skills"), tool = await find("Tools");
   assert.equal(skill.mid, 24, "active tab label has the background"); assert.equal(skill.edgeLeft, 24, "padding is filled too"); assert.equal(skill.edgeRight, 24);
   assert.equal(tool.mid, undefined, "inactive tab has no background");
   s.tui.getFocusedComponent()!.handleInput!("\t");
-  skill = await find("Skill picker"); tool = await find("Tool picker");
+  skill = await find("Skills"); tool = await find("Tools");
   assert.equal(tool.mid, 24); assert.equal(tool.edgeLeft, 24); assert.equal(tool.edgeRight, 24); assert.equal(skill.mid, undefined);
   s.dialog.dispose();
 });
@@ -221,4 +221,19 @@ for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview an
   assert.equal(s.tui.getFocusedComponent(), s.dialog); assert.equal(s.editor.getValue(), "");
   s.dialog.close("closed"); s.tui.renderNow(); await s.terminal.flush();
   assert.doesNotMatch(view(), /Decisions|skill-119/); assert.equal(s.tui.getFocusedComponent(), s.editor);
+});
+
+test("real renderer: Advanced is a third peer tab with a selected background, shared backend rows and no feature toggle", async () => {
+  const s = await scenario(24, 0);
+  for (let i = 0; i < 2; i++) s.tui.getFocusedComponent()!.handleInput!("\t");
+  s.tui.renderNow(); await s.terminal.flush();
+  const { lines, viewportTop } = s.terminal.snapshot();
+  const view = lines.slice(viewportTop, viewportTop + 24).join("\n");
+  assert.match(view, /Decisions › Advanced/); assert.match(view, /Provider \/ execution/); assert.match(view, /Relevance threshold/);
+  assert.doesNotMatch(view, /Skill filtering|Tool filtering/);
+  const row = lines.findIndex((line, i) => i >= viewportTop && /Skills\s+Tools\s+Advanced/.test(line));
+  assert.equal(s.terminal.bgAt(row, lines[row].indexOf("Advanced") + 2), 24);
+  assert.equal(s.tui.hasOverlay(), true); assert.equal(s.tui.getFocusedComponent(), s.dialog);
+  s.dialog.handleInput!("\x1b"); s.tui.renderNow(); await s.terminal.flush();
+  assert.deepEqual(s.results, ["closed"]); assert.equal(s.tui.hasOverlay(), false);
 });

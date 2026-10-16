@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DecisionError } from "../src/decision/errors.ts";
 import { defaultSettings, SettingsError } from "../src/settings.ts";
 import {
-  ADVANCED_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, layoutMenu, sanitizeTerminalText,
+  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, layoutMenu, sanitizeTerminalText,
 } from "../src/extension/settings-model.ts";
 
 test("settings-model is pure: it imports no Pi or pi-tui module", () => {
@@ -16,8 +16,8 @@ test("settings-model is pure: it imports no Pi or pi-tui module", () => {
 
 test("Advanced covers every relevance setting except legacy pins, and each field is typed", () => {
   const expected = Object.keys(defaultSettings().relevance).filter((key) => key !== "pinned").sort();
-  assert.deepEqual(ADVANCED_FIELDS.map((field) => field.key).sort(), expected);
-  assert.equal(new Set(ADVANCED_FIELDS.map((field) => field.key)).size, ADVANCED_FIELDS.length);
+  assert.deepEqual([...ADVANCED_FIELDS.filter((field) => field.group === "relevance"), ...SKILL_FIELDS].map((field) => field.key).sort(), expected);
+  assert.equal(new Set(ADVANCED_FIELDS.map((field) => `${field.group}.${field.key}`)).size, ADVANCED_FIELDS.length);
   for (const field of ADVANCED_FIELDS) {
     assert.ok(field.hint.length > 10, `${field.key} needs a hint`);
     if (field.kind === "options") assert.ok((field.options?.length ?? 0) >= 2, `${field.key} needs options`);
@@ -25,19 +25,11 @@ test("Advanced covers every relevance setting except legacy pins, and each field
   assert.equal(advancedRows(defaultSettings()).length, ADVANCED_FIELDS.length);
 });
 
-test("Advanced puts the four picking controls first, in order, and drops every choice-era row", () => {
-  assert.deepEqual(ADVANCED_FIELDS.slice(0, 5).map((field) => field.key), ["enabled", "threshold", "chunkSize", "maxSkills", "cadence"]);
-  assert.deepEqual(ADVANCED_FIELDS.slice(5).map((field) => field.key), ["failMode", "timeoutMs", "concurrency", "minCandidates", "maxPromptChars", "maxDescriptionChars"]);
-  const labels = ADVANCED_FIELDS.map((field) => field.label);
-  assert.deepEqual(labels.slice(1, 5), ["Relevance threshold", "Shard size", "Max added per round", "Run picker"]);
-  for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.ok(!ADVANCED_FIELDS.some((field) => field.key === removed), removed);
-  assert.ok(!ADVANCED_FIELDS.some((field) => field.kind === ("choice" as string)), "the option-list kind is not called choice");
-  const threshold = ADVANCED_FIELDS.find((field) => field.key === "threshold")!;
-  assert.equal(threshold.kind, "decimal"); assert.match(threshold.hint, /0–1/);
-  const cadence = ADVANCED_FIELDS.find((field) => field.key === "cadence")!;
-  assert.deepEqual(cadence.options!.map((option) => option.value), ["prompt", "tool-round"]);
-  assert.match(cadence.options![1].description, /No tool names, arguments or results are sent/);
-  assert.match(ADVANCED_FIELDS.find((field) => field.key === "maxSkills")!.hint, /already-added skills do not count/i);
+test("feature fields stay on their tabs; all tuning is Advanced", () => {
+  assert.deepEqual(SKILL_FIELDS.map((field) => field.key), ["enabled", "cadence"]);
+  assert.deepEqual(TOOL_FIELDS.map((field) => field.key), ["enabled", "mode", "cadence"]);
+  assert.ok(!ADVANCED_FIELDS.some((field) => field.key === "enabled" || field.key === "cadence"));
+  assert.deepEqual(ADVANCED_FIELDS.slice(0, 3).map((field) => field.key), ["threshold", "chunkSize", "maxSkills"]);
 });
 
 test("failMode open option carries a visible warning and closed is listed first", () => {
@@ -48,7 +40,7 @@ test("failMode open option carries a visible warning and closed is listed first"
 
 test("value text: concurrency 0 explains all-parallel, booleans read On/Off", () => {
   const settings = defaultSettings();
-  const field = (key: string) => ADVANCED_FIELDS.find((item) => item.key === key)!;
+  const field = (key: string) => [...ADVANCED_FIELDS, ...SKILL_FIELDS].find((item) => item.key === key)!;
   assert.equal(advancedValueText(field("concurrency"), settings), "0 (all shards parallel)");
   settings.relevance.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
   assert.equal(advancedValueText(field("enabled"), settings), "On");

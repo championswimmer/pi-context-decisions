@@ -41,8 +41,8 @@ export interface AdvancedField {
  * Every relevance knob except `pinned`, which stays on the `pin`/`unpin` commands. The four picking
  * controls come first (threshold, shard size, max added per round, cadence); safety limits follow.
  */
-export const ADVANCED_FIELDS: readonly AdvancedField[] = [
-  { key: "enabled", group: "relevance", label: "Skill filtering", kind: "bool", hint: "Turn relevance scoring of skill advertisements on or off. The master switch on the main screen also applies." },
+const RELEVANCE_FIELDS: readonly AdvancedField[] = [
+  { key: "enabled", group: "relevance", label: "Skill filtering", kind: "bool", hint: "Turn skill advertisement filtering on or off, independently of tool and MCP filtering." },
   { key: "threshold", group: "relevance", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A skill is added when its relevance score is at least this. 0.375 is the default; 1 keeps only perfect scores." },
   { key: "chunkSize", group: "relevance", label: "Shard size", kind: "int", hint: "1–50 skills per decision request; every shard of the remaining candidates is evaluated." },
   { key: "maxSkills", group: "relevance", label: "Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
@@ -60,12 +60,12 @@ export const ADVANCED_FIELDS: readonly AdvancedField[] = [
   { key: "maxPromptChars", group: "relevance", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
   { key: "maxDescriptionChars", group: "relevance", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each skill description sent." },
 ];
-export function advancedField(key: string): AdvancedField | undefined { return ADVANCED_FIELDS.find((field) => field.key === key); }
+export function advancedField(key: string): AdvancedField | undefined { return RELEVANCE_FIELDS.find((field) => field.key === key); }
 /**
  * Opt-in tool and MCP filtering (default off). It is separate from skill filtering: only the master switch, the decision model and the
  * shared scoring limits (timeout, shard size, concurrency, prompt size) are common.
  */
-export const TOOL_FIELDS: readonly AdvancedField[] = [
+const ALL_TOOL_FIELDS: readonly AdvancedField[] = [
   { key: "enabled", group: "tools", label: "Tool filtering", kind: "bool", hint: "Off by default and independent of skill filtering. When on, external tools, MCP servers or extensions are made available per prompt by the decision model; Pi's built-in tools are never filtered. Calls to unavailable tools are blocked. This is not a sandbox." },
   { key: "mode", group: "tools", label: "Mode", kind: "options", hint: "What is decided.", options: [
     { value: "tools", description: "Every external tool is decided on its own, whichever MCP server or extension it comes from (default)." },
@@ -85,7 +85,13 @@ export const TOOL_FIELDS: readonly AdvancedField[] = [
   ] },
   { key: "maxDescriptionChars", group: "tools", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each tool or server description sent to the decision model." },
 ];
-export function fieldFor(group: SettingsGroup, key: string): AdvancedField | undefined { return (group === "tools" ? TOOL_FIELDS : ADVANCED_FIELDS).find((field) => field.key === key); }
+export const SKILL_FIELDS = RELEVANCE_FIELDS.filter((field) => field.key === "enabled" || field.key === "cadence");
+export const TOOL_FIELDS = ALL_TOOL_FIELDS.filter((field) => ["enabled", "mode", "cadence"].includes(field.key));
+export const ADVANCED_FIELDS = [
+  ...RELEVANCE_FIELDS.filter((field) => !SKILL_FIELDS.includes(field)),
+  ...ALL_TOOL_FIELDS.filter((field) => !TOOL_FIELDS.includes(field)).map((field) => ({ ...field, label: `Tools · ${field.label}` })),
+];
+export function fieldFor(group: SettingsGroup, key: string): AdvancedField | undefined { return (group === "tools" ? ALL_TOOL_FIELDS : RELEVANCE_FIELDS).find((field) => field.key === key); }
 export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown { return (settings[group] as unknown as Record<string, unknown>)[key]; }
 export function toolsSummary(settings: ContextDecisionsSettings): string { return settings.tools.enabled ? `On · ${settings.tools.mode} · ${settings.tools.cadence}` : "Off"; }
 

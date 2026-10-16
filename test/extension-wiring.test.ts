@@ -157,12 +157,12 @@ test("picker restricts router entries, preserves native classifiers, and marks a
 test("UI picker uses static entries, supports cancellation and None without writes/inference", async (t) => {
   const h = await setup(t); const c = context({ async getApiKeyForProvider(provider) { return provider === "openrouter" ? "FIXTURE-ROUTER-KEY" : undefined; } }, true); c.selections.push(undefined);
   const modelRow = (options: string[]) => options.find((option) => option.startsWith("Model:"))!;
-  c.selections.splice(0, 1, modelRow, undefined, "Done"); // open the model picker, cancel it
-  await h.command("", c.ctx); assert.equal(c.dialogs.length, 3); assert.equal(c.calls(), 0); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  c.selections.push(modelRow, (options) => options.find((option) => option.includes("openrouter direct typesafe/jev-1.13"))!, "Done");
+  c.selections.splice(0, 1, "Advanced", modelRow, undefined, "Back", "Done"); // open the model picker, cancel it
+  await h.command("", c.ctx); assert.equal(c.dialogs.length, 5); assert.equal(c.calls(), 0); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  c.selections.push("Advanced", modelRow, (options) => options.find((option) => option.includes("openrouter direct typesafe/jev-1.13"))!, "Done");
   await h.command("", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" });
-  c.selections.push(modelRow, "None (no decision calls)", "Done"); await h.command("", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  assert.ok(c.dialogs[1].options!.every((option) => !option.includes("respan")));
+  c.selections.push("Advanced", modelRow, "None (no decision calls)", "Back", "Done"); await h.command("", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  assert.ok(c.dialogs[2].options!.every((option) => !option.includes("respan")));
 });
 test("headless pins work and RPC settings updates persist or fail validation", async (t) => {
   const h = await setup(t); const c = context();
@@ -174,9 +174,9 @@ test("headless pins work and RPC settings updates persist or fail validation", a
 });
 test("UI settings dialog validation, cancellation and boolean edit share persisted config", async (t) => {
   const h = await setup(t); const c = context({}, true);
-  c.selections.push("Advanced…", (options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, "Back", (options) => options.find((option) => option.startsWith("Context decisions:"))!, "Done");
+  c.selections.push("Advanced", (options) => options.find((option) => option.startsWith("relevance.chunkSize:"))!, "Back", "Skills", (options) => options.find((option) => option.startsWith("relevance.enabled:"))!, "Back", "Done");
   c.inputs.push("999"); await h.command("", c.ctx);
-  assert.ok(h.messages.some((message) => message.level === "error")); assert.equal((await loadSettings(h.path)).settings.enabled, false);
+  assert.ok(h.messages.some((message) => message.level === "error")); assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
   c.selections.push(undefined); await h.command("", c.ctx); assert.equal(c.calls(), 0);
 });
 test("failed persistence does not change in-memory selection or behavior; queue recovers", async (t) => {

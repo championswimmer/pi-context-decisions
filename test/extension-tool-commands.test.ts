@@ -82,7 +82,7 @@ test("status shows tool filtering lines and the not-a-sandbox sentence; off says
 test("RPC mode keeps select/input menus for the tools group and never calls custom overlays", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
   const picks: string[] = [];
-  const answers = ["Tools & MCP…", "tools.enabled", "tools.mode", (o: string[]) => o.find((x) => x.startsWith("mcp"))!, "tools.threshold", "Back", "Done"];
+  const answers = ["Tools", "tools.enabled", "tools.mode", (o: string[]) => o.find((x) => x.startsWith("mcp"))!, "tools.threshold", "Back", "Done"];
   const inputs = ["0.6"]; let step = 0;
   const ctx = h.ctx as unknown as { hasUI: boolean; mode: string; ui: Record<string, unknown> };
   ctx.hasUI = true; ctx.mode = "rpc";
@@ -90,13 +90,13 @@ test("RPC mode keeps select/input menus for the tools group and never calls cust
   ctx.ui.select = async (title: string, options: string[]) => {
     picks.push(title);
     const want = [
-      (o: string[]) => o.find((x) => x.startsWith("Tools & MCP…"))!, (o: string[]) => o.find((x) => x.startsWith("tools.enabled"))!, (o: string[]) => o.find((x) => x.startsWith("tools.mode"))!,
-      (o: string[]) => o.find((x) => x.startsWith("mcp"))!, (o: string[]) => o.find((x) => x.startsWith("tools.threshold"))!, () => "Back", () => "Done"][step++];
+      (o: string[]) => o.find((x) => x.startsWith("Tools"))!, (o: string[]) => o.find((x) => x.startsWith("tools.enabled"))!, (o: string[]) => o.find((x) => x.startsWith("tools.mode"))!,
+      (o: string[]) => o.find((x) => x.startsWith("mcp"))!, () => "Back", () => "Advanced", (o: string[]) => o.find((x) => x.startsWith("tools.threshold"))!, () => "Back", () => "Done"][step++];
     void answers; return want(options);
   };
   ctx.ui.input = async () => inputs.shift();
   await h.command("");
   const s = await saved(h);
   assert.deepEqual([s.tools.enabled, s.tools.mode, s.tools.threshold], [true, "mcp", 0.6]);
-  assert.ok(picks.some((title) => /Tools & MCP settings/.test(title)));
+  assert.ok(picks.some((title) => /Tools settings/.test(title)));
 });

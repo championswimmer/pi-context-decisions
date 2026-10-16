@@ -24,7 +24,7 @@ async function until(component: Component, pattern: RegExp, width = 120): Promis
 }
 /** Skill picker tab rows in dialog order: toggle, provider, model, global, project, Advanced, Status, Close. */
 function openAllowlistRow(component: Component, row: "global" | "project") {
-  for (let i = 0; i < (row === "global" ? 3 : 4); i++) component.handleInput!(keys.down);
+  for (let i = 0; i < (row === "global" ? 2 : 3); i++) component.handleInput!(keys.down);
   component.handleInput!(keys.enter);
 }
 async function saved(component: Component): Promise<void> {
@@ -105,12 +105,12 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "tui";
   h.driver(async (component) => {
     const main = component.render(100).join("\n");
-    assert.match(main, /Always allowed · Global/); assert.match(main, /Always allowed · Project/); assert.match(main, /Advanced…/);
+    assert.match(main, /Always allowed · Global/); assert.match(main, /Always allowed · Project/); assert.match(main, /Advanced/);
     assert.doesNotMatch(main, /relatedThreshold|chunkSize|Batch size/, "relevance knobs live under Advanced");
     openAllowlistRow(component, "global");
     assert.match(await until(component, /\[ \] alpha/), /Global/); assert.doesNotMatch(component.render(120).join("\n"), /\[ \] project-only/);
     component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
-    component.handleInput!(keys.esc); component.handleInput!(keys.esc); await until(component, /Context decisions/);
+    component.handleInput!(keys.esc); component.handleInput!(keys.esc); await until(component, /Skill filtering/);
   });
   await h.command(""); assert.equal(h.overlays.length, 1); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
   h.driver(async (component) => {
@@ -124,7 +124,7 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
 });
 test("RPC cannot open the allowlist editors: the menu says so, opens no overlay and no allow subcommand exists", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "rpc";
-  h.choices.push((options) => options.find((option) => option.startsWith("Allow list (Global)")), () => "Done");
+  h.choices.push(() => "Skills", (options) => options.find((option) => option.startsWith("Allow list (Global)")), () => "Back", () => "Done");
   await h.command(""); assert.match(h.messages.at(-1)!, /allow list editors need the terminal UI.*globalAllowlist.*alwaysAllowed/s); assert.equal(h.overlays.length, 0);
   assert.equal((await h.commands.get("decisions")!.getArgumentCompletions!("allow")), null);
 });

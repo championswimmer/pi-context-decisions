@@ -103,7 +103,7 @@ test("terminal /decisions opens ONE floating overlay with the shared options and
   const dialog = await h.dialog();
   assert.equal(h.calls.custom, 1);
   assert.deepEqual(h.customOptions[0] && { ...(h.customOptions[0] as object), onHandle: undefined }, { overlay: true, overlayOptions: SETTINGS_OVERLAY_OPTIONS, onHandle: undefined });
-  assert.match(h.text(dialog), /Context decisions/);
+  assert.match(h.text(dialog), /Skill filtering/);
   dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.calls.select + h.calls.input, 0); assert.deepEqual(h.messages, []);
 });
@@ -115,8 +115,7 @@ test("RPC mode keeps the select menus with Advanced… and never calls custom", 
 
 test("a second /decisions while the first dialog is open does not open another; it focuses the first", async (t) => {
   const h = await harness(t); const first = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down);
-  dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Advanced/);
+  dialog.handleInput!("\x1b[Z"); await h.until(dialog, /Decisions › Advanced/);
   await h.command("");
   assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1); assert.doesNotMatch(h.text(dialog), /Decisions › Advanced/, "re-running /decisions focuses the existing dialog on its main screen");
   dialog.handleInput!(KEY.esc); await first;
@@ -126,8 +125,8 @@ test("saves inside the dialog persist, do not close it, and later settle without
   const h = await harness(t, { configured: true }); let resolved = false;
   const run = h.command("").then(() => { resolved = true; }); const dialog = await h.dialog();
   dialog.handleInput!(KEY.enter); // toggle enabled
-  await h.until(dialog, /Context decisions\s+Off/);
-  assert.equal((await loadSettings(h.path)).settings.enabled, false); assert.equal(resolved, false, "saving must not close the dialog");
+  await h.until(dialog, /Skill filtering\s+Off/);
+  assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false); assert.equal(resolved, false, "saving must not close the dialog");
   dialog.handleInput!(KEY.esc); await run; assert.equal(resolved, true);
 });
 
@@ -135,7 +134,7 @@ test("choosing a model through the dialog persists it atomically and never enabl
   const h = await harness(t, { env: { TYPESAFE_API_KEY: "FIXTURE" } });
   await saveSettings({ ...defaultSettings(), enabled: false }, h.path);
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Provider / execution
+  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /typesafe · direct API\s+configured/);
   dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Model/);
   await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.enter);
@@ -149,7 +148,7 @@ test("choosing a model through the dialog persists it atomically and never enabl
 test("missing keys are labelled, guide to env or /login, and are never persisted; OpenAI OAuth cannot substitute", async (t) => {
   const h = await harness(t, { openaiOAuth: true, env: {} });
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Provider / execution
+  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /openai · direct API\s+missing key/);
   assert.match(h.text(dialog), /typesafe · direct API\s+missing key/); assert.match(h.text(dialog), /openrouter · direct API\s+missing key/);
   // Move to the openai row and activate it.
@@ -165,15 +164,15 @@ test("missing keys are labelled, guide to env or /login, and are never persisted
 test("dialog work never reads ctx.signal (the agent-run signal), even through status, models and ranking", async (t) => {
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   const run = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  for (let i = 0; i < 2; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/);
   assert.equal(h.requests.length, 1);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
-  dialog.handleInput!("\x1b[A"); dialog.handleInput!(KEY.enter); // Model route (the cursor stayed on Global)
+  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Shared model
   await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
-  for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
+  dialog.handleInput!("\t"); for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
   await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.reads.signal, 0, "the dialog must own its signal");
 });
@@ -183,7 +182,7 @@ test("session_shutdown while open resolves the handler, aborts ranking and never
   let resolved = false;
   const run = h.command("").then(() => { resolved = true; });
   const dialog = await h.dialog();
-  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  for (let i = 0; i < 2; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await waitFor(() => h.decisionSignals[0], "pending ranking request");
@@ -206,7 +205,7 @@ test("an open dialog does not block or swallow later hook activity", async (t) =
   const h = await harness(t, { configured: true }); const run = h.command(""); const dialog = await h.dialog();
   const event = { type: "before_agent_start", prompt: "task", systemPrompt: "s", systemPromptOptions: { cwd: h.root, skills: Array.from({ length: 3 }, (_, n) => ({ name: `s${n}`, description: "d", filePath: "/p", baseDir: "/b", sourceInfo: { path: "/p", source: "x", scope: "user", origin: "top-level" }, disableModelInvocation: false })), selectedTools: [], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: [], promptGuidelines: [], contextFiles: [] } };
   await h.emit("before_agent_start", event);
-  assert.match(h.text(dialog), /Context decisions/); dialog.handleInput!(KEY.esc); await run;
+  assert.match(h.text(dialog), /Skill filtering/); dialog.handleInput!(KEY.esc); await run;
 });
 
 test("a custom() failure is reported as a safe error and does not wedge later opens", async (t) => {
@@ -235,7 +234,7 @@ test("/decisions history reuses the settings overlay, shows committed additions 
   dialog.handleInput!(KEY.enter); await h.until(dialog, /Skills advertised/);
   assert.match(h.text(dialog), /alpha/); assert.doesNotMatch(h.text(dialog), /PRIVATE/);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions › History/);
-  dialog.handleInput!(KEY.esc); await h.until(dialog, /Context decisions/);
+  dialog.handleInput!(KEY.esc); await h.until(dialog, /Skill filtering/);
   dialog.handleInput!(KEY.esc); await first;
   assert.equal(h.reads.signal, 0); assert.equal(h.requests.length, 0);
   assert.equal(h.calls.select + h.calls.input, 0);
