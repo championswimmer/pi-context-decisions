@@ -72,13 +72,13 @@ test("the setter subcommands are gone: each is rejected with the usage line, cha
     assert.equal(JSON.stringify((await loadSettings(h.path)).settings), before, args);
   }
   assert.equal(h.dialogs.length, 0); assert.equal(h.inference(), 0);
-  await h.command("tools list extra"); assert.match(h.messages.at(-1)!, /Use \/decisions tools list.*Tool picker tab/);
+  await h.command("tools list extra"); assert.match(h.messages.at(-1)!, /Use \/decisions tools list.*Tools tab/);
   assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "history", "test", "tools", "mcp", "pin", "unpin"]);
   assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("al"), null);
 });
 test("headless /decisions prints the status instead of a menu", async (t) => {
   const h = await fixture(t);
-  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/); assert.equal(h.dialogs.length, 0);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: not configured/); assert.equal(h.dialogs.length, 0);
 });
 test("RPC Advanced edits validate and persist; cancelling leaves settings alone", async (t) => {
   const h = await fixture(t, { ui: true });
@@ -190,7 +190,7 @@ test("request-time Pi key is honoured when the cached OAuth inventory is empty o
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
 });
 
-test("RPC Advanced edits the four picking controls; cadence is a select, not free text, and legacy keys are refused", async (t) => {
+test("RPC Advanced edits shared tuning while Skills owns cadence; cadence is a select, not free text, and legacy keys are refused", async (t) => {
   const h = await fixture(t, { ui: true });
   h.inputs.push("0.625");
   await h.menu("Advanced", row("decision.threshold:"), "Back", "Skills", row("relevance.cadence:"), row("tool-round"), "Back");
@@ -205,5 +205,6 @@ test("RPC Advanced edits the four picking controls; cadence is a select, not fre
   await h.set("relevance.cadence", "every-token"); assert.equal((await loadSettings(h.path)).settings.relevance.cadence, "tool-round", "no option matches: nothing changes");
   await h.set("relevance.maxSkills", "3"); await h.set("decision.chunkSize", "10");
   assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 10);
-  await h.command("status"); assert.match(h.messages.at(-1)!, /threshold 0.625 \(0–1\), picker tool-round.*max 3 added per round/s);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Skills: on · picker tool-round · max 3 added per round/);
+  assert.match(h.messages.at(-1)!, /Shared tuning \(Advanced\): threshold 0.625 \(0–1\)/);
 });

@@ -55,7 +55,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" 
       ctx.hasUI = true; ctx.mode = "tui";
       ctx.ui.custom = async (factory) => {
         const component = await factory({ requestRender() {} } as Parameters<typeof factory>[0], { fg: (_token: unknown, text: string) => text, bg: (_token: unknown, text: string) => text } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], () => {});
-        // Open the editor from the Skill picker tab: rows are toggle, cadence, global, project.
+        // Open the editor from the Skills tab: rows are toggle, cadence, global, project.
         for (let i = 0; i < (scope === "global" ? 2 : 3); i++) component.handleInput!("\x1b[B");
         component.handleInput!("\r");
         // The dialog loads the embedded editor's inputs asynchronously.

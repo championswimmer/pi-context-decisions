@@ -85,7 +85,7 @@ test("startup defaults perform no auth or inference and do not mutate advertisem
   assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.match(c.statuses[0]!, /select model/);
   assert.deepEqual(deltaMessages(h.session), [], "unconfigured advertises everything through the base: no delta");
   assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "the branch remembers that every skill was advertised");
-  await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions: enabled; not configured/);
+  await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions: not configured/);
 });
 test("RPC native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
   const h = await setup(t); const c = context(); await setModel(h.command, c.ctx, "Pi custom/nested/model");

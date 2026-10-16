@@ -258,7 +258,7 @@ export async function saveSettings(settings: ContextDecisionsSettings, path: str
 /** CLI/UI updates always pass through the same strict validation as persistence. */
 export function updateSetting(settings: ContextDecisionsSettings, key: string, text: string): ContextDecisionsSettings {
   if (key === "globalAllowlist") throw new SettingsError("Edit the allowlist in the /decisions dialog");
-  if (key === "tools.alwaysAllowedTools" || key === "tools.alwaysAllowedMcpServers") throw new SettingsError("Edit these allowlists in the /decisions Tool picker tab");
+  if (key === "tools.alwaysAllowedTools" || key === "tools.alwaysAllowedMcpServers") throw new SettingsError("Edit these allowlists in the /decisions Tools tab");
   const next = structuredClone(settings);
   let target: Record<string, unknown>;
   let field: string;

@@ -34,7 +34,7 @@ test("tool settings: mode, cadence and scalars validate through the same strict 
   assert.ok(h.messages.length >= 4, "numeric validation errors are reported");
   assert.doesNotMatch(JSON.stringify(h.messages), /PRIVATE|SECRET/);
   // The allowlists are edited by the editors, never by a scalar setting.
-  assert.throws(() => updateSetting(defaultSettings(), "tools.alwaysAllowedTools", "x"), /Tool picker tab/);
+  assert.throws(() => updateSetting(defaultSettings(), "tools.alwaysAllowedTools", "x"), /Tools tab/);
 });
 // Tools with no usable provenance belong to no group, so the editor saves them by name.
 const ungrouped = (name: string): SimToolInfo => ({ name, description: `Does ${name}`, exposure: "direct" });
@@ -67,7 +67,7 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
   await h.command("mcp list");
   assert.match(last(h), /MCP servers and extensions \(3, filtering on · mode tools\)/); assert.match(last(h), /MCP dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
   assert.match(last(h), /extension ext_a \(ext__ext_a\) · 1 tools/, "extensions are listed beside servers, by their canonical key");
-  assert.match(last(h), /Tool picker cannot add them/); assert.match(last(h), /tools\.alwaysAllowedMcpServers/); assert.match(last(h), /\.pi\/pi-context-decisions\.json/); assert.match(last(h), /\/reload/);
+  assert.match(last(h), /Tools tab cannot add them/); assert.match(last(h), /tools\.alwaysAllowedMcpServers/); assert.match(last(h), /\.pi\/pi-context-decisions\.json/); assert.match(last(h), /\/reload/);
   assert.equal(h.requests.length, calls, "listing never calls the decision model");
 });
 test("status shows tool filtering lines and the not-a-sandbox sentence; off says opt-in", async (t) => {

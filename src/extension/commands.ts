@@ -165,9 +165,10 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
   const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
   return [
-    `Context decisions: ${settings.relevance.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
-    `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, threshold ${settings.decision.threshold} (0–1), picker ${settings.relevance.cadence}, fail-${settings.decision.failMode}`,
-    `Scoring: shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, max ${settings.relevance.maxSkills} added per round, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.decision.timeoutMs}ms. Skills are only ever added; already-added skills are never re-scored`,
+    `Context decisions: ${selectionLabel(settings.backend)}`,
+    `Credentials: ${credentials}`,
+    `Skills: ${settings.relevance.enabled ? "on" : "off"} · picker ${settings.relevance.cadence} · max ${settings.relevance.maxSkills} added per round · minimum inventory ${settings.relevance.minCandidates}. Skills are only ever added; already-added skills are never re-scored`,
+    `Shared tuning (Advanced): threshold ${settings.decision.threshold} (0–1), fail-${settings.decision.failMode}; shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, timeout ${settings.decision.timeoutMs}ms, prompt ${settings.decision.maxPromptChars} chars, description ${settings.decision.maxDescriptionChars} chars. Skill/tool picking policy; limits also apply to allowlist ranking`,
     `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
     ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
     ...(error ? [`Settings error: ${error}. Repair the settings file, or choose a model in /decisions.`] : []),
@@ -180,10 +181,10 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
 /** Tool filtering status. Counts and modes only: no tool names, task text, arguments or results. */
 function toolStatusLines(controller: Controller, settings: ReturnType<Controller["getSettings"]>): string[] {
   const t = settings.tools;
-  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tool picker tab)"];
+  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tools tab)"];
   const last = controller.getLastToolDecision();
   return [
-    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · threshold ${settings.decision.threshold} · max ${t.maxAdded} added per round · minimum ${t.minCandidates} · fail-${settings.decision.failMode}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
+    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · max ${t.maxAdded} added per round · minimum ${t.minCandidates}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
     `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
@@ -421,7 +422,7 @@ function toolListLines(report: ToolReport, which: "tools" | "mcp"): string[] {
     lines.push(`MCP servers and extensions (${report.groups.length}, ${state}); grouped only by Pi's public metadata (mcp__ namespace for servers, sourceInfo for extensions):`);
     for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${group.type === "mcp" ? "MCP" : "extension"} ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.type === "mcp" && !group.verified ? " · not registered by Pi's built-in MCP" : ""}`);
     if (report.groups.length > LIST_LIMIT) lines.push(`  … and ${report.groups.length - LIST_LIMIT} more`);
-    lines.push("Resource-only or disconnected servers with no tools are not observable: the Tool picker cannot add them. Allowlist by name in tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers in the project .pi/pi-context-decisions.json, then /reload.");
+    lines.push("Resource-only or disconnected servers with no tools are not observable: the Tools tab cannot add them. Allowlist by name in tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers in the project .pi/pi-context-decisions.json, then /reload.");
     if (report.ungrouped) lines.push(`${report.ungrouped} extension tools expose no usable provenance: they belong to no group and are never filtered in mcp mode.`);
     return lines;
   }
@@ -441,7 +442,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
   };
   /** Read-only inventory reports: `tools list` / `mcp list`. Everything editable lives in the dialog. */
   const listCommand = async (ctx: CommandContext, which: "tools" | "mcp", tokens: string[]): Promise<void> => {
-    if (tokens.length !== 1 || tokens[0] !== "list") throw new SettingsError(`Use /decisions ${which} list. Change tool and MCP settings and allowlists in the /decisions Tool picker tab`);
+    if (tokens.length !== 1 || tokens[0] !== "list") throw new SettingsError(`Use /decisions ${which} list. Change tool and MCP settings and allowlists in the /decisions Tools tab`);
     controller.report(ctx, toolListLines(await controller.describeTools(ctx), which).join("\n"));
   };
   pi.registerCommand("decisions", {

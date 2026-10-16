@@ -221,7 +221,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     if (!stack.length) { close("closed"); return; }
     refreshSnapshot(); applyFocus(); redraw();
   };
-  /** Drop every route above main (a finished model choice returns to the root screen). */
+  /** Drop every route above the current tab (a finished model choice returns to Advanced). */
   const unwind = () => {
     while (stack.length > 1) leave(stack.pop()!);
     refreshSnapshot(); applyFocus();

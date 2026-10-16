@@ -64,7 +64,7 @@ test("mcp mode: MCP servers AND extensions are the candidates; adding a group en
   assert.match(request, /Extension ext_a\. Tools: ext_a/, "an extension is a candidate exactly like a server: its name and its tool names");
   assert.deepEqual(h.active(), [...CORE, "mcp__dev_radius__q"], "the declared tools of the unselected server and extension are withheld");
   assert.equal(await h.gate("mcp__dev_radius__r"), undefined);
-  assert.match((await h.gate("ext_a"))!.reason, /^Extension "ext_a" is unavailable: .* \/decisions Tool picker tab \(Always allowed MCP servers & extensions\)\./);
+  assert.match((await h.gate("ext_a"))!.reason, /^Extension "ext_a" is unavailable: .* \/decisions Tools tab \(Always allowed MCP servers & extensions\)\./);
   const blocked = await h.gate("mcp__docs__s");
   assert.match(blocked!.reason, /^MCP server "docs" is unavailable/);
   h.sim.registerTool(mcpTool("dev-radius", "late", "direct"));
@@ -540,7 +540,7 @@ test("resources: an unknown or resource-only server fails closed unless it is al
   await h.start("task");
   const notes = (await h.gate("read_mcp_resource", READ("notes")))!.reason;
   assert.match(notes, /server "notes" is unavailable/, "no namespace observed: not a known group");
-  assertSettingsFileGuidance(notes); // the Tool picker cannot add a server it has never observed: the guidance must name the files
+  assertSettingsFileGuidance(notes); // the Tools tab cannot add a server it has never observed: the guidance must name the files
   const longName = (await h.gate("read_mcp_resource", READ("n".repeat(64))))!.reason;
   assert.ok(longName.length <= 300, `${longName.length}`); assertSettingsFileGuidance(longName); // truncation never cuts the instruction
   assert.match((await h.gate("list_mcp_resources", READ("notes")))!.reason, /unavailable/);

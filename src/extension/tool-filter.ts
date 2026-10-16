@@ -390,9 +390,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         const group = tool.group && mode === "mcp" ? inv.groups.get(tool.group) : undefined;
         const reason = group
           ? group.type === "mcp"
-            ? `MCP server "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tool picker tab (Always allowed MCP servers & extensions).`
-            : `Extension "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled its tools for this task. Continue without it, or ask the user to allow it in the /decisions Tool picker tab (Always allowed MCP servers & extensions).`
-          : `Tool "${clean(tool.name, 128)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tool picker tab (Always allowed tools).`;
+            ? `MCP server "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tools tab (Always allowed MCP servers & extensions).`
+            : `Extension "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled its tools for this task. Continue without it, or ask the user to allow it in the /decisions Tools tab (Always allowed MCP servers & extensions).`
+          : `Tool "${clean(tool.name, 128)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tools tab (Always allowed tools).`;
         return { block: true, reason: reason.slice(0, BLOCK_REASON_LIMIT) };
       } catch {
         // Unexpected error. A known unavailable external candidate is blocked; a tool the last snapshot verified as internal passes;

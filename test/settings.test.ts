@@ -269,7 +269,7 @@ test("updateSetting edits tools scalars through the same validation; allowlist a
   for (const key of ["tools.alwaysAllowedTools", "tools.alwaysAllowedMcpServers"]) assert.throws(() => updateSetting(settings, key, "x"), /allowlists/);
   assert.throws(() => updateSetting(settings, "tools", "x"), SettingsError);
 });
-test("changing a tools setting leaves skill settings and the master switch alone", () => {
+test("changing a tool feature setting leaves skill policy and shared tuning alone", () => {
   const before = defaultSettings();
   const after = updateSetting(before, "tools.enabled", "true");
   assert.deepEqual({ ...after, tools: before.tools }, before);
@@ -320,4 +320,13 @@ test("shadowed legacy values and all shared bounds stay errors; shared saves can
   for (const key of Object.keys(defaultSettings().decision)) assert.throws(() => updateSetting(defaultSettings(), `relevance.${key}`, "1"), /use decision/);
   for (const key of ["threshold", "failMode", "maxDescriptionChars"]) assert.throws(() => updateSetting(defaultSettings(), `tools.${key}`, "1"), /use decision/);
   assert.throws(() => updateSetting(defaultSettings(), "enabled", "false"), /Removed master switch/);
+});
+
+test("README canonical default settings stay valid, warning-free and in sync", async () => {
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  const json = /Canonical settings shape \(defaults\):\s+```json\n([\s\S]*?)\n```/.exec(readme)?.[1];
+  assert.ok(json);
+  const warnings: string[] = [];
+  assert.deepEqual(parseSettings(JSON.parse(json), warnings), defaultSettings());
+  assert.deepEqual(warnings, []);
 });

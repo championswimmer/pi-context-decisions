@@ -216,8 +216,8 @@ test("a custom() failure is reported as a safe error and does not wedge later op
 
 test("headless commands keep their text output without a dialog", async (t) => {
   const h = await harness(t, { mode: "print", custom: false });
-  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/);
-  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/, "no arguments: the status, never a dialog");
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: not configured/);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: not configured/, "no arguments: the status, never a dialog");
   await h.command("pin alpha"); assert.match(h.messages.at(-1)!, /Pinned skills updated/);
   await h.command("tools list"); assert.match(h.messages.at(-1)!, /Tools \(/);
   assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);

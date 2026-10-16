@@ -30,7 +30,7 @@ const EXTRA = [
   mcpTool("dev-radius", "q", "direct"), mcpTool("docs", "s", "direct"), mcpTool("docs", "t", "codemode"),
 ];
 
-/** Open the REAL /decisions dialog, switch to the Tool picker tab and enter one allowlist editor (`tools global`, `mcp project`, ...). */
+/** Open the REAL /decisions dialog, switch to the Tools tab and enter one allowlist editor (`tools global`, `mcp project`, ...). */
 async function open(h: ToolHarness, target: `${"tools" | "mcp"} ${"global" | "project"}`) {
   const [list, scope] = target.split(" ") as ["tools" | "mcp", "global" | "project"];
   const components: (Component & { dispose?(): void })[] = [];
@@ -137,7 +137,7 @@ test("regression: a non-ASCII extension is a real group that mcp mode filters, s
   const key = extensionKey("笔记")!;
   const h = await toolSetup(t, { extra: [fromExtension("note_zh", "/home/u/.pi/agent/extensions/笔记.ts"), EXTRA[0]!], tools: { mode: "mcp" } });
   await h.start("task");
-  assert.ok(!h.active().includes("note_zh"), "no longer escapes filtering"); assert.match((await h.gate("note_zh"))!.reason, /^Extension "笔记" is unavailable.*Tool picker tab/);
+  assert.ok(!h.active().includes("note_zh"), "no longer escapes filtering"); assert.match((await h.gate("note_zh"))!.reason, /^Extension "笔记" is unavailable.*Tools tab/);
   const e = await open(h, "mcp global");
   await e.until(/笔记 \(extension\)/);
   e.to(/笔记 \(extension\)/); e.press(KEY.space, KEY.save);
