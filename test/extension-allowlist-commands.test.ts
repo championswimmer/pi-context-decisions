@@ -130,16 +130,20 @@ test("RPC cannot open the allowlist editors: the menu says so, opens no overlay 
 });
 test("explicit topic ranking uses configured decision client even when auto filtering is off; metadata only", async (t) => {
   const h = await harness(t, true); h.ctx.hasUI = true; h.ctx.mode = "tui";
-  await saveSettings({ ...defaultSettings(), enabled: false, backend: { backend: "typesafe", model: "jev-latest" } }, h.path); await h.emitReload();
+  await saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, enabled: false }, decision: { ...defaultSettings().decision, chunkSize: 1, concurrency: 1, maxPromptChars: 6, maxDescriptionChars: 8 }, backend: { backend: "typesafe", model: "jev-latest" } }, h.path); await h.emitReload();
   h.driver(async (component) => {
     openAllowlistRow(component, "global"); await until(component, /Search:/);
     for (const char of "Browser work") component.handleInput!(char); assert.equal(h.requests.length, 0);
-    component.handleInput!("\x12"); await tick(); await tick();
-    assert.match(component.render(120).join("\n"), /1.80\/2/);
+    component.handleInput!("\x12"); await until(component, /0.90 relevance/);
+    assert.match(component.render(120).join("\n"), /0.90 relevance/);
   });
-  await h.command(""); assert.equal(h.requests.length, 1);
+  await h.command(""); assert.equal(h.requests.length, 1, "only alpha is in global scope"); assert.deepEqual(h.messages, [], "the command must not swallow a driver assertion");
+  for (const request of h.requests) {
+    assert.equal(Object.keys(request.questions).length, 1);
+    assert.ok(Object.values(request.state.skills as Record<string, { description: string }>).every((entry) => entry.description.length === 8));
+  }
   const data = JSON.stringify(h.requests); assert.doesNotMatch(data, /\/private\/|filePath|sourceInfo|project-only/); assert.match(data, /topics in the search query/);
-  assert.equal(h.requests[0].state.task, "Browser work"); assert.equal((await loadSettings(h.path)).settings.enabled, false);
+  assert.equal(h.requests[0].state.task, "Browse"); assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
 });
 test("missing credential guidance remains inline and local fuzzy works without creating a client", async (t) => {
   const h = await harness(t, true); h.setKey(undefined); h.ctx.hasUI = true; h.ctx.mode = "tui";

@@ -35,14 +35,14 @@ test("feature fields stay on their tabs; all tuning is Advanced", () => {
 test("failMode open option carries a visible warning and closed is listed first", () => {
   const field = ADVANCED_FIELDS.find((item) => item.key === "failMode")!;
   assert.equal(field.options![0].value, "closed");
-  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every remaining skill is added/i);
+  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every remaining skill, tool or group is added/i);
 });
 
 test("value text: concurrency 0 explains all-parallel, booleans read On/Off", () => {
   const settings = defaultSettings();
   const field = (key: string) => [...ADVANCED_FIELDS, ...SKILL_FIELDS].find((item) => item.key === key)!;
   assert.equal(advancedValueText(field("concurrency"), settings), "0 (all shards parallel)");
-  settings.relevance.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
+  settings.decision.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
   assert.equal(advancedValueText(field("enabled"), settings), "On");
   settings.relevance.enabled = false; assert.equal(advancedValueText(field("enabled"), settings), "Off");
   assert.equal(advancedValueText(field("threshold"), settings), "0.375");
@@ -93,4 +93,14 @@ test("sanitizeTerminalText removes escapes, bidi controls and bounds length; err
   assert.equal(describeError(new SettingsError("Bad value")), "Bad value");
   assert.equal(describeError(new DecisionError("http", "SECRET provider body", { status: 429 })), "Decision operation failed (http, HTTP 429)");
   assert.equal(describeError(new Error("SECRET_KEY")), "Context-decisions operation failed");
+});
+
+test("shared decision tuning appears once, exclusively in Advanced; feature caps retain distinct defaults", () => {
+  const settings = defaultSettings();
+  assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key).sort(), Object.keys(settings.decision).sort());
+  assert.equal(new Set(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key)).size, Object.keys(settings.decision).length);
+  assert.ok([...SKILL_FIELDS, ...TOOL_FIELDS].every((field) => field.group !== "decision"));
+  assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group !== "decision").map((field) => `${field.group}.${field.key}`),
+    ["relevance.maxSkills", "relevance.minCandidates", "tools.maxAdded", "tools.minCandidates"]);
+  assert.deepEqual([settings.relevance.maxSkills, settings.tools.maxAdded, settings.relevance.minCandidates, settings.tools.minCandidates], [12, 8, 8, 0]);
 });

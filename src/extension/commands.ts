@@ -165,9 +165,9 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
   const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
   return [
-    `Context decisions: ${settings.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
-    `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, threshold ${settings.relevance.threshold} (0–1), picker ${settings.relevance.cadence}, fail-${settings.relevance.failMode}`,
-    `Scoring: shard ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all shards parallel (0)" : settings.relevance.concurrency}, max ${settings.relevance.maxSkills} added per round, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms. Skills are only ever added; already-added skills are never re-scored`,
+    `Context decisions: ${settings.relevance.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
+    `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, threshold ${settings.decision.threshold} (0–1), picker ${settings.relevance.cadence}, fail-${settings.decision.failMode}`,
+    `Scoring: shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, max ${settings.relevance.maxSkills} added per round, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.decision.timeoutMs}ms. Skills are only ever added; already-added skills are never re-scored`,
     `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
     ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
     ...(error ? [`Settings error: ${error}. Repair the settings file, or choose a model in /decisions.`] : []),
@@ -183,7 +183,7 @@ function toolStatusLines(controller: Controller, settings: ReturnType<Controller
   if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tool picker tab)"];
   const last = controller.getLastToolDecision();
   return [
-    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · threshold ${t.threshold} · max ${t.maxAdded} added per round · minimum ${t.minCandidates} · fail-${t.failMode}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
+    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · threshold ${settings.decision.threshold} · max ${t.maxAdded} added per round · minimum ${t.minCandidates} · fail-${settings.decision.failMode}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
     `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
@@ -292,7 +292,7 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
       return await rankSkills(query, skills.map(({ name, description }) => ({ name, description })), {
         decide: (request, options) => client.decide(request, options),
         ...(capped.maxQuestions === undefined ? {} : { maxQuestions: capped.maxQuestions }),
-      }, { ...current.relevance, rubric: "topic", maxQuestions: 50, signal, ...(kind === "skills" ? {} : { subject: kind === "tools" ? "tool" as const : "mcp_server" as const, maxDescriptionChars: current.tools.maxDescriptionChars }) });
+      }, { ...current.decision, rubric: "topic", maxQuestions: 50, signal, ...(kind === "skills" ? {} : { subject: kind === "tools" ? "tool" as const : "mcp_server" as const }) });
     } finally { operation.close(); }
   };
   return {
@@ -342,7 +342,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
         if (at < 0) continue;
         await controller.update((current) => updateSetting(current, key, field.options![at].value));
       } else {
-        const hint = key === "relevance.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : field.key === "threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" || key === "tools.maxAdded" ? " (new items added per picking round)" : "";
+        const hint = key === "decision.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : field.key === "threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" || key === "tools.maxAdded" ? " (new items added per picking round)" : "";
         const value = await ctx.ui.input(`New value for ${key}${hint}`, String(old), { signal: ctx.signal });
         if (value === undefined) continue;
         await controller.update((current) => updateSetting(current, key, value.trim()));
@@ -480,7 +480,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
           const operation = controller.beginOperation();
           try {
             const signal = ctx.signal ? AbortSignal.any([ctx.signal, operation.signal]) : operation.signal;
-            const result = await controller.createClient(settings.backend, ctx).bool({ task: "Synthetic extension self-test" }, { instructions: "Does state.task describe a synthetic test?" }, { signal, timeoutMs: settings.relevance.timeoutMs });
+            const result = await controller.createClient(settings.backend, ctx).bool({ task: "Synthetic extension self-test" }, { instructions: "Does state.task describe a synthetic test?" }, { signal, timeoutMs: settings.decision.timeoutMs });
             controller.report(ctx, `Synthetic bool test: probability ${result.answer.probability}, ${Date.now() - start}ms${result.response.usage ? `; usage ${JSON.stringify(result.response.usage)}` : ""}`);
           } finally { operation.close(); }
         } else throw new SettingsError(`Use /decisions ${COMMANDS.join("|")}`);

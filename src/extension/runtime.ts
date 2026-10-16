@@ -115,7 +115,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     },
     setStatus(ctx) {
       if (!ctx.hasUI) return;
-      const state = settingsError ? "settings error · open /decisions to repair" : !settings.enabled || !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions" : last
+      const state = settingsError ? "settings error · open /decisions to repair" : !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions" : last
         ? `${last.reason} · +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : ` · ${last.advertised} advertised`}${last.cached ? " · cached" : ` · ${last.latencyMs}ms`}${last.errorCode ? ` · ${last.errorCode}` : ""}`
         : selectionLabel(settings.backend);
       ctx.ui.setStatus("context-decisions", state);
@@ -164,7 +164,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   function resolveClient(ctx: ExtensionContext, current: ContextDecisionsSettings, responses: DecisionResponse[], feature: "skills" | "tools" = "skills"): { client: RelevanceClient | null; error?: string } {
     if (settingsError) return { client: null, error: settingsError };
     // Never construct/request a client when explicitly disabled or unconfigured.
-    if (!current.enabled || !(feature === "skills" ? current.relevance.enabled : current.tools.enabled) || !current.backend) return { client: null };
+    if (!(feature === "skills" ? current.relevance.enabled : current.tools.enabled) || !current.backend) return { client: null };
     try {
       if (current.backend.backend === "pi" && !ctx.modelRegistry.findOfType("classifier", current.backend.provider, current.backend.id)) throw new DecisionError("config", "Selected Pi classifier is not registered");
       const decision = controller.createClient(current.backend, ctx);
@@ -183,7 +183,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     return [...new Set([...current.relevance.pinned, ...allowlistedNames(skills, { global: current.globalAllowlist, project: project.names })])];
   };
   const cacheKey = (task: string, current: ContextDecisionsSettings) =>
-    JSON.stringify([task, current.backend, current.relevance.maxPromptChars, current.relevance.maxDescriptionChars]);
+    JSON.stringify([task, current.backend, current.decision.maxPromptChars, current.decision.maxDescriptionChars]);
   const record = (round: SkillAdditionResult<Skill> | undefined, fields: Omit<LastDecision, "latencyMs" | "usage"> & { latencyMs?: number }, responses: DecisionResponse[], started: number) => {
     const usage = sumUsage(responses);
     last = { ...fields, latencyMs: fields.latencyMs ?? round?.latencyMs ?? Date.now() - started, ...(usage ? { usage } : {}) };
@@ -198,7 +198,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
    * together (two handlers are needed for two hidden messages). The skill handler then awaits that same promise.
    */
   let skillPass: Promise<{ message: SkillsDelta } | undefined> | undefined;
-  const toolsActive = () => settings.enabled && settings.tools.enabled;
+  const toolsActive = () => settings.tools.enabled;
   pi.on("before_agent_start", async (event, ctx) => {
     skillPass = undefined;
     await controller.ensureLoaded();
@@ -275,7 +275,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       let round: SkillAdditionResult<Skill> | undefined;
       const pinnedSet = new Set(pinned);
       if (configError) { reason = "fail-closed"; errorCode = "config"; }
-      else if (!current.enabled || !current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
+      else if (!current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
         // Today's semantics, made additive: disabled/unconfigured/below-minimum keep EVERYTHING advertised, and
         // the branch remembers that, so enabling filtering later can never drop a skill the model already saw.
         growBase(invocable.map((skill) => skill.name));
@@ -284,7 +284,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         // Pi's own braille working row shows "Deciding Context" for as long as the round is in flight.
         beginDecisionLoader(ctx);
         try {
-          round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
+          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
         } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;
@@ -346,7 +346,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
           const remaining = skills.filter((skill) => !skill.disableModelInvocation && !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
           beginDecisionLoader(ctx);
           try {
-            round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key });
+            round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal }, { store: scoreCache, key });
           } finally { endDecisionLoader(); }
           if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
         }

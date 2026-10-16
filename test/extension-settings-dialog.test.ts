@@ -189,7 +189,7 @@ test("Advanced lists every knob, edit is prefilled, invalid values stay inline a
   h.press(...Array(20).fill(KEY.up)); h.press(...Array(3).fill(KEY.down)); // → Shard size
   h.press(KEY.enter); assert.match(h.text(), /Value: 50/);
   h.press(KEY.backspace, KEY.backspace, ..."999"); h.press(KEY.enter); await tick();
-  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:relevance.chunkSize=999"]);
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:decision.chunkSize=999"]);
   assert.match(h.text(), /integer in \[1, 50\]/); assert.match(h.text(), /Value: 999/, "the text is kept after a failed save");
   h.press(KEY.esc); assert.match(h.text(), /Decisions › Advanced/); assert.doesNotMatch(h.text(), /Value:/);
   assert.equal(f.calls.filter((call) => call.startsWith("updateSetting")).length, 1);
@@ -199,7 +199,7 @@ test("Advanced lists every knob, edit is prefilled, invalid values stay inline a
 test("a valid edit saves once and returns to Advanced with a Saved banner", async () => {
   const f = fakeOps(); const h = mount(f, { initialRoute: "advanced" });
   h.press(...Array(3).fill(KEY.down), KEY.enter); h.press(KEY.backspace, KEY.backspace, "2", "5"); h.press(KEY.enter); await tick();
-  assert.equal(f.settings.relevance.chunkSize, 25); assert.match(h.text(), /Saved/); assert.match(h.text(), /Shard size\s+25/); h.component.dispose();
+  assert.equal(f.settings.decision.chunkSize, 25); assert.match(h.text(), /Saved/); assert.match(h.text(), /Shard size\s+25/); h.component.dispose();
 });
 
 test("threshold is in Advanced; skill cadence stays on Skills and saves through the same path", async () => {
@@ -207,11 +207,11 @@ test("threshold is in Advanced; skill cadence stays on Skills and saves through 
   assert.doesNotMatch(h.text(), /Skill filtering|Run picker/);
   h.press(KEY.down, KEY.down, KEY.enter); assert.match(h.text(), /Value: 0\.375/);
   h.press(...Array(5).fill(KEY.backspace), ..."0.5", KEY.enter); await tick();
-  assert.equal(f.settings.relevance.threshold, 0.5);
+  assert.equal(f.settings.decision.threshold, 0.5);
   h.press(KEY.tab, KEY.down, KEY.enter); assert.match(h.text(), /Decisions › Skills › Run picker/);
   h.press(KEY.down, KEY.enter); await tick();
   assert.equal(f.settings.relevance.cadence, "tool-round");
-  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:relevance.threshold=0.5", "updateSetting:relevance.cadence=tool-round"]);
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:decision.threshold=0.5", "updateSetting:relevance.cadence=tool-round"]);
   h.component.dispose();
 });
 
@@ -247,12 +247,12 @@ test("a deferred save resolving while the user edits ANOTHER field neither pops 
   toBatchSizeEditor(h); typeValue(h, "25"); h.press(KEY.enter);
   h.press(KEY.esc); // back to advanced; the save is still in flight
   h.press(KEY.down, KEY.enter); // Max added per round editor (row after Shard size)
-  assert.match(h.text(), /Decisions › Advanced › Max added per round/); h.press(KEY.backspace, KEY.backspace, "4", "2");
+  assert.match(h.text(), /Decisions › Advanced › Skills · Max added per round/); h.press(KEY.backspace, KEY.backspace, "4", "2");
   gates[0].release(); await tick();
   const text = h.text();
-  assert.match(text, /Decisions › Advanced › Max added per round/, "the newer editor stays open");
+  assert.match(text, /Decisions › Advanced › Skills · Max added per round/, "the newer editor stays open");
   assert.match(text, /Value: 42/, "its draft is preserved"); assert.deepEqual(h.results, []);
-  assert.equal(f.settings.relevance.chunkSize, 25, "the save still persisted");
+  assert.equal(f.settings.decision.chunkSize, 25, "the save still persisted");
   h.press(KEY.enter); assert.equal(gates.length, 2, "the new editor can save once the first finished");
   h.component.dispose();
 });
@@ -272,7 +272,7 @@ test("a deferred options save after leaving the options route does not pop whate
   h.press(KEY.esc); assert.match(h.text(), /Decisions › Advanced/); h.press(KEY.down, KEY.enter); // Timeout editor
   assert.match(h.text(), /Decisions › Advanced › Timeout/);
   gates[0].release(); await tick();
-  assert.match(h.text(), /Decisions › Advanced › Timeout/); assert.equal(f.settings.relevance.failMode, "open"); assert.deepEqual(h.results, []);
+  assert.match(h.text(), /Decisions › Advanced › Timeout/); assert.equal(f.settings.decision.failMode, "open"); assert.deepEqual(h.results, []);
   h.component.dispose();
 });
 
@@ -301,7 +301,7 @@ test("closing with an edit save pending: the save still finishes, nothing render
   toBatchSizeEditor(h); typeValue(h, "25"); h.press(KEY.enter);
   h.component.close("closed"); const renders = h.renders, calls = f.calls.length;
   gates[0].release(); await tick();
-  assert.equal(f.settings.relevance.chunkSize, 25, "saves are not cancelled"); assert.equal(h.renders, renders);
+  assert.equal(f.settings.decision.chunkSize, 25, "saves are not cancelled"); assert.equal(h.renders, renders);
   assert.equal(f.calls.length, calls); assert.deepEqual(h.results, ["closed"]);
 });
 
@@ -319,11 +319,11 @@ test("fail-open is reachable only by explicitly choosing it, never by cycling or
   assert.match(h.text(), /closed\s+current/); assert.match(h.text(), /open/);
   h.press(KEY.down); assert.match(h.text(), /WARNING/); h.press(KEY.up, KEY.space); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), [], "Space does not cycle an option");
   h.press(KEY.enter); await tick();
-  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:relevance.failMode=closed"]);
-  assert.equal(f.settings.relevance.failMode, "closed"); h.component.dispose();
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:decision.failMode=closed"]);
+  assert.equal(f.settings.decision.failMode, "closed"); h.component.dispose();
   const g = fakeOps(); const k = mount(g, { initialRoute: "advanced" });
   k.press(...Array(5).fill(KEY.down), KEY.enter, KEY.down, KEY.enter); await tick();
-  assert.equal(g.settings.relevance.failMode, "open"); assert.match(k.text(), /On failure\s+open/); k.component.dispose();
+  assert.equal(g.settings.decision.failMode, "open"); assert.match(k.text(), /On failure\s+open/); k.component.dispose();
 });
 
 test("focus reaches the edit Input only in the edit route", async () => {

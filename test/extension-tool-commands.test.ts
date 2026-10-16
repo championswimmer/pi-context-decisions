@@ -22,10 +22,11 @@ test("the tool picker toggle persists, never selects a model and never touches s
 });
 test("tool settings: mode, cadence and scalars validate through the same strict rules; bad input changes nothing", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
-  await h.set("tools.mode", "mcp"); await h.set("tools.cadence", "initial"); await h.set("tools.threshold", "0.5"); await h.set("tools.maxAdded", "3");
-  await h.set("tools.minCandidates", "2"); await h.set("tools.failMode", "open"); await h.set("tools.maxDescriptionChars", "120");
-  assert.deepEqual({ ...(await saved(h)).tools }, { enabled: false, mode: "mcp", cadence: "initial", threshold: 0.5, maxAdded: 3, minCandidates: 2, failMode: "open", maxDescriptionChars: 120, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
-  for (const [key, bad] of [["tools.threshold", "2"], ["tools.threshold", "-1"], ["tools.maxAdded", "1001"], ["tools.maxDescriptionChars", "0"], ["tools.mode", "everything"], ["tools.cadence", "sometimes"]] as const) {
+  await h.set("tools.mode", "mcp"); await h.set("tools.cadence", "initial"); await h.set("decision.threshold", "0.5"); await h.set("tools.maxAdded", "3");
+  await h.set("tools.minCandidates", "2"); await h.set("decision.failMode", "open"); await h.set("decision.maxDescriptionChars", "120");
+  assert.deepEqual({ ...(await saved(h)).tools }, { enabled: false, mode: "mcp", cadence: "initial", maxAdded: 3, minCandidates: 2, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
+  assert.deepEqual((await saved(h)).decision, { ...defaultSettings().decision, threshold: 0.5, failMode: "open", maxDescriptionChars: 120 });
+  for (const [key, bad] of [["decision.threshold", "2"], ["decision.threshold", "-1"], ["tools.maxAdded", "1001"], ["decision.maxDescriptionChars", "0"], ["tools.mode", "everything"], ["tools.cadence", "sometimes"]] as const) {
     const before = JSON.stringify(await saved(h));
     await h.set(key, bad);
     assert.equal(JSON.stringify(await saved(h)), before, `${key} ${bad}`);
@@ -82,7 +83,7 @@ test("status shows tool filtering lines and the not-a-sandbox sentence; off says
 test("RPC mode keeps select/input menus for the tools group and never calls custom overlays", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
   const picks: string[] = [];
-  const answers = ["Tools", "tools.enabled", "tools.mode", (o: string[]) => o.find((x) => x.startsWith("mcp"))!, "tools.threshold", "Back", "Done"];
+  const answers = ["Tools", "tools.enabled", "tools.mode", (o: string[]) => o.find((x) => x.startsWith("mcp"))!, "decision.threshold", "Back", "Done"];
   const inputs = ["0.6"]; let step = 0;
   const ctx = h.ctx as unknown as { hasUI: boolean; mode: string; ui: Record<string, unknown> };
   ctx.hasUI = true; ctx.mode = "rpc";
@@ -91,12 +92,12 @@ test("RPC mode keeps select/input menus for the tools group and never calls cust
     picks.push(title);
     const want = [
       (o: string[]) => o.find((x) => x.startsWith("Tools"))!, (o: string[]) => o.find((x) => x.startsWith("tools.enabled"))!, (o: string[]) => o.find((x) => x.startsWith("tools.mode"))!,
-      (o: string[]) => o.find((x) => x.startsWith("mcp"))!, () => "Back", () => "Advanced", (o: string[]) => o.find((x) => x.startsWith("tools.threshold"))!, () => "Back", () => "Done"][step++];
+      (o: string[]) => o.find((x) => x.startsWith("mcp"))!, () => "Back", () => "Advanced", (o: string[]) => o.find((x) => x.startsWith("decision.threshold"))!, () => "Back", () => "Done"][step++];
     void answers; return want(options);
   };
   ctx.ui.input = async () => inputs.shift();
   await h.command("");
   const s = await saved(h);
-  assert.deepEqual([s.tools.enabled, s.tools.mode, s.tools.threshold], [true, "mcp", 0.6]);
+  assert.deepEqual([s.tools.enabled, s.tools.mode, s.decision.threshold], [true, "mcp", 0.6]);
   assert.ok(picks.some((title) => /Tools settings/.test(title)));
 });

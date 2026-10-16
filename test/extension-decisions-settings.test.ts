@@ -56,8 +56,8 @@ test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits
   const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!;
   assert.ok(advanced.options.some((label) => label.startsWith("Provider / execution:")));
   assert.ok(advanced.options.some((label) => label.startsWith("Model:")));
-  assert.ok(advanced.options.includes("relevance.chunkSize: 50"));
-  assert.ok(advanced.options.includes("relevance.concurrency: 0 (all shards parallel)"));
+  assert.ok(advanced.options.includes("decision.chunkSize: 50"));
+  assert.ok(advanced.options.includes("decision.concurrency: 0 (all shards parallel)"));
   assert.ok(!advanced.options.some((label) => label.startsWith("relevance.enabled") || label.startsWith("relevance.cadence")));
   assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
   assert.equal(h.inputs.length, 0); assert.equal(h.inference(), 0);
@@ -83,20 +83,20 @@ test("headless /decisions prints the status instead of a menu", async (t) => {
 test("RPC Advanced edits validate and persist; cancelling leaves settings alone", async (t) => {
   const h = await fixture(t, { ui: true });
   h.inputs.push("25", undefined);
-  await h.menu("Advanced", row("relevance.chunkSize:"), row("relevance.chunkSize:"), "Back");
+  await h.menu("Advanced", row("decision.chunkSize:"), row("decision.chunkSize:"), "Back");
   assert.match(h.dialogs[0].title, /settings/); assert.match(h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.title, /Advanced/);
-  assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 25);
+  assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 25);
 });
 
 test("RPC enable/disable, batch size and all-parallel settings persist with bounds", async (t) => {
   const h = await fixture(t);
-  await h.set("enabled"); await h.set("relevance.chunkSize", "50"); await h.set("relevance.concurrency", "0");
-  await h.set("relevance.threshold", "0.625");
+  await h.set("enabled"); await h.set("decision.chunkSize", "50"); await h.set("decision.concurrency", "0");
+  await h.set("decision.threshold", "0.625");
   let settings = (await loadSettings(h.path)).settings;
-  assert.equal(settings.relevance.enabled, false); assert.equal(settings.relevance.chunkSize, 50); assert.equal(settings.relevance.concurrency, 0);
-  assert.equal(settings.relevance.threshold, 0.625);
-  await h.set("relevance.chunkSize", "51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
-  await h.set("relevance.concurrency", "33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
+  assert.equal(settings.relevance.enabled, false); assert.equal(settings.decision.chunkSize, 50); assert.equal(settings.decision.concurrency, 0);
+  assert.equal(settings.decision.threshold, 0.625);
+  await h.set("decision.chunkSize", "51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
+  await h.set("decision.concurrency", "33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
   await h.set("enabled"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.relevance.enabled, true);
   await h.command("status"); assert.match(h.messages.at(-1)!, /all shards parallel/); assert.equal(h.inference(), 0);
 });
@@ -193,17 +193,17 @@ test("request-time Pi key is honoured when the cached OAuth inventory is empty o
 test("RPC Advanced edits the four picking controls; cadence is a select, not free text, and legacy keys are refused", async (t) => {
   const h = await fixture(t, { ui: true });
   h.inputs.push("0.625");
-  await h.menu("Advanced", row("relevance.threshold:"), "Back", "Skills", row("relevance.cadence:"), row("tool-round"), "Back");
+  await h.menu("Advanced", row("decision.threshold:"), "Back", "Skills", row("relevance.cadence:"), row("tool-round"), "Back");
   const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.options;
-  assert.deepEqual(advanced.slice(2, 5).map((label) => label.split(":")[0]), ["relevance.threshold", "relevance.chunkSize", "relevance.maxSkills"]);
-  assert.ok(advanced.includes("relevance.threshold: 0.375")); assert.ok(!advanced.some((label) => label.startsWith("relevance.cadence")));
+  assert.deepEqual(advanced.slice(2, 5).map((label) => label.split(":")[0]), ["decision.threshold", "decision.chunkSize", "relevance.maxSkills"]);
+  assert.ok(advanced.includes("decision.threshold: 0.375")); assert.ok(!advanced.some((label) => label.startsWith("relevance.cadence")));
   const settings = (await loadSettings(h.path)).settings;
-  assert.equal(settings.relevance.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
+  assert.equal(settings.decision.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
   assert.ok(h.dialogs.some((dialog) => /Run picker/.test(dialog.title) && dialog.options.some((option) => option.startsWith("prompt")) && dialog.options.some((option) => option.startsWith("tool-round"))));
   // Legacy keys exist only as load-time migration inputs; the shared validator refuses them as settings.
   for (const legacy of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.throws(() => updateSetting(defaultSettings(), `relevance.${legacy}`, "1"), /Removed setting.*threshold/, legacy);
   await h.set("relevance.cadence", "every-token"); assert.equal((await loadSettings(h.path)).settings.relevance.cadence, "tool-round", "no option matches: nothing changes");
-  await h.set("relevance.maxSkills", "3"); await h.set("relevance.chunkSize", "10");
-  assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 10);
+  await h.set("relevance.maxSkills", "3"); await h.set("decision.chunkSize", "10");
+  assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 10);
   await h.command("status"); assert.match(h.messages.at(-1)!, /threshold 0.625 \(0–1\), picker tool-round.*max 3 added per round/s);
 });

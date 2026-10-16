@@ -113,7 +113,7 @@ test("lossless ledger: 1001 withheld direct tools survive chunking, a reload and
   await reloaded.start("next");
   assert.equal(reloaded.active().length, CORE.length + 1001, "disabling restored every withheld tool");
   assert.equal(readToolLedger(h.sim.session).tools.size, 1001, "and recorded every tool as available (no 1000-name truncation)");
-  const open = await toolSetup(t, { tools: { failMode: "open" }, extra: tools, fail: true });
+  const open = await toolSetup(t, { decision: { failMode: "open" }, extra: tools, fail: true });
   await open.start("task");
   assert.equal(readToolLedger(open.sim.session).tools.size, 1001); assert.equal(open.active().length, CORE.length + 1001);
   const considered = await toolSetup(t, { tools: { cadence: "initial" }, extra: tools });
@@ -220,7 +220,7 @@ test("settings save during a boundary: the stale pass takes back only ITS additi
   const release = holdRound(h);
   const running = h.start("task");
   await until(() => h.requests.length === 1, "the decision call");
-  await h.set("relevance.threshold", "0.5");
+  await h.set("decision.threshold", "0.5");
   release(); await running;
   await h.agentEnd();
   const ledger = readToolLedger(h.sim.session);

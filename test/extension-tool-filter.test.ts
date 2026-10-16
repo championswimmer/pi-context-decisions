@@ -49,7 +49,7 @@ test("tools mode, prompt cadence: withholds undecided declared tools before the 
   assert.equal(await h.gate("ext_b"), undefined); assert.match((await h.gate("ext_c"))!.reason, BLOCKED);
 });
 test("maxAdded caps new additions per round, ranked across candidates; the threshold is inclusive", async (t) => {
-  const h = await toolSetup(t, { tools: { maxAdded: 1, threshold: 0.5 }, extra: [A, B, C], scores: { ext_a: 1, ext_b: 1.5, ext_c: 0.99 } });
+  const h = await toolSetup(t, { tools: { maxAdded: 1 }, decision: { threshold: 0.5 }, extra: [A, B, C], scores: { ext_a: 1, ext_b: 1.5, ext_c: 0.99 } });
   await h.start("task");
   assert.deepEqual(h.ledger()[0].tools, ["ext_b"], "best first, capped; ext_a (1.0 = 2 × 0.5) qualifies but lost to the cap; ext_c is below");
   await h.start("task again");
@@ -247,10 +247,10 @@ test("failure: a failed round adds nothing and never fails open for config error
   assert.deepEqual(h.active(), CORE); assert.match((await h.gate("ext_a"))!.reason, BLOCKED);
   const calls = h.requests.length;
   assert.match((await h.gate("ext_a"))!.reason, BLOCKED); assert.equal(h.requests.length, calls, "failedKey: no repeated calls for the same task");
-  const open = await toolSetup(t, { tools: { failMode: "open" }, extra: [A, B], fail: true });
+  const open = await toolSetup(t, { decision: { failMode: "open" }, extra: [A, B], fail: true });
   await open.start("task");
   assert.deepEqual(open.active(), [...CORE, "ext_a", "ext_b"]);
-  const config = await toolSetup(t, { tools: { failMode: "open" }, extra: [A] });
+  const config = await toolSetup(t, { decision: { failMode: "open" }, extra: [A] });
   config.ctx.modelRegistry.findOfType = () => undefined; // the selected classifier is not registered: a config error
   await config.start("task");
   assert.deepEqual(config.active(), CORE, "a config error never fails open");
@@ -337,7 +337,7 @@ test("session_tree: each branch has its own ledger, and a stale in-flight state 
   assert.equal(await h.gate("ext_a"), undefined); assert.match((await h.gate("ext_b"))!.reason, BLOCKED, "back on branch one, branch two's addition is blocked");
 });
 for (const [label, save] of [
-  ["a settings save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.set("relevance.threshold", "0.5")],
+  ["a settings save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.set("decision.threshold", "0.5")],
   ["an allowlist save", (h: Awaited<ReturnType<typeof toolSetup>>) => h.allowlist({ tab: "skills", row: "Always allowed · Project" })],
 ] as const) {
   test(`${label} while a decision round is in flight aborts it and commits nothing`, async (t) => {
@@ -476,7 +476,7 @@ test("with skill AND tool filtering on, both decision calls are in flight togeth
   assert.deepEqual(kinds, ["context-decisions-tools", "context-decisions-skills"], "the tool ledger record, then the hidden skill delta, right after the user message");
 });
 test("a failing tool round never disturbs the skill pass, and vice versa", async (t) => {
-  const h = await toolSetup(t, { skills: true, extra: [A], fail: true, settings: { relevance: { ...defaultSettings().relevance, enabled: true, maxSkills: 2, minCandidates: 0, failMode: "closed" } } as never });
+  const h = await toolSetup(t, { skills: true, extra: [A], fail: true, settings: { relevance: { ...defaultSettings().relevance, enabled: true, maxSkills: 2, minCandidates: 0 }, decision: { failMode: "closed" } } as never });
   h.skillList.push(...skillFixture());
   const { results } = await h.start("task");
   assert.equal((results.at(-1) as { message?: unknown } | undefined)?.message, undefined, "closed failure adds no skills");
@@ -570,7 +570,7 @@ test("resources: the `server` value never reaches decisions, messages, ledger or
 test("privacy: decision payloads carry exactly the task and name/description entries; schemas, instructions, annotations and paths never leave", async (t) => {
   const secretTool = extTool("ext_secret", "direct", { parameters: { type: "object", properties: { SECRET_PARAM: { description: "SECRET-SCHEMA-TEXT" } } }, annotations: { title: "SECRET-ANNOTATION", readOnlyHint: true },
     sourceInfo: { path: "/home/SECRET-PATH/ext.ts", source: "extension", scope: "project", origin: "package" }, promptGuidelines: ["SECRET-GUIDELINE"], description: `Useful. ${"long ".repeat(200)}` });
-  const tools = await toolSetup(t, { tools: { maxDescriptionChars: 60 }, extra: [secretTool, mcpTool("srv", "x", "codemode", { annotations: { title: "SECRET-ANNOTATION" } })], scores: { ext_secret: 2 } });
+  const tools = await toolSetup(t, { decision: { maxDescriptionChars: 60 }, extra: [secretTool, mcpTool("srv", "x", "codemode", { annotations: { title: "SECRET-ANNOTATION" } })], scores: { ext_secret: 2 } });
   await tools.start("plain task text"); await tools.command("status");
   assert.ok(tools.requests.length > 0);
   for (const request of tools.requests) {

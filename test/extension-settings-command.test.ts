@@ -132,7 +132,7 @@ test("saves inside the dialog persist, do not close it, and later settle without
 
 test("choosing a model through the dialog persists it atomically and never enables filtering", async (t) => {
   const h = await harness(t, { env: { TYPESAFE_API_KEY: "FIXTURE" } });
-  await saveSettings({ ...defaultSettings(), enabled: false }, h.path);
+  await saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, enabled: false } }, h.path);
   const run = h.command(""); const dialog = await h.dialog();
   dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /typesafe · direct API\s+configured/);
@@ -140,7 +140,7 @@ test("choosing a model through the dialog persists it atomically and never enabl
   await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.enter);
   await h.until(dialog, /Decision model: typesafe direct jev-latest/);
   const saved = (await loadSettings(h.path)).settings;
-  assert.deepEqual(saved.backend, { backend: "typesafe", model: "jev-latest" }); assert.equal(saved.enabled, false);
+  assert.deepEqual(saved.backend, { backend: "typesafe", model: "jev-latest" }); assert.equal(saved.relevance.enabled, false);
   assert.equal(h.requests.length, 0, "choosing a model makes no inference call");
   dialog.handleInput!(KEY.esc); await run;
 });

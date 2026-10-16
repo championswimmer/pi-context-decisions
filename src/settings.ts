@@ -9,22 +9,24 @@ import { DEFAULT_RELEVANCE_THRESHOLD, validThreshold } from "./apps/skill-filter
 /** When the additive picker runs. Both values only ever ADD skills for the same bounded user task. */
 export type PickerCadence = "prompt" | "tool-round";
 export const PICKER_CADENCES: readonly PickerCadence[] = ["prompt", "tool-round"];
-export interface RelevanceSettings {
-  enabled: boolean;
-  /** Normalized 0–1, inclusive: a skill qualifies when its 0–2 score is at least 2 × threshold. */
+/** Framework-wide tuning used by skill/tool picking and explicit allowlist ranking. */
+export interface DecisionSettings {
   threshold: number;
-  /** Most NEW skills added by one picking round, ranked across all shards. Already-added skills never count. */
-  maxSkills: number;
-  /** `prompt`: every submitted prompt (and queued steering/follow-up user text). `tool-round`: also after each completed tool round. */
-  cadence: PickerCadence;
-  minCandidates: number;
   failMode: "open" | "closed";
   timeoutMs: number;
   maxPromptChars: number;
   maxDescriptionChars: number;
   chunkSize: number;
-  /** 0 dispatches every batch in parallel; positive values cap concurrent batches. */
+  /** 0 dispatches every shard in parallel; positive values cap concurrent shards. */
   concurrency: number;
+}
+export interface RelevanceSettings {
+  enabled: boolean;
+  /** Cap on newly advertised skills, not tools or entire tool groups. */
+  maxSkills: number;
+  cadence: PickerCadence;
+  /** Automatic skill picking starts at eight skills by default (tool gating starts at zero). */
+  minCandidates: number;
   pinned: string[];
 }
 /** `tools`: every external tool is its own candidate. `mcp` (group mode): every MCP namespace and every extension (grouped by Pi's public `sourceInfo`) is on or off as a whole; only extension tools without public provenance are never filtered. */
@@ -33,44 +35,35 @@ export const TOOL_FILTER_MODES: readonly ToolFilterMode[] = ["tools", "mcp"];
 /** `initial`: pick once from the first user prompt. `prompt`: every new user prompt. `tool-round`: also after completed tool rounds. */
 export type ToolCadence = "initial" | "prompt" | "tool-round";
 export const TOOL_CADENCES: readonly ToolCadence[] = ["initial", "prompt", "tool-round"];
-/**
- * Opt-in tool and MCP filtering. Independent of `relevance.enabled` (skills); only the master `enabled` switch, the decision
- * `backend` and the shared transport limits (`relevance.timeoutMs/chunkSize/concurrency/maxPromptChars`) are common.
- */
+/** Opt-in tool/MCP/extension filtering, independent of the skill switch. */
 export interface ToolFilterSettings {
   enabled: boolean;
   mode: ToolFilterMode;
   cadence: ToolCadence;
-  /** Normalized 0–1, inclusive, like the skill threshold. */
-  threshold: number;
-  /** Most NEW tools (or MCP servers) added by one round. */
+  /** New tools (or whole servers/extensions in group mode) per round; not a skill cap. */
   maxAdded: number;
-  /** Below this many candidates nothing is scored and every candidate stays available (recorded on the branch). */
   minCandidates: number;
-  failMode: "open" | "closed";
-  maxDescriptionChars: number;
-  /** Always-available external tools (names). Global; the project list lives in `.pi/pi-context-decisions.json`. */
   alwaysAllowedTools: string[];
-  /** Always-available groups: MCP servers (names or `mcp__` namespace keys) and extensions (`ext__` keys). The setting keeps its original name. */
+  /** MCP names/namespace keys and canonical extension keys; retains its original setting name. */
   alwaysAllowedMcpServers: string[];
 }
 export interface ContextDecisionsSettings {
-  enabled: boolean;
   backend: BackendSelection | null;
   globalAllowlist: string[];
+  decision: DecisionSettings;
   relevance: RelevanceSettings;
   tools: ToolFilterSettings;
 }
+export function defaultDecisionSettings(): DecisionSettings {
+  return { threshold: DEFAULT_RELEVANCE_THRESHOLD, failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000,
+    maxDescriptionChars: 400, chunkSize: 50, concurrency: 0 };
+}
 export function defaultToolSettings(): ToolFilterSettings {
-  return { enabled: false, mode: "tools", cadence: "prompt", threshold: DEFAULT_RELEVANCE_THRESHOLD, maxAdded: 8, minCandidates: 0,
-    failMode: "closed", maxDescriptionChars: 400, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
+  return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
 }
 export function defaultSettings(): ContextDecisionsSettings {
-  return { enabled: true, backend: null, globalAllowlist: [], tools: defaultToolSettings(), relevance: {
-    enabled: true, threshold: DEFAULT_RELEVANCE_THRESHOLD, maxSkills: 12, cadence: "prompt", minCandidates: 8,
-    failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000, maxDescriptionChars: 400,
-    chunkSize: 50, concurrency: 0, pinned: [],
-  } };
+  return { backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(),
+    relevance: { enabled: true, maxSkills: 12, cadence: "prompt", minCandidates: 8, pinned: [] } };
 }
 export class SettingsError extends Error {
   readonly code = "config";
@@ -119,7 +112,7 @@ export function validateBackendSelection(value: unknown): BackendSelection | nul
   }
   throw new SettingsError("Unknown decision backend");
 }
-/** Pre-0.3 keys. Read on load only; the next save writes the normalized `threshold` instead. */
+/** Pre-0.3 keys. Read on load only; the next save writes normalized `decision.threshold` instead. */
 const LEGACY_RELEVANCE_KEYS = ["mode", "minLabel", "relatedThreshold", "directThreshold"] as const;
 /**
  * Validates the legacy keys with their ORIGINAL rules (an invalid file stays a visible settings error and
@@ -141,95 +134,96 @@ function migrateLegacyThreshold(input: Record<string, unknown>, warnings?: strin
   else if (input.mode === "choice") warnings?.push("Choice scoring was removed; skill picking now uses relevance scores with the migrated threshold");
   return (input.minLabel === "directly_relevant" ? raw.directThreshold : raw.relatedThreshold) / 2;
 }
-const NUMERIC_BOUNDS = {
-  maxSkills: [0, 1000], minCandidates: [0, 1000], timeoutMs: [1, 300000],
-  maxPromptChars: [1, 4000], maxDescriptionChars: [1, 400], chunkSize: [1, 50], concurrency: [0, 32],
-} as const;
-const TOOL_NUMERIC_BOUNDS = { maxAdded: [0, 1000], minCandidates: [0, 1000], maxDescriptionChars: [1, 400] } as const;
-function parseToolSettings(value: unknown, warnings?: string[]): ToolFilterSettings {
-  if (!object(value)) throw new SettingsError("tools must be an object");
-  const result = defaultToolSettings();
-  keys(value, Object.keys(result), warnings);
-  if (value.enabled !== undefined) {
-    if (typeof value.enabled !== "boolean") throw new SettingsError("tools.enabled must be a boolean");
-    result.enabled = value.enabled;
-  }
-  const enums = { mode: TOOL_FILTER_MODES, cadence: TOOL_CADENCES, failMode: ["open", "closed"] } as const;
-  for (const key of Object.keys(enums) as (keyof typeof enums)[]) {
-    if (value[key] === undefined) continue;
-    if (typeof value[key] !== "string" || !(enums[key] as readonly string[]).includes(value[key])) throw new SettingsError(`Invalid tools.${key}`);
-    Object.assign(result, { [key]: value[key] });
-  }
-  for (const key of Object.keys(TOOL_NUMERIC_BOUNDS) as (keyof typeof TOOL_NUMERIC_BOUNDS)[]) {
-    const number = value[key];
-    if (number === undefined) continue;
-    const [min, max] = TOOL_NUMERIC_BOUNDS[key];
-    if (typeof number !== "number" || !Number.isSafeInteger(number) || number < min || number > max) throw new SettingsError(`tools.${key} must be an integer in [${min}, ${max}]`);
-    result[key] = number;
-  }
-  if (value.threshold !== undefined) {
-    if (!validThreshold(value.threshold)) throw new SettingsError("tools.threshold must be finite in [0, 1]");
-    result.threshold = value.threshold;
-  }
-  if (value.alwaysAllowedTools !== undefined) {
-    if (!Array.isArray(value.alwaysAllowedTools)) throw new SettingsError("tools.alwaysAllowedTools must be an array of tool names");
-    try { result.alwaysAllowedTools = normalizeToolAllowlist(value.alwaysAllowedTools); }
-    catch { throw new SettingsError("Tool allowlist names must be 1-128 characters without whitespace or control characters (at most 1000)"); }
-  }
-  if (value.alwaysAllowedMcpServers !== undefined) {
-    if (!Array.isArray(value.alwaysAllowedMcpServers)) throw new SettingsError("tools.alwaysAllowedMcpServers must be an array of MCP server names");
-    try { result.alwaysAllowedMcpServers = normalizeServerAllowlist(value.alwaysAllowedMcpServers); }
-    catch { throw new SettingsError("MCP server / extension allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix (at most 1000)"); }
+const DECISION_BOUNDS = { timeoutMs: [1, 300000], maxPromptChars: [1, 4000], maxDescriptionChars: [1, 400], chunkSize: [1, 50], concurrency: [0, 32] } as const;
+const SHARED_KEYS = Object.keys(defaultDecisionSettings());
+const LEGACY_TOOL_KEYS = ["threshold", "failMode", "maxDescriptionChars"];
+function integer(value: unknown, path: string, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new SettingsError(`${path} must be an integer in [${min}, ${max}]`);
+  return value;
+}
+function boolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new SettingsError(`${path} must be a boolean`);
+  return value;
+}
+function enumValue(value: unknown, values: readonly string[], path: string): string {
+  if (typeof value !== "string" || !values.includes(value)) throw new SettingsError(`Invalid ${path}`);
+  return value;
+}
+/** Validate even shadowed legacy fields: explicit shared values never hide a corrupt configuration. */
+function sharedValues(input: Record<string, unknown>, group: string, allowed = SHARED_KEYS): Partial<DecisionSettings> {
+  const result: Partial<DecisionSettings> = {};
+  for (const key of allowed) {
+    const value = input[key];
+    if (value === undefined) continue;
+    const path = `${group}.${key}`;
+    if (key === "threshold") {
+      if (!validThreshold(value)) throw new SettingsError(`${path} must be finite in [0, 1]`);
+      result.threshold = value;
+    } else if (key === "failMode") result.failMode = enumValue(value, ["open", "closed"], path) as DecisionSettings["failMode"];
+    else {
+      const [min, max] = DECISION_BOUNDS[key as keyof typeof DECISION_BOUNDS];
+      Object.assign(result, { [key]: integer(value, path, min, max) });
+    }
   }
   return result;
 }
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);
   if (!object(value)) throw new SettingsError("Settings must be a JSON object");
-  keys(value, ["enabled", "backend", "globalAllowlist", "relevance", "tools"], warnings);
+  keys(value, ["enabled", "backend", "globalAllowlist", "decision", "relevance", "tools"], warnings);
   const result = defaultSettings();
-  if (value.enabled !== undefined) {
-    if (typeof value.enabled !== "boolean") throw new SettingsError("enabled must be a boolean");
-    result.enabled = value.enabled;
-  }
   if (value.backend !== undefined) result.backend = validateBackendSelection(value.backend);
   if (value.globalAllowlist !== undefined) {
     if (!Array.isArray(value.globalAllowlist)) throw new SettingsError("Global allowlist must be an array of skill names");
     try { result.globalAllowlist = normalizeAllowlist(value.globalAllowlist); }
     catch { throw new SettingsError("Global allowlist names must be bounded, nonempty identifiers"); }
   }
-  if (value.tools !== undefined) result.tools = parseToolSettings(value.tools, warnings);
-  if (value.relevance === undefined) return result;
-  if (!object(value.relevance)) throw new SettingsError("relevance must be an object");
-  const input = value.relevance;
-  keys(input, [...Object.keys(result.relevance), ...LEGACY_RELEVANCE_KEYS], warnings);
-  if (input.enabled !== undefined) {
-    if (typeof input.enabled !== "boolean") throw new SettingsError("relevance.enabled must be a boolean");
-    result.relevance.enabled = input.enabled;
+  const block = (name: string): Record<string, unknown> => {
+    if (value[name] === undefined) return {};
+    if (!object(value[name])) throw new SettingsError(`${name} must be an object`);
+    return value[name];
+  };
+  const skill = block("relevance"), tool = block("tools"), decision = block("decision");
+  keys(skill, [...Object.keys(result.relevance), ...SHARED_KEYS, ...LEGACY_RELEVANCE_KEYS], warnings);
+  keys(tool, [...Object.keys(result.tools), ...LEGACY_TOOL_KEYS], warnings);
+  keys(decision, SHARED_KEYS, warnings);
+  if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
+  if (tool.enabled !== undefined) result.tools.enabled = boolean(tool.enabled, "tools.enabled");
+  if (skill.cadence !== undefined) result.relevance.cadence = enumValue(skill.cadence, PICKER_CADENCES, "relevance.cadence") as PickerCadence;
+  if (tool.cadence !== undefined) result.tools.cadence = enumValue(tool.cadence, TOOL_CADENCES, "tools.cadence") as ToolCadence;
+  if (tool.mode !== undefined) result.tools.mode = enumValue(tool.mode, TOOL_FILTER_MODES, "tools.mode") as ToolFilterMode;
+  for (const [input, output, group, cap] of [[skill, result.relevance, "relevance", "maxSkills"], [tool, result.tools, "tools", "maxAdded"]] as const) {
+    for (const key of [cap, "minCandidates"]) if (input[key] !== undefined) Object.assign(output, { [key]: integer(input[key], `${group}.${key}`, 0, 1000) });
   }
-  const enums = { failMode: ["open", "closed"], cadence: PICKER_CADENCES } as const;
-  for (const key of Object.keys(enums) as (keyof typeof enums)[]) {
-    if (input[key] !== undefined) {
-      if (typeof input[key] !== "string" || !(enums[key] as readonly string[]).includes(input[key])) throw new SettingsError(`Invalid relevance.${key}`);
-      Object.assign(result.relevance, { [key]: input[key] });
-    }
+  if (skill.pinned !== undefined) {
+    if (!Array.isArray(skill.pinned) || skill.pinned.length > 1000 || skill.pinned.some((name) => !identifier(name) || name.length > 64)) throw new SettingsError("Pinned skill names must be nonempty, bounded identifiers");
+    result.relevance.pinned = [...new Set(skill.pinned as string[])];
   }
-  for (const key of Object.keys(NUMERIC_BOUNDS) as (keyof typeof NUMERIC_BOUNDS)[]) {
-    const number = input[key];
-    if (number === undefined) continue;
-    const [min, max] = NUMERIC_BOUNDS[key];
-    if (typeof number !== "number" || !Number.isSafeInteger(number) || number < min || number > max) throw new SettingsError(`relevance.${key} must be an integer in [${min}, ${max}]`);
-    result.relevance[key] = number;
+  for (const key of ["alwaysAllowedTools", "alwaysAllowedMcpServers"] as const) {
+    if (tool[key] === undefined) continue;
+    if (!Array.isArray(tool[key])) throw new SettingsError(`tools.${key} must be an array of names`);
+    try { result.tools[key] = (key === "alwaysAllowedTools" ? normalizeToolAllowlist : normalizeServerAllowlist)(tool[key]); }
+    catch { throw new SettingsError(key === "alwaysAllowedTools" ? "Tool allowlist names must be 1-128 characters without whitespace or control characters (at most 1000)"
+      : "MCP server / extension allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix (at most 1000)"); }
   }
-  const migrated = migrateLegacyThreshold(input, warnings);
-  if (input.threshold !== undefined) {
-    if (!validThreshold(input.threshold)) throw new SettingsError("relevance.threshold must be finite in [0, 1]");
-    result.relevance.threshold = input.threshold;
-  } else if (migrated !== undefined) result.relevance.threshold = migrated;
-  if (input.pinned !== undefined) {
-    if (!Array.isArray(input.pinned) || input.pinned.length > 1000 || input.pinned.some((name) => !identifier(name) || name.length > 64)) throw new SettingsError("Pinned skill names must be nonempty, bounded identifiers");
-    result.relevance.pinned = [...new Set(input.pinned as string[])];
+  const migrationWarnings: string[] = [];
+  const rawThreshold = migrateLegacyThreshold(skill, migrationWarnings);
+  const skills = sharedValues(skill, "relevance"), tools = sharedValues(tool, "tools", LEGACY_TOOL_KEYS), shared = sharedValues(decision, "decision");
+  if (skills.threshold === undefined && rawThreshold !== undefined) skills.threshold = rawThreshold;
+  // Conflicting old values cannot both survive unification. Prefer the stricter legacy policy;
+  // a new explicit decision.* value is deliberate and always wins, including fail-open.
+  Object.assign(result.decision, skills, tools);
+  if (skills.threshold !== undefined && tools.threshold !== undefined) result.decision.threshold = Math.max(skills.threshold, tools.threshold);
+  if (skills.maxDescriptionChars !== undefined && tools.maxDescriptionChars !== undefined) result.decision.maxDescriptionChars = Math.min(skills.maxDescriptionChars, tools.maxDescriptionChars);
+  if (skills.failMode !== undefined && tools.failMode !== undefined) result.decision.failMode = skills.failMode === "closed" || tools.failMode === "closed" ? "closed" : "open";
+  Object.assign(result.decision, shared);
+  if (value.enabled !== undefined) {
+    const enabled = boolean(value.enabled, "enabled");
+    result.relevance.enabled &&= enabled;
+    result.tools.enabled &&= enabled;
   }
+  const migrated = value.enabled !== undefined || SHARED_KEYS.some((key) => skill[key] !== undefined) || LEGACY_TOOL_KEYS.some((key) => tool[key] !== undefined) || rawThreshold !== undefined;
+  if (migrated) warnings?.push(`Legacy settings migrated to shared decision.* tuning and independent feature switches; explicit decision.* wins, conflicting legacy policies use the stricter value.${migrationWarnings.length ? ` ${migrationWarnings.join(". ")}` : ""}`);
   return result;
 }
 export interface SettingsLoadResult { settings: ContextDecisionsSettings; warnings: string[]; error?: string }
@@ -268,13 +262,15 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
   const next = structuredClone(settings);
   let target: Record<string, unknown>;
   let field: string;
-  if (key === "enabled") { target = next as unknown as Record<string, unknown>; field = key; }
+  if (key === "enabled") throw new SettingsError("Removed master switch; use relevance.enabled or tools.enabled");
+  if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; field = key.slice(9); }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
-  else throw new SettingsError("Use enabled, a relevance or tools setting; choose a backend in the /decisions dialog");
+  else throw new SettingsError("Use a decision, relevance or tools setting; choose a backend in the /decisions dialog");
   if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
-    throw new SettingsError("Removed setting: skill picking is score-only. Use relevance threshold <0–1>");
+    throw new SettingsError("Removed setting: skill picking is score-only. Use decision.threshold <0–1>");
   }
+  if ((key.startsWith("relevance.") && SHARED_KEYS.includes(field)) || (key.startsWith("tools.") && LEGACY_TOOL_KEYS.includes(field))) throw new SettingsError(`Removed per-feature tuning; use decision.${field}`);
   if (!Object.hasOwn(target, field) || field === "pinned") throw new SettingsError("Unknown setting; use pin/unpin for pinned skills");
   if (typeof target[field] === "boolean") {
     if (text !== "true" && text !== "false") throw new SettingsError("Boolean setting requires true or false");

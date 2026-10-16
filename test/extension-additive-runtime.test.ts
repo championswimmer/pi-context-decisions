@@ -8,7 +8,7 @@ import { formatSkillsForPrompt, type BeforeAgentStartEvent, type Skill } from "@
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext } from "../src/extension/contracts.ts";
 import { SKILLS_BASE_ENTRY, SKILLS_MESSAGE_TYPE, readLedger } from "../src/extension/skill-ledger.ts";
-import { defaultSettings, saveSettings, type ContextDecisionsSettings, type RelevanceSettings } from "../src/settings.ts";
+import { defaultSettings, saveSettings, type ContextDecisionsSettings, type RelevanceSettings, type DecisionSettings } from "../src/settings.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 import { SimSession, advertised, deltaMessages, simHost, turnEnd } from "./helpers/pi-sim.ts";
@@ -23,7 +23,7 @@ const makeSkills = (count = COUNT): Skill[] => Array.from({ length: count }, (_,
 const defaultScore = (name: string) => 2 - Number(name.slice(6)) * 0.1;
 
 interface Options {
-  relevance?: Partial<RelevanceSettings>; settings?: Partial<ContextDecisionsSettings>; skills?: Skill[];
+  decision?: Partial<DecisionSettings>; relevance?: Partial<RelevanceSettings>; settings?: Partial<ContextDecisionsSettings>; skills?: Skill[];
   score?: (name: string, task: string) => number; fail?: boolean; hang?: boolean; tools?: string[]; unconfigured?: boolean;
 }
 async function setup(t: { after(fn: () => Promise<void>): void }, options: Options = {}) {
@@ -31,7 +31,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, options: Optio
   const path = join(root, "settings.json");
   const base = defaultSettings();
   await saveSettings({ ...base, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, ...options.settings,
-    relevance: { ...base.relevance, minCandidates: 0, maxSkills: 3, ...options.relevance } }, path);
+    decision: { ...base.decision, ...options.decision }, relevance: { ...base.relevance, minCandidates: 0, maxSkills: 3, ...options.relevance } }, path);
   const sim = simHost(new SimSession(), options.tools);
   const behavior: { hang: boolean; fail: boolean; gate?: Promise<void>; allowlistGate?: Promise<void> } = { hang: options.hang === true, fail: options.fail === true };
   const requests: DecisionRequest[] = [];
@@ -103,7 +103,7 @@ test("round 2 never scores or re-adds what is already advertised, even for a dif
   assert.deepEqual(second.system, [], "the system prompt skills stay identical (no section patch)");
 });
 test("maxSkills caps additions per round across shards and counts neither pins nor already-added skills", async (t) => {
-  const h = await setup(t, { relevance: { chunkSize: 4, maxSkills: 5 }, settings: { globalAllowlist: ["skill-8"] } });
+  const h = await setup(t, { relevance: { maxSkills: 5 }, decision: { chunkSize: 4 }, settings: { globalAllowlist: ["skill-8"] } });
   const first = await h.start("task");
   assert.deepEqual(h.requests.map((r) => Object.keys(r.questions).length), [4, 4, 3], "shards of four over the eleven non-pinned candidates");
   assert.deepEqual(first.shown(), nameList(0, 1, 2, 3, 4, 8), "five best new skills plus the pin; the cap spans all shards");
@@ -112,7 +112,7 @@ test("maxSkills caps additions per round across shards and counts neither pins n
   assert.deepEqual(h.scoredNames(3), nameList(5, 6, 7, 9, 10, 11), "round 2: neither pins nor round-1 additions");
 });
 test("a stale or aborted round commits nothing: the ledger comes only from committed messages", async (t) => {
-  const h = await setup(t, { hang: true, relevance: { timeoutMs: 5000 } });
+  const h = await setup(t, { hang: true, decision: { timeoutMs: 5000 } });
   const abort = new AbortController(); h.ctx.signal = abort.signal;
   const e = h.event("task");
   const pending = h.sim.emit("before_agent_start", e, h.ctx);
@@ -138,7 +138,7 @@ test("fail-closed adds nothing and reports a safe code; later prompts may still 
   assert.match(h.messages.at(-1)!, /fail-closed \(network\)/);
 });
 test("explicit fail-open adds every remaining candidate exactly once, then nothing is left to score", async (t) => {
-  const h = await setup(t, { fail: true, relevance: { failMode: "open" } });
+  const h = await setup(t, { fail: true, decision: { failMode: "open" } });
   const first = await h.start("task");
   assert.deepEqual(first.shown(), h.inventory.map((s) => s.name));
   assert.equal(h.deltas().length, 1);
@@ -221,7 +221,7 @@ test("compaction summarizes a delta away: the next prompt re-delivers it with ZE
   assert.deepEqual(readLedger(h.sim.session).lost, []);
 });
 test("compaction with nothing to add still restores lost skills at the next prompt without any call", async (t) => {
-  const h = await setup(t, { relevance: { maxSkills: 12, threshold: 1 } });
+  const h = await setup(t, { relevance: { maxSkills: 12 }, decision: { threshold: 1 } });
   await h.start("t");                          // threshold 1 (raw 2.0): only skill-0 qualifies
   assert.deepEqual(h.deltas().map(h.names), [["skill-0"]]);
   const keep = h.sim.session.appendMessage("user", "kept"); h.sim.session.compact(keep.id);
@@ -338,7 +338,7 @@ test("tool-round cadence adds the next-best skills for the SAME task from cached
   assert.deepEqual(advertised(h.sim, h.inventory, []), nameList(0, 1, 2, 3, 4, 5));
 });
 test("tool-round stops when nothing qualifies and does not keep calling the decision model", async (t) => {
-  const h = await setup(t, { relevance: { cadence: "tool-round", maxSkills: 12, threshold: 0.5 }, score: (name) => name === "skill-0" ? 2 : name === "skill-1" ? 1.2 : 0.2 });
+  const h = await setup(t, { relevance: { cadence: "tool-round", maxSkills: 12 }, decision: { threshold: 0.5 }, score: (name) => name === "skill-0" ? 2 : name === "skill-1" ? 1.2 : 0.2 });
   await h.start("task");
   assert.deepEqual(h.deltas().map(h.names), [["skill-0", "skill-1"]]);
   for (let round = 0; round < 3; round++) assert.deepEqual((await h.end({ toolResults: TOOL })).drafts, []);
@@ -353,7 +353,7 @@ test("tool-round after a failed round does not hammer the backend; a new prompt 
   await h.start("next prompt"); assert.equal(h.requests.length, calls + 1);
 });
 test("turn_end never starts while another pass is still running, and a settings save makes it stale", async (t) => {
-  const h = await setup(t, { hang: true, relevance: { timeoutMs: 5000, cadence: "tool-round" } });
+  const h = await setup(t, { hang: true, relevance: { cadence: "tool-round" }, decision: { timeoutMs: 5000 } });
   const pending = h.start("task");
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual((await h.end({ toolResults: TOOL })).drafts, [], "busy: no duplicate pass");
@@ -362,19 +362,19 @@ test("turn_end never starts while another pass is still running, and a settings 
   assert.deepEqual(h.deltas(), []);
 });
 test("a stale turn_end round (settings saved mid-pass) commits no entry and records nothing", async (t) => {
-  const h = await setup(t, { relevance: { cadence: "tool-round", timeoutMs: 5000 } });
+  const h = await setup(t, { relevance: { cadence: "tool-round" }, decision: { timeoutMs: 5000 } });
   await h.start("first task");
   h.behavior.hang = true;
   const pending = h.end({ toolResults: TOOL, pendingMessages: [{ role: "user", content: "second task", timestamp: 7 }] });
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(h.requests.length, 2, "the queued task started a pass");
-  await h.set("relevance.threshold", "0.4");
+  await h.set("decision.threshold", "0.4");
   const result = await pending;
   assert.deepEqual(result.drafts, []); assert.deepEqual(h.deltas().map(h.names), [nameList(0, 1, 2)], "only the committed prompt round is on the branch");
   assert.ok(h.signals.at(-1)!.aborted, "the superseded decision was cancelled");
 });
 test("nothing but name/description and the latest bounded user task is ever sent, in every cadence", async (t) => {
-  const h = await setup(t, { relevance: { cadence: "tool-round", maxPromptChars: 12 } });
+  const h = await setup(t, { relevance: { cadence: "tool-round" }, decision: { maxPromptChars: 12 } });
   await h.start("SECRET-FIRST-LONG-PROMPT-TEXT");
   await h.end({ toolResults: TOOL, pendingMessages: [{ role: "user", content: "QUEUED-USER-TASK-LONGER", timestamp: 1 }] });
   await h.end({ toolResults: [{ toolName: "read", content: "TOOL-OUTPUT" }] });
@@ -397,7 +397,7 @@ test("turn_end re-delivers skills lost to compaction mid-run, without scoring an
 });
 test("a late answer from a backend that ignores cancellation is stale after a settings save: no message, no entry, no ledger change", async (t) => {
   for (const boundary of ["prompt", "turn_end"] as const) {
-    const h = await setup(t, { relevance: { cadence: "tool-round", timeoutMs: 5000 } });
+    const h = await setup(t, { relevance: { cadence: "tool-round" }, decision: { timeoutMs: 5000 } });
     let release!: () => void; h.behavior.gate = new Promise<void>((resolve) => { release = resolve; });
     const pending = boundary === "prompt" ? h.start("task") : (async () => { h.behavior.gate = undefined; await h.start("first"); h.behavior.gate = new Promise<void>((resolve) => { release = resolve; });
       return h.end({ toolResults: TOOL, pendingMessages: [{ role: "user", content: "queued", timestamp: 9 }] }); })();
@@ -456,7 +456,7 @@ test("cached scores never bypass cancellation: an aborted round returns nothing 
   assert.equal(ok.drafts.length, 1, "the same round succeeds once not aborted");
 });
 test("session_tree during a pending pass aborts it; a stale completion applies the CURRENT branch's base and records nothing", async (t) => {
-  const h = await setup(t, { settings: { globalAllowlist: ["skill-9"] }, relevance: { timeoutMs: 5000 } });
+  const h = await setup(t, { settings: { globalAllowlist: ["skill-9"] }, decision: { timeoutMs: 5000 } });
   h.behavior.gate = new Promise<void>(() => {});
   h.sim.session.appendCustom(SKILLS_BASE_ENTRY, { v: 1, names: ["skill-5"] }); // only the OLD branch advertised skill-5
   const old = h.event("task on the old branch");

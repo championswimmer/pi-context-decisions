@@ -82,7 +82,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   const stateOf = (settings: ContextDecisionsSettings, error: string | undefined, ledger: ToolLedgerState): State => {
     // An unreadable settings file must not silently drop filtering a branch already has: keep enforcing its ledger, add nothing.
     if (error) return ledger.present || ledger.unreadable ? "enforce" : "off";
-    if (!settings.enabled || !settings.tools.enabled) return "off";
+    if (!settings.tools.enabled) return "off";
     return ledger.unreadable ? "enforce" : "on";
   };
   const readLedger = (ctx: ExtensionContext): ToolLedgerState => {
@@ -139,7 +139,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     return { tools: new Set([...settings.tools.alwaysAllowedTools, ...(project?.tools ?? [])]), servers: new Set([...settings.tools.alwaysAllowedMcpServers, ...(project?.servers ?? [])]) };
   };
   const cacheKey = (task: string, settings: ContextDecisionsSettings) =>
-    JSON.stringify([settings.tools.mode, task, settings.backend, settings.relevance.maxPromptChars, settings.tools.maxDescriptionChars]);
+    JSON.stringify([settings.tools.mode, task, settings.backend, settings.decision.maxPromptChars, settings.decision.maxDescriptionChars]);
   /** Cadence task for catch-up and lazy scoring: the first task for `initial`, the latest otherwise. */
   const cadenceTask = (settings: ContextDecisionsSettings, ledger: ToolLedgerState): string | undefined =>
     settings.tools.cadence === "initial" ? ledger.initialTask : runTask;
@@ -163,7 +163,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     const key = cacheKey(task, settings);
     let names = remaining(c.inv, mode, c.avail);
     if (options.excludeConsidered) names = new Set([...names].filter((name) => !c.ledger.considered.has(name)));
-    let candidates = candidatesFor(c.inv, mode, names, settings.tools.maxDescriptionChars);
+    let candidates = candidatesFor(c.inv, mode, names, settings.decision.maxDescriptionChars);
     if (options.needScoreOnly) candidates = candidates.filter((candidate) => cache.needsScoring(key, candidate));
     const responses: DecisionResponse[] = [];
     const { client, error } = deps.resolveClient(ctx, settings, responses);
@@ -179,9 +179,8 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     beginDecisionLoader(ctx);
     try {
       round = await scoreToolAdditions(task, candidates, client, {
-        subject: mode === "mcp" ? "mcp_server" : "tool", threshold: settings.tools.threshold, maxAdded: settings.tools.maxAdded, failMode: settings.tools.failMode,
-        maxPromptChars: settings.relevance.maxPromptChars, maxDescriptionChars: settings.tools.maxDescriptionChars, chunkSize: settings.relevance.chunkSize,
-        concurrency: settings.relevance.concurrency, timeoutMs: settings.relevance.timeoutMs, maxQuestions: 50, signal: options.signal,
+        ...settings.decision, subject: mode === "mcp" ? "mcp_server" : "tool", maxAdded: settings.tools.maxAdded,
+        maxQuestions: 50, signal: options.signal,
       }, { store: cache, key });
     } catch (error2) {
       round = { added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes: [], considered: [], picks: new Map(), errorCode: safeCode(error2) };
@@ -366,7 +365,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         const task = cadenceTask(settings, c.ledger);
         if (state === "on" && !degraded && settings.backend && task) {
           const taskKey = cacheKey(task, settings);
-          const candidate = candidatesFor(inv, mode, new Set([key]), settings.tools.maxDescriptionChars)[0];
+          const candidate = candidatesFor(inv, mode, new Set([key]), settings.decision.maxDescriptionChars)[0];
           const eligible = !!candidate && cache.needsScoring(taskKey, candidate) && taskKey !== failedKey && !(settings.tools.cadence === "initial" && c.ledger.considered.has(key));
           if (eligible) {
             if (inflight?.key !== taskKey) {
@@ -583,7 +582,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     last: () => last ? structuredClone(last) : undefined,
     status() {
       const settings = deps.getSettings();
-      if (!settings.enabled || !settings.tools.enabled) return undefined;
+      if (!settings.tools.enabled) return undefined;
       if (!supported()) return "tools: host lacks tool APIs";
       if (deps.getSettingsError()) return "tools: settings error";
       if (!settings.backend) return "tools: select model · /decisions";

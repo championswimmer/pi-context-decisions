@@ -8,7 +8,7 @@ import { registerContextDecisions } from "../../src/extension/runtime.ts";
 import type { CommandContext } from "../../src/extension/contracts.ts";
 import { createDecisionClient } from "../../src/decision/api.ts";
 import type { DecisionRequest } from "../../src/decision/types.ts";
-import { defaultSettings, defaultToolSettings, saveSettings, type ContextDecisionsSettings, type ToolFilterSettings } from "../../src/settings.ts";
+import { defaultSettings, defaultToolSettings, saveSettings, type ContextDecisionsSettings, type ToolFilterSettings, type DecisionSettings } from "../../src/settings.ts";
 import { saveAllowlist, setSetting } from "./settings-ui.ts";
 import { SimSession, builtinSource, extensionSource, simHost, turnEnd, type SimToolInfo } from "./pi-sim.ts";
 
@@ -22,7 +22,7 @@ export const extTool = (name: string, exposure: SimToolInfo["exposure"] = "direc
   ({ name, description: `Does ${name}`, exposure, sourceInfo: extensionSource(name), ...extra });
 
 export interface ToolOptions {
-  tools?: Partial<ToolFilterSettings>; settings?: Partial<ContextDecisionsSettings>; skills?: boolean; unconfigured?: boolean;
+  decision?: Partial<DecisionSettings>; tools?: Partial<ToolFilterSettings>; settings?: Partial<ContextDecisionsSettings>; skills?: boolean; unconfigured?: boolean;
   /** Score by candidate name (tool name, or `mcp__x` namespace key in mcp mode). Default 0. */
   scores?: Record<string, number>; fail?: boolean; hang?: boolean;
   extra?: SimToolInfo[];
@@ -36,7 +36,7 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
   const path = join(root, "settings.json");
   const base = defaultSettings();
   const settings: ContextDecisionsSettings = { ...base, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, ...options.settings,
-    relevance: { ...base.relevance, enabled: options.skills === true, minCandidates: 0, ...options.settings?.relevance },
+    decision: { ...base.decision, ...options.settings?.decision, ...options.decision }, relevance: { ...base.relevance, enabled: options.skills === true, minCandidates: 0, ...options.settings?.relevance },
     tools: { ...defaultToolSettings(), enabled: true, ...options.tools } };
   await saveSettings(settings, path);
   const sim = simHost(options.session ?? new SimSession());
