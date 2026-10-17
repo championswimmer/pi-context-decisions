@@ -1,9 +1,9 @@
 // Pure availability policy for opt-in tool/MCP filtering. No Pi imports.
-import { sameServer, type ClassifiedTool, type ToolFilterMode, type ToolInventory } from "./tool-inventory.ts";
+import { canonicalServerKey, sameServer, type ClassifiedTool, type ToolFilterMode, type ToolInventory } from "./tool-inventory.ts";
 
 /** What this branch already made available (the additive ledger, plus not-yet-flushed in-memory additions). */
 export interface AvailabilityLedger { tools: ReadonlySet<string>; groups: ReadonlySet<string> }
-/** Effective (global ∪ project) allowlists. Server entries are matched with `sameServer` (`-`/`_` folding). */
+/** Scope-resolved grants for the current inventory. Server entries are matched with `sameServer` (`-`/`_` folding). */
 export interface EffectiveAllowlists { tools: ReadonlySet<string>; servers: ReadonlySet<string> }
 export interface Availability {
   /** Registered groups (MCP namespaces and extensions) that are available as a whole. */
@@ -12,6 +12,19 @@ export interface Availability {
   promoted: Set<string>;
   isAvailable(tool: ClassifiedTool): boolean;
   isGroupAvailable(key: string): boolean;
+}
+/** Resolve names-only lists against public provenance, never config files or path guesses.
+ * Unobservable groups (resource-only/disconnected servers) follow missing-scope skill semantics: global only.
+ * Mixed-scope groups cannot safely grant the whole group from either list; use scoped tool names instead.
+ */
+export function effectiveToolAllowlists(inventory: ToolInventory, global: EffectiveAllowlists, project: EffectiveAllowlists): EffectiveAllowlists {
+  const tools = new Set(inventory.tools.filter((tool) => (tool.scope === "project" ? project : global).tools.has(tool.name)).map((tool) => tool.name));
+  const servers = new Set<string>();
+  for (const [scope, list] of [["global", global], ["project", project]] as const) for (const entry of list.servers) {
+    const group = inventory.groups.get(canonicalServerKey(entry));
+    if ((group?.scope ?? "global") === scope) servers.add(entry);
+  }
+  return { tools, servers };
 }
 const none: ReadonlySet<string> = new Set();
 export function serverAllowlisted(allow: EffectiveAllowlists, key: string): boolean {
@@ -22,7 +35,7 @@ export function serverAllowlisted(allow: EffectiveAllowlists, key: string): bool
  * Groups are MCP namespaces AND extensions (`ext__<name>`, from Pi's public `sourceInfo`); both follow the same rules.
  * - internal: always available.
  * - `mcp` (group) mode: a group is available when it is in the ledger, it is allowlisted, or ANY of its tools is allowlisted / already
- *   available (the whole group is promoted, so a server or extension is never split into half-on in this mode). Only extension tools
+ *   available (the whole group is promoted, except mixed-scope groups: individual grants never cross origins). Only extension tools
  *   without usable provenance (no group) are never filtered here.
  * - `tools` mode: a tool is available when it, or its whole group, is in the ledger or an allowlist.
  * A late member of an available group is available without scoring.
@@ -32,12 +45,12 @@ export function availability(inventory: ToolInventory, mode: ToolFilterMode, led
   const promoted = new Set<string>();
   for (const group of inventory.groups.values()) {
     if (ledger.groups.has(group.key) || serverAllowlisted(allow, group.key)) { groups.add(group.key); continue; }
-    if (mode === "mcp" && group.tools.some((name) => ledger.tools.has(name) || allow.tools.has(name))) { groups.add(group.key); promoted.add(group.key); }
+    if (mode === "mcp" && group.scope !== "mixed" && group.tools.some((name) => ledger.tools.has(name) || allow.tools.has(name))) { groups.add(group.key); promoted.add(group.key); }
   }
   const isGroupAvailable = (key: string) => groups.has(key);
   const isAvailable = (tool: ClassifiedTool): boolean => {
     if (tool.kind === "internal") return true;
-    if (tool.group) return isGroupAvailable(tool.group) || (mode === "tools" && (ledger.tools.has(tool.name) || allow.tools.has(tool.name)));
+    if (tool.group) return isGroupAvailable(tool.group) || ((mode === "tools" || inventory.groups.get(tool.group)?.scope === "mixed") && (ledger.tools.has(tool.name) || allow.tools.has(tool.name)));
     // Ungrouped (no usable provenance) extension tool.
     return mode === "mcp" || ledger.tools.has(tool.name) || allow.tools.has(tool.name);
   };

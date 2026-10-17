@@ -17,7 +17,7 @@ export { AllowlistError, scopeOf, isAllowlistName, normalizeAllowlist, allowlist
 export type { AllowlistScope, Allowlists, ScopedSkill } from "./apps/allowlist.ts";
 export { classifyTools, candidatesFor, serverKey, sameServer, groupDescription, MCP_RESOURCE_TOOLS } from "./apps/tool-inventory.ts";
 export type { ToolInfoLike, ClassifiedTool, McpGroup, ToolInventory, ToolCandidate, ToolKind } from "./apps/tool-inventory.ts";
-export { availability, remaining, reconcileActive } from "./apps/tool-policy.ts";
+export { availability, effectiveToolAllowlists, remaining, reconcileActive } from "./apps/tool-policy.ts";
 export type { Availability, AvailabilityLedger, EffectiveAllowlists } from "./apps/tool-policy.ts";
 export { scoreToolAdditions, IncrementalScoreCache } from "./apps/tool-additions.ts";
 export type { ToolAdditionOptions, ToolAdditionResult } from "./apps/tool-additions.ts";

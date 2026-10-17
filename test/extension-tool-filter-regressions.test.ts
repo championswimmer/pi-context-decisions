@@ -43,7 +43,7 @@ test("resource tools with a degraded registry keep their routing policy (a known
 });
 test("a throwing project allowlist read never loosens the gate: the last good cache or the global lists apply, and the caller never sees the error", async (t) => {
   let fail = false;
-  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_g"] }, extra: [A, B, extTool("ext_g")], scores: { ext_a: 0 },
+  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_g"] }, extra: [A, { ...B, sourceInfo: { ...B.sourceInfo!, scope: "project" } }, extTool("ext_g")], scores: { ext_a: 0 },
     async loadProjectAllowlist() { if (fail) throw new Error("PRIVATE disk error"); return { names: [], tools: ["ext_b"], mcpServers: [], warnings: [] }; } });
   assert.equal(await h.gate("ext_b"), undefined, "first read succeeds and caches: ext_b is project-allowlisted");
   fail = true;
@@ -273,7 +273,7 @@ test("gate: disabling filtering during lazy scoring lets the call through withou
 test("gate: an obsolete project-allowlist read can never populate the cache after a reset", async (t) => {
   let reads = 0; let hold!: () => void;
   const first = new Promise<void>((resolve) => { hold = resolve; });
-  const h = await toolSetup(t, { extra: [extTool("ext_x")], async loadProjectAllowlist() {
+  const h = await toolSetup(t, { extra: [extTool("ext_x", "direct", { sourceInfo: { source: "sdk", path: "", scope: "project" } })], async loadProjectAllowlist() {
     reads++;
     if (reads === 1) { await first; return { names: [], tools: ["ext_x"], mcpServers: [], warnings: [] }; }
     return { names: [], tools: [], mcpServers: [], warnings: [] };

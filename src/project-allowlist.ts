@@ -7,7 +7,7 @@ import { SettingsError } from "./settings.ts";
 
 const MAX_BYTES = 65536;
 export function projectAllowlistPath(cwd: string): string { return join(cwd, ".pi", "pi-context-decisions.json"); }
-/** `names` is the always-advertised skill list (file key `alwaysAllowed`); tools and MCP servers have their own keys. */
+/** `names` is the always-advertised skill list (file key `alwaysAllowed`); tools and MCP servers have their own keys, matching public project-scope provenance only. */
 export interface ProjectAllowlistLoad { names: string[]; tools: string[]; mcpServers: string[]; warnings: string[]; error?: string }
 export interface ProjectAllowlistLists { skills?: Iterable<string>; tools?: Iterable<string>; mcpServers?: Iterable<string> }
 const KNOWN_KEYS = ["alwaysAllowed", "alwaysAllowedTools", "alwaysAllowedMcpServers"];

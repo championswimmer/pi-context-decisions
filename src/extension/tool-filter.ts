@@ -10,7 +10,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { IncrementalScoreCache, scoreToolAdditions, type ToolAdditionResult } from "../apps/tool-additions.ts";
 import { classifyTools, candidatesFor, canonicalServerKey, serverKey, type ClassifiedTool, type ToolInventory } from "../apps/tool-inventory.ts";
-import { availability, baseGrowth, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type Availability, type EffectiveAllowlists } from "../apps/tool-policy.ts";
+import { availability, baseGrowth, effectiveToolAllowlists, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type Availability, type EffectiveAllowlists } from "../apps/tool-policy.ts";
 import { taskWithoutExpandedSkill, safeCode, type AdditionPick } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
 import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
@@ -122,7 +122,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   type Journal = ReturnType<typeof journal>;
   /** Bumped by reset/invalidate: an in-flight project read that started before it must never populate the cache afterwards. */
   let cacheEpoch = 0;
-  const allowlists = async (ctx: ExtensionContext, settings: ContextDecisionsSettings, refresh: boolean): Promise<EffectiveAllowlists> => {
+  const allowlists = async (ctx: ExtensionContext, settings: ContextDecisionsSettings, refresh: boolean, inv: ToolInventory): Promise<EffectiveAllowlists> => {
     let project = projectCache && projectCache.cwd === (ctx.cwd ?? "") ? projectCache : undefined;
     if ((refresh || !project) && ctx.cwd) {
       const epoch = cacheEpoch, generation = deps.generation();
@@ -136,7 +136,8 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         project = read;
       } catch { /* keep `project` as is */ }
     }
-    return { tools: new Set([...settings.tools.alwaysAllowedTools, ...(project?.tools ?? [])]), servers: new Set([...settings.tools.alwaysAllowedMcpServers, ...(project?.servers ?? [])]) };
+    return effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: new Set(settings.tools.alwaysAllowedMcpServers) },
+      { tools: new Set(project?.tools ?? []), servers: new Set(project?.servers ?? []) });
   };
   const cacheKey = (task: string, settings: ContextDecisionsSettings) =>
     JSON.stringify([settings.tools.mode, task, settings.backend, settings.decision.maxPromptChars, settings.decision.maxDescriptionChars]);
@@ -152,7 +153,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   };
   const addAvailable = (mode: ToolFilterMode, names: Iterable<string>, j?: Journal) => { for (const name of names) { const set = mode === "mcp" ? pend.groups : pend.tools; if (j) j.add(set, name); else set.add(name); } };
   /** A group bypasses scoring as allowlisted when its server/extension key is allowlisted or one of its tools is (a promotion from the ledger alone is base, not allowlisted). */
-  const groupAllowlisted = (inv: ToolInventory, key: string, allow: EffectiveAllowlists) => serverAllowlisted(allow, key) || (inv.groups.get(key)?.tools ?? []).some((name) => allow.tools.has(name));
+  const groupAllowlisted = (inv: ToolInventory, key: string, allow: EffectiveAllowlists) => serverAllowlisted(allow, key) || (inv.groups.get(key)?.scope !== "mixed" && (inv.groups.get(key)?.tools ?? []).some((name) => allow.tools.has(name)));
 
   /**
    * Score undecided candidates. `only` narrows to specific identifiers; `needScore` restricts to candidates a decision call would be
@@ -242,12 +243,11 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         if (avail.isGroupAvailable(group.key)) announce.add(group.key);
         else if (indirect.some((tool) => !avail.isAvailable(tool))) hiddenUnavailable = true;
       }
-      // In `mcp` (group) mode only groups (MCP servers and extensions) are decided; ungrouped extension tools are never filtered and need no mention.
-      if (mode === "tools") {
-        for (const tool of inv.tools) {
-          if (tool.kind === "internal" || tool.declarable || (tool.group && avail.isGroupAvailable(tool.group))) continue;
-          if (avail.isAvailable(tool)) announce.add(tool.name); else hiddenUnavailable = true;
-        }
+      // Mixed-origin groups can have individual scoped pins even in group mode. Ungrouped extension tools stay unfiltered there.
+      for (const tool of inv.tools) {
+        if (mode === "mcp" && (!tool.group || inv.groups.get(tool.group)?.scope !== "mixed")) continue;
+        if (tool.kind === "internal" || tool.declarable || (tool.group && avail.isGroupAvailable(tool.group))) continue;
+        if (avail.isAvailable(tool)) announce.add(tool.name); else hiddenUnavailable = true;
       }
     }
     const newItems = [...announce].filter((name) => !ledger.announced.has(name));
@@ -328,7 +328,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         }
         const tool = inv.byName.get(event.toolName);
         if (!tool) return degraded ? unverified() : undefined; // a live registry that does not know it: Pi cannot run it
-        const allow = await allowlists(ctx, settings, false);
+        const allow = await allowlists(ctx, settings, false, inv);
         if (generation !== deps.generation()) return STALE; // the settings/branch/allowlists changed while the read was pending
         const mode = settings.tools.mode;
         let c = view(inv, settings, merged(ctx), allow);
@@ -346,12 +346,15 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           };
           if (server !== undefined) {
             if (usable(serverKey(server))) return undefined;
-            return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: filtering has not enabled it. Ask the user to add it to tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers (project .pi/pi-context-decisions.json), then /reload.`.slice(0, BLOCK_REASON_LIMIT) };
+            const scope = inv.groups.get(serverKey(server))?.scope;
+            const guidance = scope === "mixed" ? "Allow matching tools in the /decisions Tools tab."
+              : `Ask the user to add it to ${scope === "project" ? "alwaysAllowedMcpServers (project .pi/pi-context-decisions.json)" : "tools.alwaysAllowedMcpServers (Pi agent settings.json)"}, then /reload.`;
+            return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: filtering has not enabled it. ${guidance}`.slice(0, BLOCK_REASON_LIMIT) };
           }
           if (tool.name === "read_mcp_resource") return undefined; // Pi rejects a read without a server; nothing to route
           // Unscoped listing: the complete server inventory (resource-only and disconnected servers included) is not observable, so it can never be
           // verified as fully allowed. Fail closed while filtering is on; the model must name a server.
-          return { block: true, reason: "Listing MCP resources across all servers is unavailable while filtering is on (servers cannot be fully verified): pass an available server, or ask the user to add one to tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers (project .pi/pi-context-decisions.json), then /reload.".slice(0, BLOCK_REASON_LIMIT) };
+          return { block: true, reason: "Listing MCP resources across all servers is unavailable while filtering is on (servers cannot be fully verified): pass an available server. Scoped allowlists cannot enable an unscoped listing.".slice(0, BLOCK_REASON_LIMIT) };
         }
         if (tool.kind === "internal" || c.avail.isAvailable(tool)) return undefined;
         if (state === "on" && (!settings.backend || externalCount(inv, mode) < settings.tools.minCandidates)) {
@@ -388,7 +391,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           }
         }
         const group = tool.group && mode === "mcp" ? inv.groups.get(tool.group) : undefined;
-        const reason = group
+        const reason = group && group.scope !== "mixed"
           ? group.type === "mcp"
             ? `MCP server "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled it for this task. Continue without it, or ask the user to allow it in the /decisions Tools tab (Always allowed MCP servers & extensions).`
             : `Extension "${clean(group.label)}" is unavailable: pi-context-decisions tool filtering has not enabled its tools for this task. Continue without it, or ask the user to allow it in the /decisions Tools tab (Always allowed MCP servers & extensions).`
@@ -426,7 +429,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       try {
         const signal = joinSignal(ctx, operation);
         const inv = classify();
-        const allow = await allowlists(ctx, settings, true);
+        const allow = await allowlists(ctx, settings, true, inv);
         if (stale()) { j.undo(); return undefined; }
         /**
          * Same generation but the run was cancelled: reconcile the active set from what the branch has COMMITTED plus the current allowlists,
@@ -526,7 +529,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       try {
         const signal = joinSignal(ctx, operation);
         const inv = classify();
-        const allow = await allowlists(ctx, settings, false);
+        const allow = await allowlists(ctx, settings, false, inv);
         if (stale()) { j.undo(); return undefined; }
         const reconcileOnly = () => {
           j.undo();
@@ -603,17 +606,18 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const inv = classify();
       let project = { tools: [] as string[], servers: [] as string[] };
       if (ctx.cwd) { const loaded = await deps.loadProjectAllowlist(ctx.cwd); project = { tools: loaded.tools, servers: loaded.mcpServers }; }
-      const allow: EffectiveAllowlists = state === "off" ? NO_ALLOWLISTS : { tools: new Set([...settings.tools.alwaysAllowedTools, ...project.tools]), servers: new Set([...settings.tools.alwaysAllowedMcpServers, ...project.servers]) };
+      const allow: EffectiveAllowlists = state === "off" ? NO_ALLOWLISTS : effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: new Set(settings.tools.alwaysAllowedMcpServers) },
+        { tools: new Set(project.tools), servers: new Set(project.servers) });
       const avail = availability(inv, mode, ledger, allow);
       const rows = inv.tools.map((tool): ToolReport["rows"][number] => ({
-        name: tool.name, kind: tool.kind, exposure: tool.exposure, description: tool.description,
+        name: tool.name, kind: tool.kind, scope: tool.scope, exposure: tool.exposure, description: tool.description,
         ...(tool.group ? { group: tool.group, groupLabel: inv.groups.get(tool.group)?.label, ...(tool.kind === "mcp" ? { server: inv.groups.get(tool.group)?.label } : {}) } : {}),
         state: tool.kind === "internal" ? "always" : state === "off" ? "available"
           : allow.tools.has(tool.name) || (tool.group && [...allow.servers].some((entry) => canonicalServerKey(entry) === tool.group)) ? "allowlisted"
           : avail.isAvailable(tool) ? "available" : "unavailable",
       }));
       const groups = [...inv.groups.values()].map((group) => ({
-        key: group.key, type: group.type, label: group.label, tools: group.tools.length, toolNames: [...group.tools].sort().slice(0, 50), verified: group.verified,
+        key: group.key, scope: group.scope, type: group.type, label: group.label, tools: group.tools.length, toolNames: [...group.tools].sort().slice(0, 50), verified: group.verified,
         available: state === "off" || avail.isGroupAvailable(group.key), allowlisted: [...allow.servers].some((entry) => canonicalServerKey(entry) === group.key),
       }));
       return { supported: true, state, mode, rows, groups, hidden: inv.hidden, ungrouped: inv.tools.filter((tool) => tool.kind === "extension" && !tool.group).length, withheld: ledger.withheld.size };
