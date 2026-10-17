@@ -42,6 +42,8 @@ interface Options {
   mcpGlobal?: Record<string, unknown>;
   mcpProject?: Record<string, unknown>;
   projectTrusted?: boolean;
+  /** Pi reload emits session_start only with a retained UI/actions/error-listener binding. */
+  reloadable?: boolean;
 }
 async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: Awaited<ReturnType<typeof realPi>>) => Parameters<ReturnType<typeof createFauxCore>["setResponses"]>[0], options: Options = {}) {
   const root = await mkdtemp(join(tmpdir(), "real-pi-tools-")); t.after(() => rm(root, { recursive: true, force: true }));
@@ -76,7 +78,7 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
   if (options.defaultTools) settingsManager.applyOverrides({ defaultTools: options.defaultTools } as never);
   const created = await createAgentSession({ settingsManager, resourceLoader: loader, sessionManager, model: runtime.getModel("fauxprov", "faux-1")!, modelRuntime: runtime, cwd: root } as never);
   t.after(async () => created.session.dispose());
-  await created.session.bindExtensions({});
+  await created.session.bindExtensions(options.reloadable ? { onError() {} } : {});
   const requests: Request[] = [];
   const h = { session: created.session as AgentSession, faux, scores, decisions, requests, sessionManager, root,
     /** A faux step: records the declared tool set of the request, then answers. */
@@ -385,4 +387,25 @@ test("real Pi file-configured MCP origins honor agent-dir env, project trust, fu
     assert.equal(h.requests[0].declared.includes("mcp__project_only__q"), projectTrusted);
     assert.doesNotMatch(JSON.stringify([h.requests, h.decisions, h.sessionManager.getBranch()]), /MCP_CONFIG_VALUES/);
   }
+});
+
+test("real Pi keeps live MCP scope stable after disk edits, including resource routing, until reload", async (t) => {
+  const mcp = fakeMcp({ live: { tools: ["q"], resources: true } }, true), p = probe();
+  const definition = { command: "fake", exposure: "codemode" };
+  const h = await realPi(t, (h) => [finish(h)], { earlier: [p.extension], builtin: mcp.builtins(), tools: { mode: "mcp" },
+    mcpGlobal: { live: definition }, project: { alwaysAllowedMcpServers: ["live"] }, projectTrusted: true, reloadable: true });
+  const ready = () => p.box.pi!.getAllTools().some((tool) => tool.name === "mcp__live__q") && p.box.pi!.getAllTools().some((tool) => tool.name === "list_mcp_resources");
+  await until(ready, "global MCP server and resource tool");
+  await h.session.prompt("task");
+  const gate = (toolName: string, input: Record<string, unknown> = {}) => h.session.extensionRunner.emitToolCall({ type: "tool_call", toolName, toolCallId: "live-scope", input } as never);
+  assert.equal((await gate("mcp__live__q"))?.block, true);
+  assert.match((await gate("list_mcp_resources", { server: "live" }))?.reason ?? "", /Pi agent settings\.json/);
+  await writeFile(join(h.root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { live: definition } }));
+  assert.equal(mcp.origins.get("live"), "global", "Pi has not reloaded or replaced the live connection");
+  assert.equal((await gate("mcp__live__q"))?.block, true, "a project pin cannot grant the still-global tool after a disk edit");
+  assert.match((await gate("list_mcp_resources", { server: "live" }))?.reason ?? "", /Pi agent settings\.json/, "resource routing keeps the captured global origin too");
+  await h.session.reload();
+  await until(() => mcp.origins.get("live") === "project" && ready(), "project MCP connection after reload");
+  assert.equal(await gate("mcp__live__q"), undefined, "reload captures the new Project origin alongside Pi's replacement connection");
+  assert.equal(await gate("list_mcp_resources", { server: "live" }), undefined);
 });

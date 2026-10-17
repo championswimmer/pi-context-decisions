@@ -189,7 +189,7 @@ function toolStatusLines(controller: Controller, settings: ReturnType<Controller
   return [
     `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · max ${t.maxAdded} added per round · minimum ${t.minCandidates}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
     `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
-    "Built-in MCP allowlist scope comes from bounded names-only Pi MCP config reads (trusted project definitions override global; settings-only overrides keep global). Extensions use public sourceInfo.scope. Unresolved built-in origins use Global.",
+    "Built-in MCP allowlist scope is captured from bounded names-only Pi config reads at session_start (trusted full project definitions override global; settings-only overrides keep global). Disk edits require /reload. Extensions use public sourceInfo.scope. Unresolved built-in origins use Global.",
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
   ];
@@ -303,8 +303,8 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
   return {
     scope, skills: items, initial, noun: kind === "mcp" ? "MCP server or extension" : KIND_LABEL[kind] as "skill" | "tool",
     locationLabel: scope === "global" ? "Pi agent dir: pi-context-decisions/settings.json" : projectAllowlistPath(base.cwd!),
-    ...(kind !== "skills" ? { scopeNote: "Built-in MCP scope: names-only Pi config reads, honoring project trust. Extensions: public provenance. Unresolved built-in origins use Global.",
-      compactScopeNote: "MCP config scope; unknown uses Global" } : {}),
+    ...(kind !== "skills" ? { scopeNote: "Built-in MCP scope: session-start config capture, honoring project trust; disk edits require /reload. Extensions: public provenance. Unresolved origins use Global.",
+      compactScopeNote: "MCP session scope; /reload config edits" } : {}),
     ...(kind === "mcp" ? { heading: "Always allowed MCP servers & extensions", normalize: canonicalServerKey } : {}),
     ...(kind === "tools" && report ? { tree: toolTree(report, initialGroups ?? [], scope), normalize: canonicalServerKey } : {}),
     save: kind === "tools" && report ? (names, groups) => saveToolLists(controller, base, scope, names, groups ?? initialGroups ?? []) : (names) => saveNames(controller, base, scope, names, kind),

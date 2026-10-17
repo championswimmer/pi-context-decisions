@@ -8,7 +8,7 @@
 //   prompt section and `tool_search` results are unaffected.
 // - Everything is derived from the active session branch (`context-decisions-tools` custom entries).
 import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readMcpConfigScopes } from "../host/mcp-config-scopes.ts";
+import { readMcpConfigScopes, type McpConfigScopes } from "../host/mcp-config-scopes.ts";
 import { IncrementalScoreCache, scoreToolAdditions, type ToolAdditionResult } from "../apps/tool-additions.ts";
 import { classifyTools, candidatesFor, canonicalServerKey, MCP_NAMESPACE_PREFIX, serverKey, type ClassifiedTool, type ToolInventory } from "../apps/tool-inventory.ts";
 import { availability, baseGrowth, effectiveToolAllowlists, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type Availability, type EffectiveAllowlists } from "../apps/tool-policy.ts";
@@ -54,8 +54,10 @@ export interface ToolFilter {
   turnEnd(event: TurnEndLike, ctx: ExtensionContext): Promise<{ entries: unknown[] } | undefined>;
   toolCall(event: ToolCallLike, ctx: ExtensionContext): Promise<{ block: true; reason: string } | undefined>;
   agentEnd(ctx: ExtensionContext): void;
-  /** Drop transient state (session start/tree/shutdown, settings or allowlist saves). The branch ledger is untouched. */
-  reset(): void;
+  /** Capture names/scopes alongside Pi's session_start config load, even when filtering is initially off. */
+  startSession(ctx: ExtensionContext): Promise<void>;
+  /** Drop branch-transient state; true also discards the session MCP capture (start/shutdown only). The ledger is untouched. */
+  reset(session?: boolean): void;
   /** Settings/allowlist saved: project list cache and scores are stale. */
   invalidate(): void;
   describe(ctx: CommandContext): Promise<ToolReport>;
@@ -104,14 +106,15 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     ledger.initialTask ??= pend.initialTask;
     return ledger;
   };
-  /** Last provenance-classified registry read; the gate falls back to it when `getAllTools` fails (the registry is global, not per branch). */
+  /** Last registry/origin snapshot for this session; branch changes retain it, session replacement does not. */
   let snapshot: ToolInventory | undefined;
   const scopeWarnings = new Set<string>();
-  const classify = async (ctx: Pick<CommandContext, "cwd" | "isProjectTrusted">): Promise<ToolInventory> => {
+  let scopeEpoch = 0;
+  let mcpOrigins: McpConfigScopes = { scopes: new Map(), warnings: [] };
+  const classify = (ctx: Pick<CommandContext, "cwd">): ToolInventory => {
     const generation = deps.generation();
-    let projectTrusted = false;
-    try { projectTrusted = ctx.isProjectTrusted?.() === true; } catch { /* unavailable trust never admits project config */ }
-    const read = await readMcpConfigScopes({ agentDir: deps.agentDir ?? getAgentDir(), cwd: ctx.cwd, projectTrusted });
+    // Disk edits do not replace Pi's live MCP connections. All classifications use the session-start capture.
+    const read = mcpOrigins;
     const inv = classifyTools(pi.getAllTools!(), read.scopes);
     if (generation === deps.generation()) {
       snapshot = inv;
@@ -344,7 +347,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         if (state === "off" || !supported()) return undefined;
         let inv: ToolInventory;
         let degraded = false;
-        try { inv = await classify(ctx); }
+        try { inv = classify(ctx); }
         catch {
           if (!snapshot) return unverified();
           inv = snapshot; degraded = true;
@@ -412,7 +415,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
             }
             await inflight.promise;
             if (generation !== deps.generation()) return STALE;
-            const latest = await classify(ctx);
+            const latest = classify(ctx);
             const latestAllow = await allowlists(ctx, settings, false, latest);
             if (generation !== deps.generation()) return STALE;
             c = view(latest, settings, merged(ctx), latestAllow);
@@ -457,7 +460,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const stale = () => generation !== deps.generation();
       try {
         const signal = joinSignal(ctx, operation);
-        const inv = await classify(ctx);
+        const inv = classify(ctx);
         const allow = await allowlists(ctx, settings, true, inv);
         if (stale()) { j.undo(); return undefined; }
         /**
@@ -538,7 +541,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         // the next prompt. A branch that never had filtering is left completely untouched (zero footprint).
         if (!ledger0.present) return undefined;
         const generation = deps.generation();
-        const inv = await classify(ctx);
+        const inv = classify(ctx);
         if (generation !== deps.generation()) return undefined;
         for (const tool of inv.tools) if (tool.kind !== "internal") pend.tools.add(tool.name);
         for (const key of inv.groups.keys()) pend.groups.add(key);
@@ -557,7 +560,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const stale = () => generation !== deps.generation();
       try {
         const signal = joinSignal(ctx, operation);
-        const inv = await classify(ctx);
+        const inv = classify(ctx);
         const allow = await allowlists(ctx, settings, false, inv);
         if (stale()) { j.undo(); return undefined; }
         const reconcileOnly = () => {
@@ -609,7 +612,17 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       if (activeState === "off" || !supported()) return;
       for (const data of toRecords(flushRecord(), readLedger(ctx))) pi.appendEntry(TOOLS_LEDGER_ENTRY, data);
     },
-    reset() { scopeWarnings.clear(); cacheEpoch++; pend = fresh(); runTask = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear(); },
+    async startSession(ctx) {
+      const epoch = ++scopeEpoch;
+      let projectTrusted = false;
+      try { projectTrusted = ctx.isProjectTrusted() === true; } catch { /* unknown trust never admits project config */ }
+      const read = await readMcpConfigScopes({ agentDir: deps.agentDir ?? getAgentDir(), cwd: ctx.cwd, projectTrusted });
+      if (epoch === scopeEpoch) mcpOrigins = read;
+    },
+    reset(session = false) {
+      if (session) { scopeEpoch++; scopeWarnings.clear(); snapshot = undefined; mcpOrigins = { scopes: new Map(), warnings: [] }; }
+      cacheEpoch++; pend = fresh(); runTask = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear();
+    },
     invalidate() { cacheEpoch++; projectCache = undefined; failedKey = undefined; last = undefined; inflight = undefined; cache.clear(); },
     last: () => last ? structuredClone(last) : undefined,
     status() {
@@ -632,7 +645,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       for (const name of pend.tools) ledger.tools.add(name);
       for (const key of pend.groups) ledger.groups.add(key);
       const state = stateOf(settings, deps.getSettingsError(), ledger);
-      const inv = await classify(ctx);
+      const inv = classify(ctx);
       let project = { tools: [] as string[], servers: [] as string[] };
       if (ctx.cwd) { const loaded = await deps.loadProjectAllowlist(ctx.cwd); project = { tools: loaded.tools, servers: loaded.mcpServers }; }
       const allow: EffectiveAllowlists = state === "off" ? NO_ALLOWLISTS : effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: new Set(settings.tools.alwaysAllowedMcpServers) },

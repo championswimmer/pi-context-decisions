@@ -14,6 +14,7 @@ async function files(h: Awaited<ReturnType<typeof toolSetup>>, project: Record<s
   await writeFile(join(h.agentDir, "mcp.json"), JSON.stringify({ mcpServers: global }));
   await writeFile(join(h.root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: project }));
   h.ctx.isProjectTrusted = () => true;
+  await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
 }
 
 test("built-in MCP file origins scope gates, resource-only grants, notices and editor saves without leaking config values", async (t) => {
@@ -34,7 +35,7 @@ test("built-in MCP file origins scope gates, resource-only grants, notices and e
     assert.equal(await h.gate("read_mcp_resource", { server: "resources_only", uri: "x" }), undefined, "resource-only project scope is observable from names-only config");
     assert.ok(h.ledger().some((record) => record.groups?.includes("mcp__resources_only")));
     assert.match(JSON.stringify(h.notices()), /mcp__same/);
-    // The actual command/editor path reads the config again, even though a dialog context is not an agent-run context.
+    // The actual command/editor path uses the same session capture as the gate, without re-reading disk.
     await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Project", toggle: "project" });
     assert.ok((await loadProjectAllowlist(h.root)).mcpServers.includes("mcp__project"), JSON.stringify((await loadProjectAllowlist(h.root)).mcpServers));
     assert.equal(await h.gate("mcp__project__q"), undefined, "the scoped editor saved the project pin");
@@ -45,7 +46,7 @@ test("built-in MCP file origins scope gates, resource-only grants, notices and e
     assert.match(await readFile(join(h.agentDir, "mcp.json"), "utf8"), /CONFIG_FIELDS_MUST_STAY_LOCAL/, "the config was not rewritten");
   }
 });
-test("MCP config names are re-read for gates and editors, and untrusted or malformed project config never gives Project scope", async (t) => {
+test("session start refreshes MCP origins, and untrusted or malformed project config never gives Project scope", async (t) => {
   const h = await toolSetup(t, { extra: [mcpTool("late", "q")] });
   await h.start("task");
   await files(h, { late: entry() });
@@ -55,6 +56,7 @@ test("MCP config names are re-read for gates and editors, and untrusted or malfo
     const x = await toolSetup(t, { extra: [mcpTool("project", "q")], tools: { alwaysAllowedMcpServers: ["project"] } });
     await files(x, { project: entry() }); x.ctx.isProjectTrusted = () => trusted;
     if (trusted) await writeFile(join(x.root, ".pi", "mcp.json"), `{ "mcpServers": { "project": ${SECRET}`);
+    await x.sim.emit("session_start", { type: "session_start", reason: "reload" }, x.ctx);
     await x.start("task");
     assert.equal(await x.gate("mcp__project__q"), undefined, "unresolved origin retains Global fallback, never Project");
     assert.doesNotMatch(JSON.stringify(x.messages), /CONFIG_FIELDS/);
@@ -75,4 +77,26 @@ test("built-in config scope filters both MCP editors and keeps global/project sa
   assert.deepEqual((await loadProjectAllowlist(h.root)).mcpServers, ["mcp__project"]);
   await h.start("task");
   assert.deepEqual(h.scored(), []); assert.equal(await h.gate("mcp__global__q"), undefined); assert.equal(await h.gate("mcp__project__q"), undefined);
+});
+
+
+test("session MCP origins survive later enabling, editor saves and branch navigation until a new session_start", async (t) => {
+  const h = await toolSetup(t, { tools: { enabled: false, mode: "mcp" }, extra: [mcpTool("live", "q"), ...resourceTools()] });
+  await files(h, {}, { live: entry() });
+  await writeFile(join(h.root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { live: entry() } }));
+  await saveProjectAllowlist(h.root, { mcpServers: ["live"] });
+  await h.set("tools.enabled");
+  assert.equal((await h.gate("mcp__live__q"))?.block, true, "enabling later uses the original Global capture");
+  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Project" });
+  assert.equal((await h.gate("mcp__live__q"))?.block, true, "an editor save cannot relabel the live server");
+  await h.sim.emit("session_tree", { type: "session_tree" }, h.ctx);
+  assert.equal((await h.gate("mcp__live__q"))?.block, true, "branch navigation retains the connection's Global capture");
+  assert.match((await h.gate("list_mcp_resources", { server: "live" }))?.reason ?? "", /Pi agent settings\.json/);
+  await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
+  const registry = h.sim.pi.getAllTools!;
+  h.sim.pi.getAllTools = () => { throw new Error("registry unavailable"); };
+  assert.match((await h.gate("mcp__live__q"))?.reason ?? "", /could not be verified/, "reload cannot reuse a prior-session origin snapshot");
+  h.sim.pi.getAllTools = registry;
+  assert.equal(await h.gate("mcp__live__q"), undefined, "reload recaptures Project scope");
+  assert.equal(await h.gate("list_mcp_resources", { server: "live" }), undefined);
 });
