@@ -37,7 +37,7 @@ test("MCP scope reader mirrors Pi's valid definitions, settings-only overrides, 
   assert.ok(actual.warnings.includes("mcp-project-entry-invalid")); assert.ok(actual.warnings.includes("mcp-project-name-clash"));
   assert.doesNotMatch(JSON.stringify({ scopes: [...actual.scopes], warnings: actual.warnings }), /CONFIG_VALUE|example\.invalid|Authorization|command|args|headers|env/);
 });
-test("invalid common/transport/OAuth shapes have the same precedence as Pi, without returning config values", async (t) => {
+test("common/transport/OAuth shapes have the same precedence as Pi, without returning config values", async (t) => {
   const f = await fixture(t);
   const values = [null, [], {}, { command: 4 }, { command: "x", args: [3] }, { command: "x", env: { x: 4 } }, { command: "x", cwd: 3 },
     { command: "x", enabled: 3 }, { command: "x", timeout: 0 }, { command: "x", description: 4 }, { command: "x", exposure: "bad" }, { command: "x", toolExposure: { x: "bad" } },
@@ -46,7 +46,14 @@ test("invalid common/transport/OAuth shapes have the same precedence as Pi, with
     { url: "https://example.invalid", oauth: { callbackUrl: "http://[::1]/callback", clientRegistration: "cimd" } },
     { url: "https://example.invalid", oauth: { authServerMetadataUrl: "http://example.invalid" } }, { url: "https://example.invalid", oauth: { callbackPort: 0 } },
     { url: "https://example.invalid", oauth: { clientName: " " } }, { url: "https://example.invalid", oauth: { clientRegistration: "bad" } },
-    { type: "sse", url: "https://example.invalid" }, { url: "http://example.invalid", auth: { provider: "x" } }, { enabled: 4 }, { enabled: true, env: { x: SECRET } }];
+    { type: "sse", url: "https://example.invalid" }, { url: "http://example.invalid", auth: { provider: "x" } }, { enabled: 4 }, { enabled: true, env: { x: SECRET } },
+    // Stdio keeps extra URL/auth fields; the loader's project-auth predicate is transport-independent.
+    { type: "stdio", command: "x", url: "https://example.invalid", auth: { provider: "x" } },
+    { command: "x", url: 7, auth: true }, { type: "stdio", command: "x", url: null, auth: SECRET },
+    { type: "stdio", command: "x", auth: { provider: "x" } },
+    { type: "stdio", command: "x", url: "https://example.invalid", auth: false },
+    { type: "stdio", command: "x", url: "https://example.invalid", auth: null },
+    { type: "stdio", command: "x", url: "https://example.invalid", auth: 0 }];
   await f.put({ mcpServers: Object.fromEntries(values.map((_, i) => [`s${i}`, { command: "base" }])) }, { mcpServers: Object.fromEntries(values.map((value, i) => [`s${i}`, value])) });
   const options = { agentDir: f.agentDir, cwd: f.cwd, projectTrusted: true };
   const actual = await readMcpConfigScopes(options), pi = loadMcpConfig(options);

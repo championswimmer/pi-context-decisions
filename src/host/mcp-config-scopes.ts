@@ -42,24 +42,23 @@ function oauth(value: unknown): boolean {
   const metadata = url(value.authServerMetadataUrl);
   return value.authServerMetadataUrl === undefined || !!metadata && (metadata.protocol === "https:" || metadata.protocol === "http:" && loopback(metadata.hostname));
 }
-/** Only the transport/auth flags needed by Pi's project-auth rejection escape validation, never their values. */
-function definition(name: string, value: unknown): "valid" | "http-auth" | undefined {
-  if (!/^[A-Za-z0-9_-]+$/u.test(name) || !record(value) || !common(value) || value.type === "sse") return undefined;
+/** Validate transiently without returning a config copy or raw error message. */
+function definition(name: string, value: unknown): boolean {
+  if (!/^[A-Za-z0-9_-]+$/u.test(name) || !record(value) || !common(value) || value.type === "sse") return false;
   if (typeof value.url === "string" && (value.type === undefined || value.type === "http" || value.type === "streamable-http")) {
     const target = url(value.url);
-    if (!target || !["http:", "https:"].includes(target.protocol) || value.headers !== undefined && !strings(value.headers) || !oauth(value.oauth)) return undefined;
+    if (!target || !["http:", "https:"].includes(target.protocol) || value.headers !== undefined && !strings(value.headers) || !oauth(value.oauth)) return false;
     if (value.auth !== undefined) {
-      if (!record(value.auth) || typeof value.auth.provider !== "string" || !value.auth.provider || target.protocol !== "https:" && !loopback(target.hostname)) return undefined;
-      return "http-auth";
+      if (!record(value.auth) || typeof value.auth.provider !== "string" || !value.auth.provider || target.protocol !== "https:" && !loopback(target.hostname)) return false;
     }
-    return "valid";
+    return true;
   }
   if (typeof value.command === "string" && (value.type === undefined || value.type === "stdio")) {
     if (value.args !== undefined && !(Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string"))
-      || value.env !== undefined && !strings(value.env) || value.cwd !== undefined && typeof value.cwd !== "string") return undefined;
-    return "valid";
+      || value.env !== undefined && !strings(value.env) || value.cwd !== undefined && typeof value.cwd !== "string") return false;
+    return true;
   }
-  return undefined;
+  return false;
 }
 async function readNames(path: string, scope: AllowlistScope, names: Map<string, AllowlistScope>, warnings: Set<McpScopeWarning>): Promise<void> {
   let file: Awaited<ReturnType<typeof open>> | undefined;
@@ -87,7 +86,8 @@ async function readNames(path: string, scope: AllowlistScope, names: Map<string,
         continue;
       }
       const valid = definition(name, value);
-      if (!valid || scope === "project" && valid === "http-auth") { warnings.add(`mcp-${scope}-entry-invalid`); continue; }
+      // Pi applies this project-auth rejection after validation for every transport, including stdio extras.
+      if (!valid || scope === "project" && record(value) && "url" in value && value.auth) { warnings.add(`mcp-${scope}-entry-invalid`); continue; }
       if ([...names.keys()].some((other) => other !== name && serverKey(other) === serverKey(name))) { warnings.add(`mcp-${scope}-name-clash`); continue; }
       names.set(name, scope);
     }
