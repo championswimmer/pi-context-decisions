@@ -16,6 +16,8 @@ export interface AllowlistPickerDeps {
   heading?: string;
   /** Public host-provenance limitations, shown without reading server configs or extension files. */
   scopeNote?: string;
+  /** Short counterpart retained alongside the save location in compact layouts. */
+  compactScopeNote?: string;
   /** Folds raw group entries (`dev-radius`) to canonical keys so saved entries match their rows: applied to `initial`, or to `tree.initialGroups` in the nested editor. */
   normalize?: (name: string) => string;
   /** Nested tool editor: built-in tools first (locked), then collapsible MCP-server and extension groups, then ungrouped tools. */
@@ -234,7 +236,10 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       // Compact too when the full layout would leave a nested list fewer than four rows to show (groups need room to be usable).
       if (headers.length + footer.length + 1 > height || (tree && height - headers.length - footer.length < 5)) {
         footer = height >= 8 ? ["Ctrl+S save · Space toggle · Enter info", "Tab tabs · Ctrl+R rank · Esc close"] : ["Ctrl+S save · Esc close"];
-        headers = [title, `${tabs} · ${selected} · ${Math.min(index + 1, items.length)}/${items.length}`, ...input.render(w), theme.fg("warning", display(state))];
+        const scopeNote = deps.compactScopeNote ?? deps.scopeNote;
+        headers = [title, `${tabs} · ${selected} · ${Math.min(index + 1, items.length)}/${items.length}`, ...input.render(w),
+          ...(scopeNote ? wrapTextWithAnsi(display(scopeNote), w).map((line) => theme.fg("warning", line)) : []),
+          ...wrapTextWithAnsi(`Saved in ${display(deps.locationLabel, 1000)}`, w).slice(0, 2), theme.fg("warning", display(state))];
         // Compact low-priority details before sacrificing search, focus or save.
         while (headers.length + footer.length + 1 > height && headers.length > 1) {
           if (headers.length > 3) headers.pop();

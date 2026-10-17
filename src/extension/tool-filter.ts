@@ -9,7 +9,7 @@
 // - Everything is derived from the active session branch (`context-decisions-tools` custom entries).
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { IncrementalScoreCache, scoreToolAdditions, type ToolAdditionResult } from "../apps/tool-additions.ts";
-import { classifyTools, candidatesFor, canonicalServerKey, serverKey, type ClassifiedTool, type ToolInventory } from "../apps/tool-inventory.ts";
+import { classifyTools, candidatesFor, canonicalServerKey, MCP_NAMESPACE_PREFIX, serverKey, type ClassifiedTool, type ToolInventory } from "../apps/tool-inventory.ts";
 import { availability, baseGrowth, effectiveToolAllowlists, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type Availability, type EffectiveAllowlists } from "../apps/tool-policy.ts";
 import { taskWithoutExpandedSkill, safeCode, type AdditionPick } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
@@ -219,7 +219,10 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       for (const key of growth.groups) { pend.groups.add(key); if (groupAllowlisted(inv, key, allow)) pend.allowlisted.add(key); }
       // Allowlisted servers with no registered tools (resource-only) are recorded by canonical key too, so removing the allowlist entry later
       // does not revoke access that was available on this branch.
-      for (const entry of allow.servers) { const key = canonicalServerKey(entry); if (!ledger.groups.has(key)) { pend.groups.add(key); pend.allowlisted.add(key); } }
+      for (const entry of allow.servers) {
+        const key = canonicalServerKey(entry);
+        if (key.startsWith(MCP_NAMESPACE_PREFIX) && !inv.groups.has(key) && !ledger.groups.has(key)) { pend.groups.add(key); pend.allowlisted.add(key); }
+      }
       ledger = merged(ctx); avail = availability(inv, mode, ledger, allow);
     }
     const active = pi.getActiveTools();
@@ -347,7 +350,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           if (server !== undefined) {
             if (usable(serverKey(server))) return undefined;
             const scope = inv.groups.get(serverKey(server))?.scope;
-            const guidance = scope === "mixed" ? "Allow matching tools in the /decisions Tools tab."
+            const guidance = scope === "mixed" ? mode === "mcp"
+              ? "A whole-server relevance decision must enable this mixed-origin group; individual pins cannot. Ask for a relevant task, or switch to tools mode in /decisions."
+              : "Allow matching tools in the /decisions Tools tab."
               : `Ask the user to add it to ${scope === "project" ? "alwaysAllowedMcpServers (project .pi/pi-context-decisions.json)" : "tools.alwaysAllowedMcpServers (Pi agent settings.json)"}, then /reload.`;
             return { block: true, reason: `MCP resource access to server "${clean(server, 64)}" is unavailable: filtering has not enabled it. ${guidance}`.slice(0, BLOCK_REASON_LIMIT) };
           }

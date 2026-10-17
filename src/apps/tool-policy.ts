@@ -1,5 +1,5 @@
 // Pure availability policy for opt-in tool/MCP filtering. No Pi imports.
-import { canonicalServerKey, sameServer, type ClassifiedTool, type ToolFilterMode, type ToolInventory } from "./tool-inventory.ts";
+import { canonicalServerKey, MCP_NAMESPACE_PREFIX, sameServer, type ClassifiedTool, type ToolFilterMode, type ToolInventory } from "./tool-inventory.ts";
 
 /** What this branch already made available (the additive ledger, plus not-yet-flushed in-memory additions). */
 export interface AvailabilityLedger { tools: ReadonlySet<string>; groups: ReadonlySet<string> }
@@ -14,15 +14,16 @@ export interface Availability {
   isGroupAvailable(key: string): boolean;
 }
 /** Resolve names-only lists against public provenance, never config files or path guesses.
- * Unobservable groups (resource-only/disconnected servers) follow missing-scope skill semantics: global only.
+ * Unobservable MCP groups (resource-only/disconnected servers) follow missing-scope skill semantics: global only.
+ * Absent extensions wait until their scope is observable; a saved name alone grants nothing.
  * Mixed-scope groups cannot safely grant the whole group from either list; use scoped tool names instead.
  */
 export function effectiveToolAllowlists(inventory: ToolInventory, global: EffectiveAllowlists, project: EffectiveAllowlists): EffectiveAllowlists {
   const tools = new Set(inventory.tools.filter((tool) => (tool.scope === "project" ? project : global).tools.has(tool.name)).map((tool) => tool.name));
   const servers = new Set<string>();
   for (const [scope, list] of [["global", global], ["project", project]] as const) for (const entry of list.servers) {
-    const group = inventory.groups.get(canonicalServerKey(entry));
-    if ((group?.scope ?? "global") === scope) servers.add(entry);
+    const key = canonicalServerKey(entry), group = inventory.groups.get(key);
+    if (group ? group.scope === scope : scope === "global" && key.startsWith(MCP_NAMESPACE_PREFIX)) servers.add(entry);
   }
   return { tools, servers };
 }

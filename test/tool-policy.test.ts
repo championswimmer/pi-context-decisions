@@ -127,10 +127,10 @@ test("reconcileActive restores only tools WE withheld that are now available, re
 });
 
 
-test("scoped allowlists resolve tools/groups before policy; unknown group scope is global only", () => {
+test("scoped allowlists resolve tools/groups before policy; unknown MCP scope is global only and absent extension scope grants nothing", () => {
   const inv = classifyTools([ext("global"), { ...ext("project"), sourceInfo: { path: "/x/project.ts", scope: "project" } },
     mcp("global", "q"), { ...mcp("project", "q"), sourceInfo: { scope: "project" } }]);
-  const both = allow(["global", "project"], ["global", "project", "unloaded"]);
+  const both = allow(["global", "project"], ["global", "project", "unloaded", "ext__absent"]);
   const global = effectiveToolAllowlists(inv, both, NO_ALLOWLISTS);
   assert.deepEqual([...global.tools], ["global"]); assert.deepEqual([...global.servers], ["global", "unloaded"]);
   const project = effectiveToolAllowlists(inv, NO_ALLOWLISTS, both);

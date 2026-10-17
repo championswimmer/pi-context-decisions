@@ -287,3 +287,19 @@ test("gate: an obsolete project-allowlist read can never populate the cache afte
   assert.equal(reads, 2, "it was re-read, not served from an obsolete cache");
   assert.match((await h.gate("ext_x"))!.reason, BLOCKED); assert.equal(reads, 2, "and only the fresh read was cached");
 });
+
+test("an unloaded global extension pin waits for observable scope and never grants a late project extension", async (t) => {
+  for (const mode of ["tools", "mcp"] as const) {
+    const h = await toolSetup(t, { tools: { mode, alwaysAllowedMcpServers: ["ext__notes", "resources"] }, extra: resourceTools() });
+    await h.start("first task");
+    assert.equal(readToolLedger(h.sim.session).groups.has("ext__notes"), false, "an absent extension is not a resource-only MCP server");
+    assert.equal(readToolLedger(h.sim.session).groups.has("mcp__resources"), true, "the MCP-only resource exception remains durable");
+    assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, ["ext__notes", "resources"], "the unloaded saved name remains unchanged");
+    h.sim.registerTool(extTool("project_note", "direct", { sourceInfo: { source: "extension", path: "/work/.pi/extensions/notes.ts", scope: "project" } }));
+    assert.equal((await h.gate("project_note"))?.block, true, `${mode}: the late project tool still needs its own pin or decision`);
+    assert.deepEqual(h.scored(), [mode === "mcp" ? "ext__notes" : "project_note"]);
+    await h.start("second task");
+    assert.equal(readToolLedger(h.sim.session).groups.has("ext__notes"), false);
+    assert.ok(!h.active().includes("project_note"));
+  }
+});

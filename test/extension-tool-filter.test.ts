@@ -704,3 +704,26 @@ test("mixed-origin groups keep individual pins scoped in group mode, notice them
   assert.deepEqual(scored.picks, { ext__notes: { score: 2, threshold: 0.375 } });
   assert.ok(!scored.allowlisted?.includes("ext__notes"), "the group was scored, not granted by the individual pin");
 });
+
+test("mixed-origin MCP resource recovery distinguishes individual tools from whole-server decisions", async (t) => {
+  for (const mode of ["tools", "mcp"] as const) {
+    const mixed = (name: string, scope: "user" | "project") => mcpTool("mixed", name, "codemode", { sourceInfo: { source: "sdk", path: "", scope } });
+    const h = await toolSetup(t, { tools: { mode }, extra: [mixed("user", "user"), mixed("project", "project"), ...resourceTools()] });
+    await h.start("first task");
+    const call = await h.gate("read_mcp_resource", READ("mixed"));
+    assert.equal(call?.block, true);
+    assert.ok(call!.reason.length <= 300);
+    if (mode === "tools") assert.match(call!.reason, /Allow matching tools/);
+    else { assert.match(call!.reason, /whole-server relevance decision/); assert.doesNotMatch(call!.reason, /Allow matching tools/); }
+    await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "mcp__mixed__user" });
+    if (mode === "tools") assert.equal(await h.gate("read_mcp_resource", READ("mixed")), undefined, "the advised individual pin really enables resource routing in tools mode");
+    else {
+      const pinned = await h.gate("read_mcp_resource", READ("mixed"));
+      assert.equal(pinned?.block, true, "individual mixed-origin pins do not enable resource routing in group mode");
+      assert.match(pinned!.reason, /whole-server relevance decision/);
+      h.scores.mcp__mixed = 2;
+      await h.start("second task");
+      assert.equal(await h.gate("read_mcp_resource", READ("mixed")), undefined, "the advised qualifying group decision actually enables the resource call");
+    }
+  }
+});
