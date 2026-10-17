@@ -221,6 +221,7 @@ test("R3 real Pi + REAL built-in MCP/codemode: provenance, namespace and exposur
   const info = p.box.pi!.getAllTools().find((tool) => tool.name === "mcp__dev_radius__search")!;
   assert.equal(info.sourceInfo.path, "builtin:mcp", "the real MCP manager's tools carry built-in provenance AND are external MCP tools");
   assert.equal(info.sourceInfo.source, "builtin");
+  assert.equal(info.sourceInfo.scope, "temporary", "builtin MCP does not transfer its server config scope to public tool provenance");
   assert.equal(info.namespace?.name, "mcp__dev_radius", "hyphens fold to underscores in the canonical namespace");
   // HOST FACT (contradicts the plan's assumption): an MCP server configured with the default `codemode` exposure registers its tools with
   // ToolInfo.exposure "deferred" (the tools are only reachable from codemode scripts), and the public ToolNamespace has NO `aliases` field.
@@ -259,10 +260,10 @@ return JSON.stringify(out);`;
   assert.match(result, /MCP server .{1,8}dev_radius.{1,8} is unavailable: pi-context-decisions tool filtering has not enabled it/, "the script sees our block reason (names the server)");
   assert.match(result, /FILE-CONTENTS/, "an internal tool called from the same script still works");
   assert.deepEqual(blockedMcp.calls, [], "the MCP server never received the call");
-  // Allowlisted (project file, with `-`/`_` folding): the same script's nested call goes through and the server runs it.
+  // Allowlisted (global settings, with `-`/`_` folding; builtin MCP has temporary provenance): the same script's nested call goes through and the server runs it.
   const allowedMcp = fakeMcp({ "dev-radius": { tools: ["search"] } });
   const q = probe();
-  const allowed = await realPi(t, run(code), { earlier: [q.extension], builtin: allowedMcp.builtins(), tools: { mode: "mcp" }, project: { alwaysAllowedMcpServers: ["dev_radius"] }, files: { "a.txt": "FILE-CONTENTS" } });
+  const allowed = await realPi(t, run(code), { earlier: [q.extension], builtin: allowedMcp.builtins(), tools: { mode: "mcp", alwaysAllowedMcpServers: ["dev_radius"] }, files: { "a.txt": "FILE-CONTENTS" } });
   await until(() => q.box.pi!.getAllTools().some((tool) => tool.name === "mcp__dev_radius__search"), "the MCP server to connect");
   await allowed.session.prompt("find things");
   assert.match(lastToolText(allowed.requests[1]), /ran dev-radius\/search/);

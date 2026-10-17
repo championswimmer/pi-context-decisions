@@ -1,6 +1,7 @@
 import { EXTENSION_GROUP_PREFIX, canonicalServerKey } from "./tool-inventory.ts";
+import { scopeOf, type AllowlistScope } from "./allowlist-scope.ts";
 /** Always-included advertisements, not a permission/restriction list. */
-export type AllowlistScope = "global" | "project";
+export { scopeOf, type AllowlistScope } from "./allowlist-scope.ts";
 export interface ScopedSkill {
   name: string; description: string; scope: AllowlistScope; disableModelInvocation: boolean;
   /** Display text when the stored name is not the readable form (a canonical group key). Never sent to a decision model. */
@@ -11,7 +12,6 @@ export class AllowlistError extends Error {
   readonly code = "config";
   constructor() { super("Allowlist names must be bounded, nonempty identifiers (at most 1000)"); this.name = "AllowlistError"; }
 }
-export function scopeOf(sourceScope: unknown): AllowlistScope { return sourceScope === "project" ? "project" : "global"; }
 export function isAllowlistName(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 64 && !/[\s\p{Cc}]/u.test(value);
 }

@@ -94,7 +94,7 @@ test("mcp mode: scoring an extension adds ALL its tools (late ones too); a tool 
 const projectFile = async (root: string, body: Record<string, unknown>) => { await mkdir(join(root, ".pi"), { recursive: true }); await writeFile(projectAllowlistPath(root), JSON.stringify({ alwaysAllowed: [], ...body })); };
 
 test("allowlists (global tool, project server): pins are never scored, are recorded as base and survive allowlist removal and failed rounds", async (t) => {
-  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_a"] }, fail: true, extra: [A, B, mcpTool("docs", "s", "codemode"), mcpTool("dev-radius", "q", "codemode")] });
+  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_a"] }, fail: true, extra: [A, B, mcpTool("docs", "s", "codemode", { sourceInfo: { source: "sdk", path: "", scope: "project" } }), mcpTool("dev-radius", "q", "codemode")] });
   await projectFile(h.root, { alwaysAllowedMcpServers: ["docs"] });
   await h.start("task");
   assert.deepEqual(h.scored(), ["ext_b", "mcp__dev_radius__q"], "an allowlisted tool and every tool of an allowlisted server skip scoring");
@@ -490,7 +490,8 @@ test("a failing tool round never disturbs the skill pass, and vice versa", async
 // ---------------------------------------------------------------------------------------------------------------------------------
 /** Recovery text for a server the picker cannot offer (resource-only / disconnected): config keys plus /reload, never the Tool picker. */
 function assertSettingsFileGuidance(reason: string): void {
-  assert.match(reason, /tools\.alwaysAllowedMcpServers/); assert.match(reason, /\.pi\/pi-context-decisions\.json/); assert.match(reason, /\/reload/);
+  assert.match(reason, /tools\.alwaysAllowedMcpServers/); assert.match(reason, /Pi agent settings\.json/); assert.match(reason, /\/reload/);
+  assert.doesNotMatch(reason, /project \.pi/);
   assert.doesNotMatch(reason, /Tool picker/);
 }
 const READ = (server: string) => ({ server, uri: "file:///x" });
@@ -523,7 +524,7 @@ test("resources: unscoped listing is ALWAYS blocked while filtering is on (the c
   for (const name of ["list_mcp_resources", "list_mcp_resource_templates"]) {
     const blocked = await h.gate(name, {});
     assert.match(blocked!.reason, /Listing MCP resources across all servers is unavailable/, name); assert.ok(blocked!.reason.length <= 300);
-    assertSettingsFileGuidance(blocked!.reason);
+    assert.match(blocked!.reason, /pass an available server/);
     assert.equal(await h.gate(name, READ("dev-radius")), undefined, `${name} with an available server`);
     assert.match((await h.gate(name, READ("docs")))!.reason, /unavailable/);
   }
@@ -547,10 +548,10 @@ test("resources: an unknown or resource-only server fails closed unless it is al
   await reload(h, (settings) => { settings.tools.alwaysAllowedMcpServers = ["notes"]; });
   assert.equal(await h.gate("read_mcp_resource", READ("notes")), undefined); assert.equal(await h.gate("list_mcp_resource_templates", READ("notes")), undefined);
   assert.equal(await h.gate("read_mcp_resource", READ("docs")), undefined);
-  // A project allowlist file works the same way.
+  // An unobservable server has missing scope: a project entry cannot grant it.
   const p = await toolSetup(t, { extra: resourceTools() });
   await projectFile(p.root, { alwaysAllowedMcpServers: ["wiki"] }); await p.start("task");
-  assert.equal(await p.gate("read_mcp_resource", READ("wiki")), undefined); assert.match((await p.gate("read_mcp_resource", READ("other")))!.reason, /unavailable/);
+  assert.equal((await p.gate("read_mcp_resource", READ("wiki")))?.block, true); assert.match((await p.gate("read_mcp_resource", READ("other")))!.reason, /unavailable/);
 });
 test("resources: the `server` value never reaches decisions, messages, ledger or status; hostile values are sanitized and bounded in the reason", async (t) => {
   const h = await toolSetup(t, { extra: [...resourceTools(), mcpTool("docs", "s")], scores: { mcp__docs__s: 2 } });
@@ -661,4 +662,68 @@ test("gate: nested (codemode-style) and top-level calls to a codemode tool of an
   assert.equal(await h.gate("mcp__srv__x", {}, { toolCallId: "call-2/1", parentToolCallId: "call-2" }), undefined, "once available, nested calls pass too");
   assert.match((await h.gate("mcp__deferred_srv__y", {}, { toolCallId: "call-2/2", parentToolCallId: "call-2" }))!.reason, BLOCKED);
   assert.deepEqual(h.active(), [...CORE, "codemode"], "codemode-exposed tools are never activated by us; internal codemode is untouched");
+});
+
+test("allowlists grant only the tool's public source scope, in both modes and resource routing", async (t) => {
+  for (const mode of ["tools", "mcp"] as const) {
+    const project = (info: ReturnType<typeof extTool>) => ({ ...info, sourceInfo: { ...info.sourceInfo!, scope: "project" as const } });
+    const h = await toolSetup(t, { tools: { mode, alwaysAllowedTools: ["global_tool", "project_wrong"], alwaysAllowedMcpServers: ["global", "project_wrong"] }, fail: true,
+      extra: [extTool("global_tool"), extTool("global_wrong"), project(extTool("project_tool")), project(extTool("project_wrong")),
+        mcpTool("global", "q", "direct"), mcpTool("global_wrong", "q", "direct"), project(mcpTool("project", "q", "direct")), project(mcpTool("project_wrong", "q", "direct")), ...resourceTools()] });
+    await projectFile(h.root, { alwaysAllowedTools: ["project_tool", "global_wrong"], alwaysAllowedMcpServers: ["project", "global_wrong"] });
+    await h.start("task");
+    for (const name of ["global_tool", "project_tool", "mcp__global__q", "mcp__project__q"]) {
+      assert.ok(h.active().includes(name), `${mode}: ${name}`); assert.equal(await h.gate(name), undefined);
+    }
+    for (const name of ["global_wrong", "project_wrong", "mcp__global_wrong__q", "mcp__project_wrong__q"]) {
+      assert.ok(!h.active().includes(name), `${mode}: wrong scope ${name}`); assert.equal((await h.gate(name))?.block, true);
+    }
+    for (const server of ["global", "project"]) assert.equal(await h.gate("read_mcp_resource", { server, uri: "x" }), undefined);
+    for (const server of ["global_wrong", "project_wrong"]) {
+      const block = await h.gate("read_mcp_resource", { server, uri: "x" });
+      assert.equal(block?.block, true);
+      assert.match(block!.reason, server === "project_wrong" ? /project \.pi\/pi-context-decisions\.json/ : /Pi agent settings\.json/);
+    }
+    await h.command("tools list");
+    assert.match(h.messages.at(-1)!, /project_wrong.*unavailable/);
+  }
+});
+
+test("mixed-origin groups keep individual pins scoped in group mode, notice them by tool name, and score whole-group grants honestly", async (t) => {
+  const mixed = (name: string, scope: "user" | "project") => extTool(name, "codemode", { sourceInfo: { source: "extension", path: `/${scope}/notes.ts`, scope } });
+  const h = await toolSetup(t, { tools: { mode: "mcp", alwaysAllowedTools: ["user_note"] }, extra: [mixed("user_note", "user"), mixed("project_note", "project")] });
+  await h.start("first task");
+  assert.equal(await h.gate("user_note"), undefined);
+  assert.match((await h.gate("project_note"))!.reason, /Tool "project_note".*Always allowed tools/, "a mixed group cannot be pinned in the group editor");
+  assert.deepEqual(h.ledger()[0].tools, ["user_note"]); assert.equal(h.ledger()[0].groups, undefined);
+  assert.match(noticeText(h.notices()[0]), /tools: user_note/); assert.doesNotMatch(noticeText(h.notices()[0]), /extensions: ext__notes/);
+  h.scores.ext__notes = 2;
+  await h.start("second task");
+  assert.equal(await h.gate("project_note"), undefined, "a relevance decision can still grant the whole group");
+  const scored = h.ledger().find((record) => record.groups?.includes("ext__notes"))!;
+  assert.deepEqual(scored.picks, { ext__notes: { score: 2, threshold: 0.375 } });
+  assert.ok(!scored.allowlisted?.includes("ext__notes"), "the group was scored, not granted by the individual pin");
+});
+
+test("mixed-origin MCP resource recovery distinguishes individual tools from whole-server decisions", async (t) => {
+  for (const mode of ["tools", "mcp"] as const) {
+    const mixed = (name: string, scope: "user" | "project") => mcpTool("mixed", name, "codemode", { sourceInfo: { source: "sdk", path: "", scope } });
+    const h = await toolSetup(t, { tools: { mode }, extra: [mixed("user", "user"), mixed("project", "project"), ...resourceTools()] });
+    await h.start("first task");
+    const call = await h.gate("read_mcp_resource", READ("mixed"));
+    assert.equal(call?.block, true);
+    assert.ok(call!.reason.length <= 300);
+    if (mode === "tools") assert.match(call!.reason, /Allow matching tools/);
+    else { assert.match(call!.reason, /whole-server relevance decision/); assert.doesNotMatch(call!.reason, /Allow matching tools/); }
+    await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "mcp__mixed__user" });
+    if (mode === "tools") assert.equal(await h.gate("read_mcp_resource", READ("mixed")), undefined, "the advised individual pin really enables resource routing in tools mode");
+    else {
+      const pinned = await h.gate("read_mcp_resource", READ("mixed"));
+      assert.equal(pinned?.block, true, "individual mixed-origin pins do not enable resource routing in group mode");
+      assert.match(pinned!.reason, /whole-server relevance decision/);
+      h.scores.mcp__mixed = 2;
+      await h.start("second task");
+      assert.equal(await h.gate("read_mcp_resource", READ("mixed")), undefined, "the advised qualifying group decision actually enables the resource call");
+    }
+  }
 });

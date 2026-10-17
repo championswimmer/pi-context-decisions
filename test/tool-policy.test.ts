@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { classifyTools, type ToolInfoLike } from "../src/apps/tool-inventory.ts";
-import { availability, baseGrowth, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type AvailabilityLedger, type EffectiveAllowlists } from "../src/apps/tool-policy.ts";
+import { availability, baseGrowth, effectiveToolAllowlists, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type AvailabilityLedger, type EffectiveAllowlists } from "../src/apps/tool-policy.ts";
 
 const builtin = (name: string): ToolInfoLike => ({ name, exposure: "direct", sourceInfo: { source: "builtin", path: `builtin:${name}` } });
 const ext = (name: string, exposure = "direct"): ToolInfoLike => ({ name, exposure, sourceInfo: { source: "extension", path: `/ext/${name}.ts` } });
@@ -124,4 +124,29 @@ test("reconcileActive restores only tools WE withheld that are now available, re
   assert.deepEqual(restore, ["ext_b"], "ext_a is already active, ext_lazy/mcp__docs__t are not declarable, ghost is unknown, read is internal, mcp__docs__s is still unavailable");
   // Tools never in the withheld set are never activated, even when available.
   assert.deepEqual(reconcileActive(inv, a, ["read"], new Set()).restore, []);
+});
+
+
+test("scoped allowlists resolve tools/groups before policy; unknown MCP scope is global only and absent extension scope grants nothing", () => {
+  const inv = classifyTools([ext("global"), { ...ext("project"), sourceInfo: { path: "/x/project.ts", scope: "project" } },
+    mcp("global", "q"), { ...mcp("project", "q"), sourceInfo: { scope: "project" } }]);
+  const both = allow(["global", "project"], ["global", "project", "unloaded", "ext__absent"]);
+  const global = effectiveToolAllowlists(inv, both, NO_ALLOWLISTS);
+  assert.deepEqual([...global.tools], ["global"]); assert.deepEqual([...global.servers], ["global", "unloaded"]);
+  const project = effectiveToolAllowlists(inv, NO_ALLOWLISTS, both);
+  assert.deepEqual([...project.tools], ["project"]); assert.deepEqual([...project.servers], ["project"]);
+});
+test("same-named mixed-origin groups cannot leak allowlist grants across scopes, including mcp-mode promotion", () => {
+  const mixed = classifyTools(["user", "project"].map((scope) => ({ name: scope, sourceInfo: { scope, path: `/${scope}/notes.ts` } })));
+  for (const mode of ["tools", "mcp"] as const) {
+    const groupsOnly = effectiveToolAllowlists(mixed, allow([], ["ext__notes"]), allow([], ["ext__notes"]));
+    assert.equal(groupsOnly.servers.size, 0, "a group with no single origin is not grantable as a whole");
+    const pins = effectiveToolAllowlists(mixed, allow(["user"]), allow(["user"]));
+    const a = availability(mixed, mode, ledger(), pins);
+    assert.equal(a.isAvailable(mixed.byName.get("user")!), true); assert.equal(a.isAvailable(mixed.byName.get("project")!), false);
+    const growth = baseGrowth(mixed, mode, ledger(), pins, a);
+    assert.deepEqual(growth, { tools: ["user"], groups: [] });
+    const next = availability(mixed, mode, ledger(growth.tools, growth.groups), NO_ALLOWLISTS);
+    assert.equal(next.isAvailable(mixed.byName.get("user")!), true); assert.equal(next.isAvailable(mixed.byName.get("project")!), false, "committing the pin never promotes the opposite origin");
+  }
 });
