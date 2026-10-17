@@ -37,6 +37,8 @@ export class DialogClosedError extends Error { constructor() { super("Settings d
  */
 export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefined, isOpen: () => boolean): CommandContext {
   const hasUI = ctx.hasUI, mode = ctx.mode, cwd = ctx.cwd;
+  let projectTrusted = false;
+  try { projectTrusted = ctx.isProjectTrusted?.() === true; } catch { /* unknown trust is untrusted */ }
   const guard = <T,>(read: () => T): T => { if (!isOpen()) throw new DialogClosedError(); return read(); };
   return Object.defineProperties({} as CommandContext, {
     hasUI: { value: hasUI, enumerable: true }, mode: { value: mode, enumerable: true }, cwd: { value: cwd, enumerable: true },
@@ -44,6 +46,7 @@ export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefin
     modelRegistry: { get: () => guard(() => ctx.modelRegistry), enumerable: true },
     sessionManager: { get: () => guard(() => ctx.sessionManager), enumerable: true },
     signal: { value: signal, enumerable: true },
+    isProjectTrusted: { value: () => projectTrusted, enumerable: true },
   });
 }
 function statusSafely(controller: Controller, ctx: CommandContext): void { try { controller.setStatus(ctx); } catch { /* cosmetic; the dialog may have closed */ } }
@@ -186,7 +189,7 @@ function toolStatusLines(controller: Controller, settings: ReturnType<Controller
   return [
     `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · max ${t.maxAdded} added per round · minimum ${t.minCandidates}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
     `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
-    "Tool allowlists match public sourceInfo.scope: global = user/temporary/unknown, project = project only. No public extension inventory accessor exposes the origin of built-in file-configured MCP servers; their temporary-provenance tools follow the global list.",
+    "Built-in MCP allowlist scope comes from bounded names-only Pi MCP config reads (trusted project definitions override global; settings-only overrides keep global). Extensions use public sourceInfo.scope. Unresolved built-in origins use Global.",
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
   ];
@@ -300,8 +303,8 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
   return {
     scope, skills: items, initial, noun: kind === "mcp" ? "MCP server or extension" : KIND_LABEL[kind] as "skill" | "tool",
     locationLabel: scope === "global" ? "Pi agent dir: pi-context-decisions/settings.json" : projectAllowlistPath(base.cwd!),
-    ...(kind !== "skills" ? { scopeNote: "No public extension inventory accessor exposes the origin of built-in file-configured MCP servers; their tools follow Global.",
-      compactScopeNote: "Built-in MCP origin unknown; uses Global" } : {}),
+    ...(kind !== "skills" ? { scopeNote: "Built-in MCP scope: names-only Pi config reads, honoring project trust. Extensions: public provenance. Unresolved built-in origins use Global.",
+      compactScopeNote: "MCP config scope; unknown uses Global" } : {}),
     ...(kind === "mcp" ? { heading: "Always allowed MCP servers & extensions", normalize: canonicalServerKey } : {}),
     ...(kind === "tools" && report ? { tree: toolTree(report, initialGroups ?? [], scope), normalize: canonicalServerKey } : {}),
     save: kind === "tools" && report ? (names, groups) => saveToolLists(controller, base, scope, names, groups ?? initialGroups ?? []) : (names) => saveNames(controller, base, scope, names, kind),
@@ -425,7 +428,7 @@ function toolListLines(report: ToolReport, which: "tools" | "mcp"): string[] {
     lines.push(`MCP servers and extensions (${report.groups.length}, ${state}); grouped only by Pi's public metadata (mcp__ namespace for servers, sourceInfo for extensions):`);
     for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${group.type === "mcp" ? "MCP" : "extension"} ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.type === "mcp" && !group.verified ? " · not registered by Pi's built-in MCP" : ""}`);
     if (report.groups.length > LIST_LIMIT) lines.push(`  … and ${report.groups.length - LIST_LIMIT} more`);
-    lines.push("Resource-only or disconnected servers with no tools are not observable: the Tools tab cannot add them. Missing scope follows the global list: allowlist by name in tools.alwaysAllowedMcpServers (Pi agent settings.json), not project .pi/pi-context-decisions.json, then /reload.");
+    lines.push("Resource-only or disconnected servers with no tools are not editor candidates: the Tools tab cannot add them. Pin file-configured names in their defining scope (global tools.alwaysAllowedMcpServers or project .pi/pi-context-decisions.json). Unknown origins use Global; then /reload.");
     if (report.ungrouped) lines.push(`${report.ungrouped} extension tools expose no usable provenance: they belong to no group and are never filtered in mcp mode.`);
     return lines;
   }

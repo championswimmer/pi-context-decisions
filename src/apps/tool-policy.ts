@@ -23,7 +23,8 @@ export function effectiveToolAllowlists(inventory: ToolInventory, global: Effect
   const servers = new Set<string>();
   for (const [scope, list] of [["global", global], ["project", project]] as const) for (const entry of list.servers) {
     const key = canonicalServerKey(entry), group = inventory.groups.get(key);
-    if (group ? group.scope === scope : scope === "global" && key.startsWith(MCP_NAMESPACE_PREFIX)) servers.add(entry);
+    const origin = group?.scope ?? (key.startsWith(MCP_NAMESPACE_PREFIX) ? inventory.builtinMcpScopes.get(key) ?? "global" : undefined);
+    if (origin === scope) servers.add(entry);
   }
   return { tools, servers };
 }

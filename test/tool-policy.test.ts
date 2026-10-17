@@ -150,3 +150,11 @@ test("same-named mixed-origin groups cannot leak allowlist grants across scopes,
     assert.equal(next.isAvailable(mixed.byName.get("user")!), true); assert.equal(next.isAvailable(mixed.byName.get("project")!), false, "committing the pin never promotes the opposite origin");
   }
 });
+
+
+test("resource-only MCP allowlists use a known config origin before the Global fallback", () => {
+  const resourceOnly = classifyTools([], new Map([["mcp__project", "project"]]));
+  const both = allow([], ["project", "unknown"]);
+  assert.deepEqual([...effectiveToolAllowlists(resourceOnly, both, NO_ALLOWLISTS).servers], ["unknown"]);
+  assert.deepEqual([...effectiveToolAllowlists(resourceOnly, NO_ALLOWLISTS, both).servers], ["project"]);
+});

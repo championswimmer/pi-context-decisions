@@ -666,7 +666,7 @@ test("gate: nested (codemode-style) and top-level calls to a codemode tool of an
 
 test("allowlists grant only the tool's public source scope, in both modes and resource routing", async (t) => {
   for (const mode of ["tools", "mcp"] as const) {
-    const project = (info: ReturnType<typeof extTool>) => ({ ...info, sourceInfo: { ...info.sourceInfo!, scope: "project" as const } });
+    const project = (info: ReturnType<typeof extTool>) => ({ ...info, sourceInfo: { ...info.sourceInfo!, ...(info.namespace ? { source: "sdk", path: "" } : {}), scope: "project" as const } });
     const h = await toolSetup(t, { tools: { mode, alwaysAllowedTools: ["global_tool", "project_wrong"], alwaysAllowedMcpServers: ["global", "project_wrong"] }, fail: true,
       extra: [extTool("global_tool"), extTool("global_wrong"), project(extTool("project_tool")), project(extTool("project_wrong")),
         mcpTool("global", "q", "direct"), mcpTool("global_wrong", "q", "direct"), project(mcpTool("project", "q", "direct")), project(mcpTool("project_wrong", "q", "direct")), ...resourceTools()] });

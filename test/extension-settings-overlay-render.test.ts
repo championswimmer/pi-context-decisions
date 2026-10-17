@@ -182,8 +182,8 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
   const names = ["note_add", "note_list", "docs_s", "docs_t", "loose_tool"];
   const ops: SettingsDialogOps = { ...fakeOps(), async toolAllowlist(_list, scope) {
     return { scope, noun: "tool", skills: names.map((name) => ({ name, description: `does ${name}`, scope, disableModelInvocation: false })), initial: ["note_add"], locationLabel: "Pi agent dir: pi-context-decisions/settings.json",
-      scopeNote: "No public extension inventory accessor exposes the origin of built-in file-configured MCP servers; their tools follow Global.",
-      compactScopeNote: "Built-in MCP origin unknown; uses Global", async save() {},
+      scopeNote: "Built-in MCP scope: names-only Pi config reads, honoring project trust. Extensions: public provenance. Unresolved built-in origins use Global.",
+      compactScopeNote: "MCP config scope; unknown uses Global", async save() {},
       tree: { internal: [{ name: "read", description: "Read" }], groups: [
         { key: "mcp__docs", label: "docs", type: "mcp", description: "", tools: ["docs_s", "docs_t"] },
         { key: "ext__notes", label: "notes", type: "extension", description: "", tools: ["note_add", "note_list"] }], initialGroups: ["mcp__docs"] } };
@@ -194,7 +194,7 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
   for (let n = 0; n < 40 && !view().some((line) => /Built-in tools/.test(line)); n++) { await new Promise((resolve) => setTimeout(resolve, 2)); s.tui.renderNow(); await s.terminal.flush(); }
   let text = view().join("\n");
   assert.match(text, /Always allowed tools · Global/); assert.match(text, /\[x\] ▸ Built-in tools \(1\)/); assert.match(text, /\[x\] ▸ docs/); assert.match(text, /\[-\] ▸ notes/);
-  assert.match(text, /Built-in MCP origin unknown; uses Global/);
+  assert.match(text, /MCP config scope; unknown uses Global/);
   assert.match(text, /Saved in Pi agent dir:/); assert.match(text, /pi-context-decisions\/settings\.json/);
   assert.ok(text.indexOf("Built-in tools") < text.indexOf("docs") && text.indexOf("docs") < text.indexOf("notes"));
   await send("\x1b[B"); for (let n = 0; n < 2; n++) await send("\x1b[B"); // list focus -> notes header

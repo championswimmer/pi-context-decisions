@@ -175,7 +175,7 @@ test("regression: a LOADED 64-character server name round-trips through both edi
   // A host exposing project provenance makes the server and extension project-only candidates.
   for (const name of ["note_add", `mcp__${full}__q`]) {
     const at = h.sim.registry.findIndex((tool) => tool.name === name), info = h.sim.registry[at];
-    h.sim.registry[at] = { ...info, sourceInfo: { ...info.sourceInfo!, scope: "project" } };
+    h.sim.registry[at] = { ...info, sourceInfo: { ...info.sourceInfo!, ...(info.namespace ? { source: "sdk", path: "" } : {}), scope: "project" } };
   }
   const p = await open(h, "mcp project");
   await p.until(/x{64} \(MCP server\)/);

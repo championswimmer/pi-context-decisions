@@ -17,6 +17,8 @@ export interface CommandContext {
   hasUI: boolean;
   mode: ExtensionContext["mode"];
   cwd?: string;
+  /** Public Pi project-trust decision; absent hosts are treated as untrusted for MCP config reads. */
+  isProjectTrusted?: ExtensionContext["isProjectTrusted"];
   ui: Pick<ExtensionUIContext, "select" | "input" | "notify" | "setStatus"> & Partial<Pick<ExtensionUIContext, "custom">>;
   modelRegistry: ExtensionRegistry;
   signal?: AbortSignal;
@@ -107,6 +109,8 @@ export function selectionLabel(selection: BackendSelection | null): string {
 }
 export interface ExtensionDependencies {
   settingsPath: string;
+  /** Isolated agent directory for SDK hosts/tests; defaults to public getAgentDir() (including its env override). */
+  agentDir?: string;
   env?: Record<string, string | undefined>;
   load?: (path: string) => Promise<SettingsLoadResult>;
   save?: (settings: ContextDecisionsSettings, path: string) => Promise<void>;

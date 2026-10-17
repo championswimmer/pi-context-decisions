@@ -28,7 +28,7 @@ export interface ClassifiedTool {
   name: string;
   description: string;
   kind: ToolKind;
-  /** Only public project provenance is project; user/temporary/missing scope follows the global list, like skills. */
+  /** Built-in MCP uses names-only file origins (unknown -> global); other tools use public scope, like skills. */
   scope: AllowlistScope;
   exposure: ToolExposureLike;
   /** Direct and model-only tools are declared to the model, so `setActiveTools` governs them. */
@@ -59,6 +59,8 @@ export interface ToolInventory {
   groups: Map<string, ToolGroup>;
   /** Registered `hidden` tools: never candidates. */
   hidden: number;
+  /** File-configured built-in MCP origins, including resource-only servers; names/scopes only. */
+  builtinMcpScopes: ReadonlyMap<string, AllowlistScope>;
 }
 export const MCP_NAMESPACE_PREFIX = "mcp__";
 /** Canonical key prefix of an extension group (`ext__<slug of the extension name>`). Pi has no namespace for extensions, so this is ours. */
@@ -164,7 +166,7 @@ export function extensionKey(fullName: string): string | undefined {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "").slice(0, room - HASH_CHARS - 1).replace(/_+$/u, "") || "ext";
   return `${EXTENSION_GROUP_PREFIX}${slug}_${hash}`;
 }
-export function classifyTools(infos: readonly ToolInfoLike[]): ToolInventory {
+export function classifyTools(infos: readonly ToolInfoLike[], builtinMcpScopes: ReadonlyMap<string, AllowlistScope> = new Map()): ToolInventory {
   const tools: ClassifiedTool[] = [];
   const byName = new Map<string, ClassifiedTool>();
   const groups = new Map<string, McpGroup>();
@@ -174,7 +176,8 @@ export function classifyTools(infos: readonly ToolInfoLike[]): ToolInventory {
     const exposure = (EXPOSURES.includes(info.exposure as string) ? info.exposure : "direct") as ToolExposureLike;
     if (exposure === "hidden") { hidden++; continue; }
     const namespace = text(info.namespace?.name);
-    const base = { scope: scopeOf(info.sourceInfo?.scope), name: info.name, description: text(info.description), exposure, declarable: exposure === "direct" || exposure === "model-only" };
+    const builtinMcp = info.sourceInfo?.source === "builtin" && info.sourceInfo.path === BUILTIN_MCP_PATH && namespace.startsWith(MCP_NAMESPACE_PREFIX);
+    const base = { scope: builtinMcp ? builtinMcpScopes.get(namespace) ?? "global" : scopeOf(info.sourceInfo?.scope), name: info.name, description: text(info.description), exposure, declarable: exposure === "direct" || exposure === "model-only" };
     let tool: ClassifiedTool;
     // The MCP namespace check runs FIRST: Pi's built-in MCP extension's server tools carry built-in provenance but are external.
     if (namespace.startsWith(MCP_NAMESPACE_PREFIX) && namespace.length > MCP_NAMESPACE_PREFIX.length) {
@@ -209,7 +212,7 @@ export function classifyTools(infos: readonly ToolInfoLike[]): ToolInventory {
     tools.push(tool);
     byName.set(tool.name, tool);
   }
-  return { tools, byName, groups, hidden };
+  return { tools, byName, groups, hidden, builtinMcpScopes };
 }
 export interface ToolCandidate { name: string; description: string }
 /** Candidate shape: one per external tool (`tools`), or one per MCP namespace (`mcp`). */

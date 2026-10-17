@@ -7,7 +7,8 @@
 //   discoverable) whether or not they are active. It is NOT a sandbox: `bash`, discovery listings, the `mcp_servers`
 //   prompt section and `tool_search` results are unaffected.
 // - Everything is derived from the active session branch (`context-decisions-tools` custom entries).
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readMcpConfigScopes } from "../host/mcp-config-scopes.ts";
 import { IncrementalScoreCache, scoreToolAdditions, type ToolAdditionResult } from "../apps/tool-additions.ts";
 import { classifyTools, candidatesFor, canonicalServerKey, MCP_NAMESPACE_PREFIX, serverKey, type ClassifiedTool, type ToolInventory } from "../apps/tool-inventory.ts";
 import { availability, baseGrowth, effectiveToolAllowlists, NO_ALLOWLISTS, reconcileActive, remaining, serverAllowlisted, type Availability, type EffectiveAllowlists } from "../apps/tool-policy.ts";
@@ -23,6 +24,8 @@ import { TOOLS_LEDGER_ENTRY, buildToolNotice, readToolLedger, toolRecords, type 
 
 export interface ToolFilterDeps {
   pi: ExtensionHost;
+  agentDir?: string;
+  report(ctx: CommandContext, message: string): void;
   ensureLoaded(): Promise<void>;
   getSettings(): ContextDecisionsSettings;
   getSettingsError(): string | undefined;
@@ -103,7 +106,24 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   };
   /** Last provenance-classified registry read; the gate falls back to it when `getAllTools` fails (the registry is global, not per branch). */
   let snapshot: ToolInventory | undefined;
-  const classify = (): ToolInventory => { const inv = classifyTools(pi.getAllTools!()); snapshot = inv; return inv; };
+  const scopeWarnings = new Set<string>();
+  const classify = async (ctx: Pick<CommandContext, "cwd" | "isProjectTrusted">): Promise<ToolInventory> => {
+    const generation = deps.generation();
+    let projectTrusted = false;
+    try { projectTrusted = ctx.isProjectTrusted?.() === true; } catch { /* unavailable trust never admits project config */ }
+    const read = await readMcpConfigScopes({ agentDir: deps.agentDir ?? getAgentDir(), cwd: ctx.cwd, projectTrusted });
+    const inv = classifyTools(pi.getAllTools!(), read.scopes);
+    if (generation === deps.generation()) {
+      snapshot = inv;
+      for (const warning of read.warnings) {
+        const key = JSON.stringify([ctx.cwd, warning]);
+        if (scopeWarnings.has(key)) continue;
+        scopeWarnings.add(key);
+        try { deps.report(ctx as CommandContext, `MCP config scope warning (${warning}); unresolved built-in server origins use Global.`); } catch { /* closed UI; no config values escape */ }
+      }
+    }
+    return inv;
+  };
   /**
    * What ONE pass added to the shared pending overlay, so a superseded pass can take back exactly its own additions and nothing else:
    * never other passes' pending names, and never anything on a different branch (a reset replaces the overlay; deleting from the old
@@ -324,11 +344,12 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         if (state === "off" || !supported()) return undefined;
         let inv: ToolInventory;
         let degraded = false;
-        try { inv = classify(); }
+        try { inv = await classify(ctx); }
         catch {
           if (!snapshot) return unverified();
           inv = snapshot; degraded = true;
         }
+        if (generation !== deps.generation()) return STALE;
         const tool = inv.byName.get(event.toolName);
         if (!tool) return degraded ? unverified() : undefined; // a live registry that does not know it: Pi cannot run it
         const allow = await allowlists(ctx, settings, false, inv);
@@ -349,7 +370,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
           };
           if (server !== undefined) {
             if (usable(serverKey(server))) return undefined;
-            const scope = inv.groups.get(serverKey(server))?.scope;
+            const scope = inv.groups.get(serverKey(server))?.scope ?? inv.builtinMcpScopes.get(serverKey(server));
             const guidance = scope === "mixed" ? mode === "mcp"
               ? "A whole-server relevance decision must enable this mixed-origin group; individual pins cannot. Ask for a relevant task, or switch to tools mode in /decisions."
               : "Allow matching tools in the /decisions Tools tab."
@@ -391,7 +412,10 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
             }
             await inflight.promise;
             if (generation !== deps.generation()) return STALE;
-            c = view(classify(), settings, merged(ctx), allow);
+            const latest = await classify(ctx);
+            const latestAllow = await allowlists(ctx, settings, false, latest);
+            if (generation !== deps.generation()) return STALE;
+            c = view(latest, settings, merged(ctx), latestAllow);
             if (c.avail.isAvailable(c.inv.byName.get(tool.name) ?? tool)) { deps.changed(ctx); return undefined; }
           }
         }
@@ -433,7 +457,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const stale = () => generation !== deps.generation();
       try {
         const signal = joinSignal(ctx, operation);
-        const inv = classify();
+        const inv = await classify(ctx);
         const allow = await allowlists(ctx, settings, true, inv);
         if (stale()) { j.undo(); return undefined; }
         /**
@@ -514,7 +538,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         // the next prompt. A branch that never had filtering is left completely untouched (zero footprint).
         if (!ledger0.present) return undefined;
         const generation = deps.generation();
-        const inv = classify();
+        const inv = await classify(ctx);
         if (generation !== deps.generation()) return undefined;
         for (const tool of inv.tools) if (tool.kind !== "internal") pend.tools.add(tool.name);
         for (const key of inv.groups.keys()) pend.groups.add(key);
@@ -533,7 +557,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const stale = () => generation !== deps.generation();
       try {
         const signal = joinSignal(ctx, operation);
-        const inv = classify();
+        const inv = await classify(ctx);
         const allow = await allowlists(ctx, settings, false, inv);
         if (stale()) { j.undo(); return undefined; }
         const reconcileOnly = () => {
@@ -585,7 +609,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       if (activeState === "off" || !supported()) return;
       for (const data of toRecords(flushRecord(), readLedger(ctx))) pi.appendEntry(TOOLS_LEDGER_ENTRY, data);
     },
-    reset() { cacheEpoch++; pend = fresh(); runTask = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear(); },
+    reset() { scopeWarnings.clear(); cacheEpoch++; pend = fresh(); runTask = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear(); },
     invalidate() { cacheEpoch++; projectCache = undefined; failedKey = undefined; last = undefined; inflight = undefined; cache.clear(); },
     last: () => last ? structuredClone(last) : undefined,
     status() {
@@ -608,7 +632,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       for (const name of pend.tools) ledger.tools.add(name);
       for (const key of pend.groups) ledger.groups.add(key);
       const state = stateOf(settings, deps.getSettingsError(), ledger);
-      const inv = classify();
+      const inv = await classify(ctx);
       let project = { tools: [] as string[], servers: [] as string[] };
       if (ctx.cwd) { const loaded = await deps.loadProjectAllowlist(ctx.cwd); project = { tools: loaded.tools, servers: loaded.mcpServers }; }
       const allow: EffectiveAllowlists = state === "off" ? NO_ALLOWLISTS : effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: new Set(settings.tools.alwaysAllowedMcpServers) },

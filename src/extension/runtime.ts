@@ -51,7 +51,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let toolsStatusShown = false;
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const toolFilter = createToolFilter({
-    pi, ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
+    pi, agentDir: deps.agentDir, report: (ctx, message) => controller.report(ctx, message, "warning"), ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
     beginOperation: () => controller.beginOperation(),
     resolveClient: (ctx, current, responses) => resolveClient(ctx, current, responses, "tools"),
     loadProjectAllowlist: (cwd) => controller.loadProjectAllowlist(cwd), sumUsage,
