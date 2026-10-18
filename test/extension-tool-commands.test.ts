@@ -39,21 +39,22 @@ test("tool settings: mode, cadence and scalars validate through the same strict 
 // Tools with no usable provenance belong to no group, so the editor saves them by name.
 const ungrouped = (name: string): SimToolInfo => ({ name, description: `Does ${name}`, exposure: "direct" });
 test("allowlist editors: tool, MCP server and skill lists persist per scope, keep each other, and are names-only", async (t) => {
-  const h = await toolSetup(t, { tools: { enabled: false }, extra: [ungrouped("alpha"), ungrouped("zeta"), mcpTool("dev-radius", "q", "direct")] });
+  const h = await toolSetup(t, { tools: { enabled: false }, extra: [ungrouped("alpha"), ungrouped("zeta"), { ...ungrouped("project_alpha"), sourceInfo: { source: "sdk", path: "", scope: "project" } }, mcpTool("dev-radius", "q", "direct"), mcpTool("project-server", "q", "direct", { sourceInfo: { source: "sdk", path: "", scope: "project" } })] });
   await saveProjectAllowlist(h.root, { skills: ["skill-one"] });
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "zeta" });
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "alpha" });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["alpha", "zeta"]);
   await h.allowlist({ tab: "tools", row: "Always allowed tools · Global", toggle: "alpha" });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"], "toggling removes");
-  await h.allowlist({ tab: "tools", row: "Always allowed tools · Project", toggle: "alpha" });
-  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Project", toggle: "dev-radius" });
-  assert.deepEqual(await loadProjectAllowlist(h.root), { names: ["skill-one"], tools: ["alpha"], mcpServers: ["mcp__dev_radius"], warnings: [] });
+  await h.allowlist({ tab: "tools", row: "Always allowed tools · Project", toggle: "project_alpha" });
+  await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Project", toggle: "project-server" });
+  assert.deepEqual(await loadProjectAllowlist(h.root), { names: ["skill-one"], tools: ["project_alpha"], mcpServers: ["mcp__project_server"], warnings: [] });
   const file = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8"));
-  assert.deepEqual(file, { alwaysAllowed: ["skill-one"], alwaysAllowedTools: ["alpha"], alwaysAllowedMcpServers: ["mcp__dev_radius"] });
+  assert.deepEqual(file, { alwaysAllowed: ["skill-one"], alwaysAllowedTools: ["project_alpha"], alwaysAllowedMcpServers: ["mcp__project_server"] });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedTools, ["zeta"], "project saves leave the global list alone");
   await h.allowlist({ tab: "tools", row: "Always allowed MCP servers & extensions · Global", toggle: "dev-radius" });
   assert.deepEqual((await saved(h)).tools.alwaysAllowedMcpServers, ["mcp__dev_radius"], "groups are saved by their canonical key");
+  assert.deepEqual(JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8")), file, "global saves never touch the project file");
 });
 test("tools list and mcp list are local, names-only and make no decision calls; tool and server counts are honest", async (t) => {
   const h = await toolSetup(t, { extra: [extTool("ext_a"), mcpTool("dev-radius", "q", "codemode"), mcpTool("docs", "s", "direct"), { name: "hid", exposure: "hidden" }, ...resourceTools()], scores: { ext_a: 2 } });

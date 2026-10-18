@@ -181,7 +181,9 @@ test("real renderer: the selected tab has a real cell background (not brackets) 
 test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP and extension groups, tri-state headers) stays inside the overlay bounds", async () => {
   const names = ["note_add", "note_list", "docs_s", "docs_t", "loose_tool"];
   const ops: SettingsDialogOps = { ...fakeOps(), async toolAllowlist(_list, scope) {
-    return { scope, noun: "tool", skills: names.map((name) => ({ name, description: `does ${name}`, scope, disableModelInvocation: false })), initial: ["note_add"], locationLabel: "x", async save() {},
+    return { scope, noun: "tool", skills: names.map((name) => ({ name, description: `does ${name}`, scope, disableModelInvocation: false })), initial: ["note_add"], locationLabel: "Pi agent dir: pi-context-decisions/settings.json",
+      scopeNote: "Built-in MCP scope: session-start config capture, honoring project trust; disk edits require /reload. Extensions: public provenance. Unresolved origins use Global.",
+      compactScopeNote: "MCP session scope; /reload config edits", async save() {},
       tree: { internal: [{ name: "read", description: "Read" }], groups: [
         { key: "mcp__docs", label: "docs", type: "mcp", description: "", tools: ["docs_s", "docs_t"] },
         { key: "ext__notes", label: "notes", type: "extension", description: "", tools: ["note_add", "note_list"] }], initialGroups: ["mcp__docs"] } };
@@ -192,6 +194,8 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
   for (let n = 0; n < 40 && !view().some((line) => /Built-in tools/.test(line)); n++) { await new Promise((resolve) => setTimeout(resolve, 2)); s.tui.renderNow(); await s.terminal.flush(); }
   let text = view().join("\n");
   assert.match(text, /Always allowed tools · Global/); assert.match(text, /\[x\] ▸ Built-in tools \(1\)/); assert.match(text, /\[x\] ▸ docs/); assert.match(text, /\[-\] ▸ notes/);
+  assert.match(text, /MCP session scope; \/reload config edits/);
+  assert.match(text, /Saved in Pi agent dir:/); assert.match(text, /pi-context-decisions\/settings\.json/);
   assert.ok(text.indexOf("Built-in tools") < text.indexOf("docs") && text.indexOf("docs") < text.indexOf("notes"));
   await send("\x1b[B"); for (let n = 0; n < 2; n++) await send("\x1b[B"); // list focus -> notes header
   await send("\r");

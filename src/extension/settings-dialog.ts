@@ -288,10 +288,10 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       const projectValue = (n: number | undefined) => !snap.hasCwd ? "n/a" : project.loading ? "…" : `${n ?? "?"}${project.warning ? " ⚠" : ""}`;
       const noCwd = snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." };
       const lists: { label: string; value: string; description: string; list: Exclude<AllowlistKind, "skills">; scope: AllowlistScope }[] = [
-        { label: "Always allowed tools · Global", value: String(settings.tools.alwaysAllowedTools.length), description: "External tools always available in every project, never scored; tick a server or extension to allow all its tools. Applies in both modes.", list: "tools", scope: "global" },
-        { label: "Always allowed tools · Project", value: projectValue(project.tools), description: project.warning ?? "External tools (or whole servers/extensions) always available for this working directory only.", list: "tools", scope: "project" },
-        { label: "Always allowed MCP servers & extensions · Global", value: String(settings.tools.alwaysAllowedMcpServers.length), description: "MCP servers and extensions always available in every project (all their tools together), never scored. Applies in both modes.", list: "mcp", scope: "global" },
-        { label: "Always allowed MCP servers & extensions · Project", value: projectValue(project.mcpServers), description: project.warning ?? "MCP servers and extensions always available for this working directory only.", list: "mcp", scope: "project" },
+        { label: "Always allowed tools · Global", value: String(settings.tools.alwaysAllowedTools.length), description: "Global-source tools only (user/temporary/unknown), always available across projects; tick a group to allow its tools.", list: "tools", scope: "global" },
+        { label: "Always allowed tools · Project", value: projectValue(project.tools), description: project.warning ?? "Project-source tools (or whole servers/extensions) only, always available in this working directory.", list: "tools", scope: "project" },
+        { label: "Always allowed MCP servers & extensions · Global", value: String(settings.tools.alwaysAllowedMcpServers.length), description: "Global-source MCP servers and extensions only, always available across projects; scope comes from public tool provenance.", list: "mcp", scope: "global" },
+        { label: "Always allowed MCP servers & extensions · Project", value: projectValue(project.mcpServers), description: project.warning ?? "Project-source MCP servers and extensions only, always available in this working directory.", list: "mcp", scope: "project" },
       ];
       return [
         ...fields(TOOL_FIELDS),

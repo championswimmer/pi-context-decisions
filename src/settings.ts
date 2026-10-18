@@ -43,8 +43,9 @@ export interface ToolFilterSettings {
   /** New tools (or whole servers/extensions in group mode) per round; not a skill cap. */
   maxAdded: number;
   minCandidates: number;
+  /** Global-source tools only (public user/temporary/missing scope); project-source pins live in the project file. */
   alwaysAllowedTools: string[];
-  /** MCP names/namespace keys and canonical extension keys; retains its original setting name. */
+  /** Global-source MCP names/namespace keys and canonical extension keys; retains its original setting name. */
   alwaysAllowedMcpServers: string[];
 }
 export interface ContextDecisionsSettings {

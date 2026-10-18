@@ -1,6 +1,6 @@
 // Offline fixture for tool/MCP filtering tests: the sim host, a scripted decision client, and a Pi-shaped tool inventory.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BeforeAgentStartEvent } from "@earendil-works/pi-coding-agent";
@@ -33,7 +33,8 @@ export interface ToolOptions {
 }
 export async function toolSetup(t: { after(fn: () => Promise<void>): void }, options: ToolOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), "tool-filter-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const path = join(root, "settings.json");
+  const path = join(root, "settings.json"), agentDir = join(root, "agent");
+  await mkdir(agentDir); await writeFile(join(agentDir, "mcp.json"), "{}");
   const base = defaultSettings();
   const settings: ContextDecisionsSettings = { ...base, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, ...options.settings,
     decision: { ...base.decision, ...options.settings?.decision, ...options.decision }, relevance: { ...base.relevance, enabled: options.skills === true, minCandidates: 0, ...options.settings?.relevance },
@@ -45,7 +46,7 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
   const requests: DecisionRequest[] = [];
   const messages: string[] = [];
   const scores = { ...options.scores };
-  registerContextDecisions(sim.pi, { settingsPath: path, env: {}, report(_ctx, message) { messages.push(message); }, ...(options.loadProjectAllowlist ? { loadProjectAllowlist: options.loadProjectAllowlist } : {}),
+  registerContextDecisions(sim.pi, { settingsPath: path, agentDir, env: {}, report(_ctx, message) { messages.push(message); }, ...(options.loadProjectAllowlist ? { loadProjectAllowlist: options.loadProjectAllowlist } : {}),
     createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide(request) {
       requests.push(request);
       behavior.inflight++; behavior.peak = Math.max(behavior.peak, behavior.inflight);
@@ -65,7 +66,7 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
   const event = (prompt: string, extra: Record<string, unknown> = {}) => ({ type: "before_agent_start", prompt, systemPrompt: "unchanged",
     systemPromptOptions: { cwd: root, skills: [...skillList], selectedTools: ["read", "bash"], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] }, ...extra } as unknown as BeforeAgentStartEvent);
   const h = {
-    sim, ctx, root, path, requests, messages, scores, behavior, settings, skillList,
+    sim, ctx, root, path, agentDir, requests, messages, scores, behavior, settings, skillList,
     event,
     async start(prompt: string, extra: Record<string, unknown> = {}) { const e = event(prompt, extra); const results = await sim.emit("before_agent_start", e, ctx); return { e, results }; },
     end: (options: Parameters<typeof turnEnd>[2] = {}) => turnEnd(sim, ctx, options),

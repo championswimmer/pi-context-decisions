@@ -10,10 +10,14 @@ export interface AllowlistPickerDeps {
   locationLabel: string;
   /** `groups` is passed only by the nested tool editor (`tree`): the canonical group keys (MCP servers and extensions) edited together with `names`. */
   save(names: string[], groups?: string[]): Promise<void>;
-  /** What the list holds; drives labels and messages. Defaults to `skill`. Tool and group items are passed with `scope` set to this list's scope. */
+  /** What the list holds; drives labels and messages. Defaults to `skill`. Items retain their public provenance scope. */
   noun?: "skill" | "tool" | "MCP server" | "MCP server or extension";
   /** Title override (for example "Always allowed MCP servers & extensions"). */
   heading?: string;
+  /** Public host-provenance limitations, shown without reading server configs or extension files. */
+  scopeNote?: string;
+  /** Short counterpart retained alongside the save location in compact layouts. */
+  compactScopeNote?: string;
   /** Folds raw group entries (`dev-radius`) to canonical keys so saved entries match their rows: applied to `initial`, or to `tree.initialGroups` in the nested editor. */
   normalize?: (name: string) => string;
   /** Nested tool editor: built-in tools first (locked), then collapsible MCP-server and extension groups, then ungrouped tools. */
@@ -59,7 +63,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
   const rows: Row[] = skills.map(({ name, description, label }) => ({ name, label: label ?? name, description, loaded: true }));
   // In the nested editor `initial` is the TOOL list (names kept as saved); `normalize` folds only the group entries.
   const initial = [...new Set(deps.initial.map((name) => tree ? name : fold(name)))];
-  for (const name of initial) if (!names.has(name)) { names.add(name); rows.push({ name, label: name, description: "Not currently loaded; removing it does not affect other saved names.", loaded: false }); }
+  for (const name of initial) if (!names.has(name)) { names.add(name); rows.push({ name, label: name, description: "Not loaded in this scope; removing it does not affect other saved names.", loaded: false }); }
   rows.sort((a, b) => compare(a.label, b.label) || compare(a.name, b.name));
   const draft = new Set(initial);
   let savedNames = new Set(draft);
@@ -150,7 +154,7 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       out.push({ kind: "group", key: group.key, label: group.label, description: `${group.type === "mcp" ? "MCP server" : "Extension"} · ${group.tools.length} tools${group.description ? ` · ${group.description}` : ""}`, loaded: true, depth: 0 });
       if (query || open.has(group.key)) for (const row of mode === "relevance" ? bySearch(children) : visible) out.push(toEntry(row, 1, group.key));
     }
-    for (const key of unloadedGroups) if (search(display(key))) out.push({ kind: "group", key, label: key, description: "Not currently loaded; removing it does not affect other saved names.", loaded: false, depth: 0 });
+    for (const key of unloadedGroups) if (search(display(key))) out.push({ kind: "group", key, label: key, description: "Not loaded in this scope; removing it does not affect other saved names.", loaded: false, depth: 0 });
     for (const row of bySearch(rows.filter((candidate) => !groupOf.has(candidate.name)))) out.push(toEntry(row, 0));
     return out;
   };
@@ -210,8 +214,9 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       const state = message ?? (mode === "relevance" && rankedQuery !== undefined && rankedQuery !== input.getValue().trim()
         ? "stale — Ctrl+R to re-rank" : deps.unavailable ?? deps.rankLabel ?? "Ranking unavailable");
       let headers = [title,
-        deps.scope === "global" ? "Global: applies to all projects" : "Project: applies to this working directory only",
+        deps.scope === "global" ? "Global: user/temporary/unknown origins; applies across projects" : "Project: project origins only; applies to this working directory",
         `Saved in ${display(deps.locationLabel, 1000)}`,
+        ...(deps.scopeNote ? wrapTextWithAnsi(display(deps.scopeNote), w) : []),
         tabs,
         `${selected} · ${items.length} results · always included, not a restriction list`,
         ...wrapTextWithAnsi(display(deps.rankLabel ?? deps.unavailable ?? "Ranking unavailable"), w).slice(0, 6),
@@ -231,7 +236,10 @@ export function createAllowlistComponent(tui: { requestRender(): void; terminal?
       // Compact too when the full layout would leave a nested list fewer than four rows to show (groups need room to be usable).
       if (headers.length + footer.length + 1 > height || (tree && height - headers.length - footer.length < 5)) {
         footer = height >= 8 ? ["Ctrl+S save · Space toggle · Enter info", "Tab tabs · Ctrl+R rank · Esc close"] : ["Ctrl+S save · Esc close"];
-        headers = [title, `${tabs} · ${selected} · ${Math.min(index + 1, items.length)}/${items.length}`, ...input.render(w), theme.fg("warning", display(state))];
+        const scopeNote = deps.compactScopeNote ?? deps.scopeNote;
+        headers = [title, `${tabs} · ${selected} · ${Math.min(index + 1, items.length)}/${items.length}`, ...input.render(w),
+          ...(scopeNote ? wrapTextWithAnsi(display(scopeNote), w).map((line) => theme.fg("warning", line)) : []),
+          ...wrapTextWithAnsi(`Saved in ${display(deps.locationLabel, 1000)}`, w).slice(0, 2), theme.fg("warning", display(state))];
         // Compact low-priority details before sacrificing search, focus or save.
         while (headers.length + footer.length + 1 > height && headers.length > 1) {
           if (headers.length > 3) headers.pop();

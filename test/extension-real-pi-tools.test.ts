@@ -39,6 +39,11 @@ interface Options {
   defaultTools?: string[];
   files?: Record<string, string>;
   project?: Record<string, unknown>;
+  mcpGlobal?: Record<string, unknown>;
+  mcpProject?: Record<string, unknown>;
+  projectTrusted?: boolean;
+  /** Pi reload emits session_start only with a retained UI/actions/error-listener binding. */
+  reloadable?: boolean;
 }
 async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: Awaited<ReturnType<typeof realPi>>) => Parameters<ReturnType<typeof createFauxCore>["setResponses"]>[0], options: Options = {}) {
   const root = await mkdtemp(join(tmpdir(), "real-pi-tools-")); t.after(() => rm(root, { recursive: true, force: true }));
@@ -47,6 +52,8 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
   t.after(async () => { if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; });
   for (const [name, text] of Object.entries(options.files ?? {})) await writeFile(join(root, name), text);
   if (options.project) { await mkdir(join(root, ".pi"), { recursive: true }); await writeFile(join(root, ".pi", "pi-context-decisions.json"), JSON.stringify({ alwaysAllowed: [], ...options.project })); }
+  if (options.mcpGlobal) await writeFile(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: options.mcpGlobal }));
+  if (options.mcpProject) { await mkdir(join(root, ".pi"), { recursive: true }); await writeFile(join(root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: options.mcpProject })); }
   const settingsPath = join(root, "settings.json");
   const base = defaultSettings();
   await saveSettings({ ...base, backend: { backend: "typesafe", model: "jev-latest" }, relevance: { ...base.relevance, enabled: false },
@@ -63,15 +70,15 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
       decisions.push({ task: String(request.state.task), names: Object.values(metadata).map((entry) => entry.name), raw: JSON.stringify(request) });
       return { answers: Object.fromEntries(Object.entries(metadata).map(([id, entry]) => [id, { type: "score", score: scores[entry.name] ?? 0 }])) };
     } }) });
-  const loader = new DefaultResourceLoader({ cwd: root, agentDir, noSkills: true,
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } } as never, { projectTrusted: options.projectTrusted ?? true });
+  const loader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager, noSkills: true,
     extensionFactories: [...(options.earlier ?? []), ours, ...(options.later ?? []), ...(options.builtin ?? [])] });
   await loader.reload();
   const sessionManager = SessionManager.inMemory(root);
-  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } } as never);
   if (options.defaultTools) settingsManager.applyOverrides({ defaultTools: options.defaultTools } as never);
   const created = await createAgentSession({ settingsManager, resourceLoader: loader, sessionManager, model: runtime.getModel("fauxprov", "faux-1")!, modelRuntime: runtime, cwd: root } as never);
   t.after(async () => created.session.dispose());
-  await created.session.bindExtensions({});
+  await created.session.bindExtensions(options.reloadable ? { onError() {} } : {});
   const requests: Request[] = [];
   const h = { session: created.session as AgentSession, faux, scores, decisions, requests, sessionManager, root,
     /** A faux step: records the declared tool set of the request, then answers. */
@@ -171,10 +178,12 @@ test("R2c real Pi: a session with NO external tool at the first prompt still fil
  * Real Pi built-in extensions, loaded like the CLI loads them: builtin-flagged inputs get `builtin:<name>` provenance. The MCP server is an
  * in-memory JSON-RPC peer on pi-mcp's own `testing` transport (already installed as a dependency of pi-coding-agent): no process, no network.
  */
-function fakeMcp(servers: Record<string, { tools: string[]; exposure?: "codemode" | "direct" | "deferred"; resources?: boolean; connectDelayMs?: number }>) {
+function fakeMcp(servers: Record<string, { tools: string[]; exposure?: "codemode" | "direct" | "deferred"; resources?: boolean; connectDelayMs?: number }>, fileConfig = false) {
   const calls: { server: string; tool: string }[] = [];
   const entries = Object.entries(servers).map(([name, config]) => ({ name, config: { command: "fake", exposure: config.exposure ?? "codemode" }, source: "fixture", scope: "global" as const }));
-  const createTransport = (entry: { name: string }) => {
+  const origins = new Map<string, string | undefined>();
+  const createTransport = (entry: { name: string; scope?: string }) => {
+    origins.set(entry.name, entry.scope);
     const { client, server } = createInMemoryTransportPair();
     const spec = servers[entry.name];
     void server.start().then(() => server.onMessage((message) => {
@@ -195,9 +204,9 @@ function fakeMcp(servers: Record<string, { tools: string[]; exposure?: "codemode
   const builtins = (): InlineExtension[] => [
     { name: "codemode", factory: createCodemodeExtension({ mode: "on" }), builtin: true, replaceable: true },
     { name: "tool-search", factory: createToolSearchExtension(), builtin: true, replaceable: true },
-    { name: "mcp", factory: createMcpExtension({ loadConfig: () => ({ servers: entries as never, errors: [] }), createTransport: createTransport as never, startupWaitMs: 50, logPath: join(tmpdir(), "pi-ctx-tools-mcp.log") }), builtin: true, replaceable: true },
+    { name: "mcp", factory: createMcpExtension({ ...(fileConfig ? {} : { loadConfig: () => ({ servers: entries as never, errors: [] }) }), createTransport: createTransport as never, startupWaitMs: 50, logPath: join(tmpdir(), "pi-ctx-tools-mcp.log") }), builtin: true, replaceable: true },
   ];
-  return { calls, builtins };
+  return { calls, builtins, origins };
 }
 /** Captures `pi` so a test can read the live registry (`getAllTools`) while a session runs. */
 function probe() {
@@ -221,6 +230,7 @@ test("R3 real Pi + REAL built-in MCP/codemode: provenance, namespace and exposur
   const info = p.box.pi!.getAllTools().find((tool) => tool.name === "mcp__dev_radius__search")!;
   assert.equal(info.sourceInfo.path, "builtin:mcp", "the real MCP manager's tools carry built-in provenance AND are external MCP tools");
   assert.equal(info.sourceInfo.source, "builtin");
+  assert.equal(info.sourceInfo.scope, "temporary", "builtin MCP does not transfer its server config scope to public tool provenance");
   assert.equal(info.namespace?.name, "mcp__dev_radius", "hyphens fold to underscores in the canonical namespace");
   // HOST FACT (contradicts the plan's assumption): an MCP server configured with the default `codemode` exposure registers its tools with
   // ToolInfo.exposure "deferred" (the tools are only reachable from codemode scripts), and the public ToolNamespace has NO `aliases` field.
@@ -259,10 +269,10 @@ return JSON.stringify(out);`;
   assert.match(result, /MCP server .{1,8}dev_radius.{1,8} is unavailable: pi-context-decisions tool filtering has not enabled it/, "the script sees our block reason (names the server)");
   assert.match(result, /FILE-CONTENTS/, "an internal tool called from the same script still works");
   assert.deepEqual(blockedMcp.calls, [], "the MCP server never received the call");
-  // Allowlisted (project file, with `-`/`_` folding): the same script's nested call goes through and the server runs it.
+  // Allowlisted (global settings, with `-`/`_` folding; builtin MCP has temporary provenance): the same script's nested call goes through and the server runs it.
   const allowedMcp = fakeMcp({ "dev-radius": { tools: ["search"] } });
   const q = probe();
-  const allowed = await realPi(t, run(code), { earlier: [q.extension], builtin: allowedMcp.builtins(), tools: { mode: "mcp" }, project: { alwaysAllowedMcpServers: ["dev_radius"] }, files: { "a.txt": "FILE-CONTENTS" } });
+  const allowed = await realPi(t, run(code), { earlier: [q.extension], builtin: allowedMcp.builtins(), tools: { mode: "mcp", alwaysAllowedMcpServers: ["dev_radius"] }, files: { "a.txt": "FILE-CONTENTS" } });
   await until(() => q.box.pi!.getAllTools().some((tool) => tool.name === "mcp__dev_radius__search"), "the MCP server to connect");
   await allowed.session.prompt("find things");
   assert.match(lastToolText(allowed.requests[1]), /ran dev-radius\/search/);
@@ -356,4 +366,46 @@ test("SDK embedding (host fact): codemode added as a PLAIN factory has inline pr
   const kept = await realPi(t, (h) => [finish(h)], { later: [createCodemodeExtension({ mode: "on" })], defaultTools: ["+codemode"], tools: { alwaysAllowedTools: ["codemode"] } });
   await kept.session.prompt("task");
   assert.ok(kept.requests[0].declared.includes("codemode"));
+});
+
+test("real Pi file-configured MCP origins honor agent-dir env, project trust, full definitions and settings-only overrides", async (t) => {
+  for (const projectTrusted of [true, false]) {
+    const mcp = fakeMcp({ global_only: { tools: ["q"] }, project_only: { tools: ["q"] }, same: { tools: ["q"] }, settings: { tools: ["q"] } }, true);
+    const p = probe(), value = "MCP_CONFIG_VALUES_NEVER_REACH_CONTEXT";
+    const definition = { command: value, args: [value], env: { SECRET: value }, exposure: "direct" };
+    const h = await realPi(t, (h) => [finish(h)], { earlier: [p.extension], builtin: mcp.builtins(), tools: { mode: "mcp", alwaysAllowedMcpServers: ["global_only", "settings"] },
+      project: { alwaysAllowedMcpServers: ["project_only", "same"] }, projectTrusted,
+      mcpGlobal: { global_only: definition, same: definition, settings: definition },
+      mcpProject: { project_only: definition, same: definition, settings: { exposure: "direct" } } });
+    await until(() => p.box.pi!.getAllTools().some((tool) => tool.name === "mcp__same__q") && (!projectTrusted || p.box.pi!.getAllTools().some((tool) => tool.name === "mcp__project_only__q")), "file-configured MCP servers");
+    assert.equal(mcp.origins.get("settings"), "global", "the actual MCP loader keeps settings-only overrides global");
+    assert.equal(mcp.origins.get("same"), projectTrusted ? "project" : "global");
+    assert.equal(mcp.origins.has("project_only"), projectTrusted);
+    await h.session.prompt("task");
+    assert.ok(h.requests[0].declared.includes("mcp__global_only__q")); assert.ok(h.requests[0].declared.includes("mcp__settings__q"));
+    assert.equal(h.requests[0].declared.includes("mcp__same__q"), projectTrusted, "the project pin matches only trusted full project definitions");
+    assert.equal(h.requests[0].declared.includes("mcp__project_only__q"), projectTrusted);
+    assert.doesNotMatch(JSON.stringify([h.requests, h.decisions, h.sessionManager.getBranch()]), /MCP_CONFIG_VALUES/);
+  }
+});
+
+test("real Pi keeps live MCP scope stable after disk edits, including resource routing, until reload", async (t) => {
+  const mcp = fakeMcp({ live: { tools: ["q"], resources: true } }, true), p = probe();
+  const definition = { command: "fake", exposure: "codemode" };
+  const h = await realPi(t, (h) => [finish(h)], { earlier: [p.extension], builtin: mcp.builtins(), tools: { mode: "mcp" },
+    mcpGlobal: { live: definition }, project: { alwaysAllowedMcpServers: ["live"] }, projectTrusted: true, reloadable: true });
+  const ready = () => p.box.pi!.getAllTools().some((tool) => tool.name === "mcp__live__q") && p.box.pi!.getAllTools().some((tool) => tool.name === "list_mcp_resources");
+  await until(ready, "global MCP server and resource tool");
+  await h.session.prompt("task");
+  const gate = (toolName: string, input: Record<string, unknown> = {}) => h.session.extensionRunner.emitToolCall({ type: "tool_call", toolName, toolCallId: "live-scope", input } as never);
+  assert.equal((await gate("mcp__live__q"))?.block, true);
+  assert.match((await gate("list_mcp_resources", { server: "live" }))?.reason ?? "", /Pi agent settings\.json/);
+  await writeFile(join(h.root, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { live: definition } }));
+  assert.equal(mcp.origins.get("live"), "global", "Pi has not reloaded or replaced the live connection");
+  assert.equal((await gate("mcp__live__q"))?.block, true, "a project pin cannot grant the still-global tool after a disk edit");
+  assert.match((await gate("list_mcp_resources", { server: "live" }))?.reason ?? "", /Pi agent settings\.json/, "resource routing keeps the captured global origin too");
+  await h.session.reload();
+  await until(() => mcp.origins.get("live") === "project" && ready(), "project MCP connection after reload");
+  assert.equal(await gate("mcp__live__q"), undefined, "reload captures the new Project origin alongside Pi's replacement connection");
+  assert.equal(await gate("list_mcp_resources", { server: "live" }), undefined);
 });

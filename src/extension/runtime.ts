@@ -51,7 +51,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let toolsStatusShown = false;
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const toolFilter = createToolFilter({
-    pi, ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
+    pi, agentDir: deps.agentDir, report: (ctx, message) => controller.report(ctx, message, "warning"), ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
     beginOperation: () => controller.beginOperation(),
     resolveClient: (ctx, current, responses) => resolveClient(ctx, current, responses, "tools"),
     loadProjectAllowlist: (cwd) => controller.loadProjectAllowlist(cwd), sumUsage,
@@ -129,12 +129,13 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
-    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset();
+    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset(true);
     await projectWriteQueue;
     await writeQueue;
     await loading;
     loaded = false;
     await controller.ensureLoaded();
+    await toolFilter.startSession(ctx);
     if (settingsError) controller.report(ctx, `Settings error: ${settingsError}; skill advertisements fail closed until repaired`, "error");
     for (const warning of warnings) controller.report(ctx, warning, "warning");
     controller.setStatus(ctx);
@@ -149,7 +150,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
     commands.closeDialogs();
     resetDecisionLoader();
-    abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset();
+    abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
     if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
   });
   const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
