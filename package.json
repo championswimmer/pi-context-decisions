@@ -30,6 +30,7 @@
   },
   "files": [
     "src/",
+    "docs/*.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

@@ -322,9 +322,9 @@ test("shadowed legacy values and all shared bounds stay errors; shared saves can
   assert.throws(() => updateSetting(defaultSettings(), "enabled", "false"), /Removed master switch/);
 });
 
-test("README canonical default settings stay valid, warning-free and in sync", async () => {
-  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
-  const json = /Canonical settings shape \(defaults\):\s+```json\n([\s\S]*?)\n```/.exec(readme)?.[1];
+test("settings documentation canonical defaults stay valid, warning-free and in sync", async () => {
+  const settingsDoc = await readFile(new URL("../docs/settings.md", import.meta.url), "utf8");
+  const json = /Canonical settings shape \(defaults\):\s+```json\n([\s\S]*?)\n```/.exec(settingsDoc)?.[1];
   assert.ok(json);
   const warnings: string[] = [];
   assert.deepEqual(parseSettings(JSON.parse(json), warnings), defaultSettings());
