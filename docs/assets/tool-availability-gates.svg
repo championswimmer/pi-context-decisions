@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1080" viewBox="0 0 1200 1080" role="img" aria-labelledby="title desc">
+<title id="title">Two places to apply tool relevance</title>
+<desc id="desc">Availability combines earlier branch grants, scoped allowlists and new picks. At before_agent_start and continuing turn_end, setActiveTools removes unavailable direct/model-only declarations and restores only tools withheld by this extension. Indirect codemode/deferred tools remain discoverable and are described by a hidden names-only user-role notice, which does not override direct declarations. Every direct or nested call is checked by tool_call. Known available or verified internal tools pass; an eligible unscored late candidate triggers one shared lazy round; unavailable tools are blocked before execution. MCP resource tools route by the local server argument. Discovery, mcp_servers, connections, bash and other processes are not restricted.</desc>
+<defs>
+  <linearGradient id="header" x2="1" y2="1"><stop stop-color="#142b4a"/><stop offset="1" stop-color="#263657"/></linearGradient>
+  <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M 1 1 L 10 6 L 1 11" fill="none" stroke="#647994" stroke-width="2" stroke-linejoin="round"/></marker>
+  <style>
+    text { font-family: Lato, 'DejaVu Sans', sans-serif; fill: #22344e; }
+    .title { font-size: 24px; font-weight: 800; }
+    .body { font-size: 20px; }
+    .small { font-size: 18px; fill: #52647d; }
+    .mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 18px; }
+    .flow { fill: none; stroke: #647994; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+  </style>
+</defs>
+<rect width="1200" height="1080" rx="24" fill="#f5f7fc"/>
+<rect x="24" y="24" width="1152" height="116" rx="22" fill="url(#header)"/>
+<text x="56" y="53" style="font-size:14px;fill:#91e3d0;font-weight:800;" letter-spacing="2">03 / DECLARATIONS ≠ EXECUTION</text>
+<text x="56" y="89" style="font-size:34px;fill:#ffffff;font-weight:800;">Two places to apply tool relevance</text>
+<text x="56" y="119" style="font-size:18px;fill:#d4e0f1;">Tool filtering is opt-in, off by default · public Pi control APIs · never a sandbox</text>
+<rect x="56" y="166" width="1088" height="100" rx="18" fill="#e5f6ef" stroke="#a9d9c5" stroke-width="1.5"/>
+<rect x="57" y="184" width="4" height="64" rx="2" fill="#1d7358" stroke="none" stroke-width="1.5"/>
+<text x="80" y="203" style="font-size:25px;fill:#1d7358;font-weight:800;">Availability = previous branch grants + scoped allowlists + new picks</text>
+<text x="80" y="236" style="font-size:20px;">Pi provenance decides internal / external; a built-in MCP server tool is still external.</text>
+<path class="flow" d="M 600 266 V 286 H 313 V 322"/>
+<path class="flow" d="M 600 286 H 887 V 322"/>
+<rect x="56" y="322" width="514" height="176" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<rect x="57" y="340" width="4" height="140" rx="2" fill="#2457a7" stroke="none" stroke-width="1.5"/>
+<text x="80" y="359" style="font-size:24px;fill:#2457a7;font-weight:800;">Declared · direct / model-only</text>
+<text x="80" y="392" style="font-size:19px;">Before request / at continuing turn_end:</text>
+<text x="80" y="419" style="font-size:19px;">setActiveTools withholds unavailable tools.</text>
+<text x="80" y="446" style="font-size:19px;">Restore only what this extension withheld.</text>
+<text x="80" y="473" style="font-size:19px;">Pi records declaration deltas in system messages.</text>
+<rect x="630" y="322" width="514" height="176" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<rect x="631" y="340" width="4" height="140" rx="2" fill="#2457a7" stroke="none" stroke-width="1.5"/>
+<text x="654" y="359" style="font-size:24px;fill:#2457a7;font-weight:800;">Indirect · codemode / deferred</text>
+<text x="654" y="392" style="font-size:19px;">Registration + discovery remain unchanged.</text>
+<text x="654" y="419" style="font-size:19px;">Hidden user-role notice: available names only.</text>
+<text x="654" y="446" style="font-size:19px;">The notice does NOT restrict direct declarations.</text>
+<text x="654" y="473" style="font-size:19px;">mcp_servers and server connections stay intact.</text>
+<path class="flow" d="M 313 498 V 552"/>
+<path class="flow" d="M 887 498 V 552"/>
+<rect x="56" y="552" width="1088" height="126" rx="18" fill="#fff4df" stroke="#e8ca8d" stroke-width="1.5"/>
+<rect x="57" y="570" width="4" height="90" rx="2" fill="#97621a" stroke="none" stroke-width="1.5"/>
+<text x="80" y="589" style="font-size:26px;fill:#97621a;font-weight:800;">tool_call · direct calls AND nested calls (including codemode)</text>
+<text x="80" y="622" style="font-size:21px;">Check registry provenance, active-branch grants and scoped allowlists before execution.</text>
+<text x="80" y="649" style="font-size:21px;">Notices guide the model; the call gate supplies the runtime relevance verdict.</text>
+<path class="flow" d="M 220 678 V 730"/>
+<path class="flow" d="M 600 678 V 730"/>
+<path class="flow" d="M 980 678 V 730"/>
+<rect x="56" y="730" width="328" height="146" rx="18" fill="#e5f6ef" stroke="#a9d9c5" stroke-width="1.5"/>
+<rect x="57" y="748" width="4" height="110" rx="2" fill="#1d7358" stroke="none" stroke-width="1.5"/>
+<text x="80" y="767" style="font-size:23px;fill:#1d7358;font-weight:800;">Known available</text>
+<text x="80" y="800" style="font-size:20px;">Verified internal, prior grant</text>
+<text x="80" y="827" style="font-size:20px;">or effective allowlist*</text>
+<text x="80" y="854" style="font-size:20px;">→ allow execution</text>
+<rect x="436" y="730" width="328" height="146" rx="18" fill="#f0ebff" stroke="#d2c5f4" stroke-width="1.5"/>
+<rect x="437" y="748" width="4" height="110" rx="2" fill="#6d46b5" stroke="none" stroke-width="1.5"/>
+<text x="460" y="767" style="font-size:21px;fill:#6d46b5;font-weight:800;">Eligible, unscored late tool</text>
+<text x="460" y="800" style="font-size:20px;">One single-flight lazy round.</text>
+<text x="460" y="827" style="font-size:20px;">New grant? allow execution.</text>
+<text x="460" y="854" style="font-size:20px;">Otherwise → block.</text>
+<rect x="816" y="730" width="328" height="146" rx="18" fill="#ffeded" stroke="#edbcbc" stroke-width="1.5"/>
+<rect x="817" y="748" width="4" height="110" rx="2" fill="#a63e48" stroke="none" stroke-width="1.5"/>
+<text x="840" y="767" style="font-size:23px;fill:#a63e48;font-weight:800;">Known unavailable</text>
+<text x="840" y="800" style="font-size:20px;">Already scored / unverified</text>
+<text x="840" y="827" style="font-size:20px;">→ block before target runs</text>
+<text x="840" y="854" style="font-size:20px;">Return a short reason.</text>
+<rect x="56" y="918" width="1088" height="98" rx="18" fill="#ffffff" stroke="#d7dfeb" stroke-width="1.5"/>
+<text x="80" y="950" style="font-size:20px;fill:#22344e;font-weight:800;">* Resource routing: MCP resource tools check the local server argument; unscoped listing is blocked.</text>
+<text x="80" y="980" style="font-size:19px;fill:#52647d;">Resource-only servers need a scoped pin or earlier branch grant. No call arguments reach the decider.</text>
+<text x="56" y="1052" style="font-size:21px;fill:#97621a;font-weight:800;">Not a sandbox: bash / other processes, discovery results and MCP connections are unaffected.</text>
+</svg>

@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1130" viewBox="0 0 1200 1130" role="img" aria-labelledby="title desc">
+<title id="title">Where the decider meets the agent loop</title>
+<desc id="desc">An idle user prompt reaches before_agent_start before Pi persists it. Skill and tool decisions run concurrently. Pi then commits the user and hidden messages and assembles a model request. The assistant is persisted, calls are gated before execution, and tool results are persisted. At a completed, continuing turn_end the extension appends drafts; Pi commits them before queued user text enters. Tool results or queued work lead to the next request, not another before_agent_start. Without more work the run ends and Pi eventually settles. Grants are derived from the committed active branch.</desc>
+<defs>
+  <linearGradient id="header" x2="1" y2="1"><stop stop-color="#142b4a"/><stop offset="1" stop-color="#263657"/></linearGradient>
+  <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M 1 1 L 10 6 L 1 11" fill="none" stroke="#647994" stroke-width="2" stroke-linejoin="round"/></marker>
+  <style>
+    text { font-family: Lato, 'DejaVu Sans', sans-serif; fill: #22344e; }
+    .title { font-size: 24px; font-weight: 800; }
+    .body { font-size: 20px; }
+    .small { font-size: 18px; fill: #52647d; }
+    .mono { font-family: 'DejaVu Sans Mono', monospace; font-size: 18px; }
+    .flow { fill: none; stroke: #647994; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+  </style>
+</defs>
+<rect width="1200" height="1130" rx="24" fill="#f5f7fc"/>
+<rect x="24" y="24" width="1152" height="116" rx="22" fill="url(#header)"/>
+<text x="56" y="53" style="font-size:14px;fill:#91e3d0;font-weight:800;" letter-spacing="2">01 / SESSION TIMING</text>
+<text x="56" y="89" style="font-size:34px;fill:#ffffff;font-weight:800;">Where the decider meets the agent loop</text>
+<text x="56" y="119" style="font-size:18px;fill:#d4e0f1;">Pi 1.1.0 · blue: Pi flow · purple: decision boundaries · amber: per-call relevance gate</text>
+<rect x="56" y="166" width="304" height="136" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<rect x="57" y="184" width="4" height="100" rx="2" fill="#2457a7" stroke="none" stroke-width="1.5"/>
+<circle cx="87" cy="196" r="14" fill="#2457a7"/>
+<text x="87" y="201" style="font-size:15px;fill:#ffffff;font-weight:800;" text-anchor="middle">1</text>
+<text x="111" y="203" style="font-size:24px;fill:#2457a7;font-weight:800;">User prompt</text>
+<text x="80" y="236" style="font-size:20px;">Input / template expansion</text>
+<text x="80" y="263" style="font-size:20px;">An idle session starts a run.</text>
+<rect x="450" y="166" width="690" height="136" rx="18" fill="#f0ebff" stroke="#d2c5f4" stroke-width="1.5"/>
+<rect x="451" y="184" width="4" height="100" rx="2" fill="#6d46b5" stroke="none" stroke-width="1.5"/>
+<circle cx="481" cy="196" r="14" fill="#6d46b5"/>
+<text x="481" y="201" style="font-size:15px;fill:#ffffff;font-weight:800;" text-anchor="middle">2</text>
+<text x="505" y="203" style="font-size:24px;fill:#6d46b5;font-weight:800;">before_agent_start</text>
+<text x="474" y="236" style="font-size:20px;">Skills + tools are picked concurrently, when enabled.</text>
+<text x="474" y="263" style="font-size:20px;">Set stable skill base; reconcile declared tools.</text>
+<path class="flow" d="M 360 234 H 450"/>
+<path class="flow" d="M 795 302 V 344"/>
+<rect x="450" y="344" width="690" height="156" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<rect x="451" y="362" width="4" height="120" rx="2" fill="#2457a7" stroke="none" stroke-width="1.5"/>
+<circle cx="481" cy="374" r="14" fill="#2457a7"/>
+<text x="481" y="379" style="font-size:15px;fill:#ffffff;font-weight:800;" text-anchor="middle">3</text>
+<text x="505" y="381" style="font-size:24px;fill:#2457a7;font-weight:800;">Pi assembles model context</text>
+<text x="474" y="414" style="font-size:20px;">First request: agent_start → turn_start → persist input.</text>
+<text x="474" y="441" style="font-size:20px;">Later turns: turn_start + updated branch / tool loadout.</text>
+<text x="474" y="468" style="font-size:20px;">Hidden custom messages become user-role context.</text>
+<path class="flow" d="M 795 500 V 538"/>
+<rect x="450" y="538" width="690" height="96" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<rect x="451" y="556" width="4" height="60" rx="2" fill="#2457a7" stroke="none" stroke-width="1.5"/>
+<circle cx="481" cy="568" r="14" fill="#2457a7"/>
+<text x="481" y="573" style="font-size:15px;fill:#ffffff;font-weight:800;" text-anchor="middle">4</text>
+<text x="505" y="575" style="font-size:24px;fill:#2457a7;font-weight:800;">Model request → streamed assistant</text>
+<text x="474" y="608" style="font-size:20px;">Pi persists the finalized assistant response.</text>
+<path class="flow" d="M 795 634 V 674"/>
+<rect x="450" y="674" width="690" height="108" rx="18" fill="#fff4df" stroke="#e8ca8d" stroke-width="1.5"/>
+<rect x="451" y="692" width="4" height="72" rx="2" fill="#97621a" stroke="none" stroke-width="1.5"/>
+<circle cx="481" cy="704" r="14" fill="#97621a"/>
+<text x="481" y="709" style="font-size:15px;fill:#ffffff;font-weight:800;" text-anchor="middle">5</text>
+<text x="505" y="711" style="font-size:24px;fill:#97621a;font-weight:800;">tool_call → execution → tool results</text>
+<text x="474" y="744" style="font-size:20px;">Gate direct AND nested calls before the target runs.</text>
+<text x="474" y="771" style="font-size:20px;">Pi persists results, including blocked-call errors.</text>
+<path class="flow" d="M 795 782 V 822"/>
+<rect x="450" y="822" width="690" height="146" rx="18" fill="#f0ebff" stroke="#d2c5f4" stroke-width="1.5"/>
+<rect x="451" y="840" width="4" height="110" rx="2" fill="#6d46b5" stroke="none" stroke-width="1.5"/>
+<circle cx="481" cy="852" r="14" fill="#6d46b5"/>
+<text x="481" y="857" style="font-size:15px;fill:#ffffff;font-weight:800;" text-anchor="middle">6</text>
+<text x="505" y="859" style="font-size:23px;fill:#6d46b5;font-weight:800;">turn_end · after assistant + all results</text>
+<text x="474" y="892" style="font-size:20px;">Add context only when completed + canContinue.</text>
+<text x="474" y="919" style="font-size:20px;">Return [...event.entries, ...ourDrafts]; Pi commits.</text>
+<text x="474" y="946" style="font-size:20px;">Drafts precede queued user text; we never set continue.</text>
+<path class="flow" d="M 1140 586 H 1162 V 895 H 1140"/>
+<text x="1184" y="782" style="font-size:17px;fill:#52647d;" transform="rotate(-90 1184 782)">no tool calls: skip execution</text>
+<path class="flow" d="M 450 860 H 404 V 418 H 450"/>
+<text x="389" y="794" style="font-size:17px;fill:#52647d;" transform="rotate(-90 389 794)">Next turn: tool results / queued steering or follow-up</text>
+<rect x="56" y="344" width="284" height="236" rx="18" fill="#ffffff" stroke="#d7dfeb" stroke-width="1.5"/>
+<rect x="57" y="362" width="4" height="200" rx="2" fill="#52647d" stroke="none" stroke-width="1.5"/>
+<text x="80" y="381" style="font-size:23px;fill:#52647d;font-weight:800;">One active branch</text>
+<text x="80" y="414" style="font-size:20px;">Read committed ledgers.</text>
+<text x="80" y="441" style="font-size:20px;">Grants only grow:</text>
+<text x="80" y="468" style="font-size:20px;">never remove an earlier</text>
+<text x="80" y="495" style="font-size:20px;">skill or tool grant.</text>
+<text x="80" y="522" style="font-size:20px;">Tree / resume / reload</text>
+<text x="80" y="549" style="font-size:20px;">reconstruct that branch.</text>
+<rect x="56" y="674" width="284" height="108" rx="18" fill="#fff4df" stroke="#e8ca8d" stroke-width="1.5"/>
+<rect x="57" y="692" width="4" height="72" rx="2" fill="#97621a" stroke="none" stroke-width="1.5"/>
+<text x="80" y="711" style="font-size:22px;fill:#97621a;font-weight:800;">Lazy tool decision</text>
+<text x="80" y="744" style="font-size:20px;">Unscored late candidate?</text>
+<text x="80" y="771" style="font-size:20px;">Share one scoring round.</text>
+<rect x="56" y="822" width="284" height="146" rx="18" fill="#ffffff" stroke="#d7dfeb" stroke-width="1.5"/>
+<rect x="57" y="840" width="4" height="110" rx="2" fill="#52647d" stroke="none" stroke-width="1.5"/>
+<text x="80" y="859" style="font-size:22px;fill:#52647d;font-weight:800;">At this boundary</text>
+<text x="80" y="892" style="font-size:19px;">Queued task / tool-round</text>
+<text x="80" y="919" style="font-size:19px;">Late-tool catch-up</text>
+<text x="80" y="946" style="font-size:19px;">Lost-skill re-delivery</text>
+<path class="flow" d="M 795 968 V 1010"/>
+<rect x="450" y="1010" width="690" height="64" rx="18" fill="#e5f6ef" stroke="#a9d9c5" stroke-width="1.5"/>
+<text x="474" y="1049" style="font-size:23px;fill:#1d7358;font-weight:800;">No more work → agent_end → … → agent_settled</text>
+<text x="56" y="1106" style="font-size:18px;fill:#52647d;">The loop is Pi’s, not the decider’s. Retries, recovery and compaction may occur before final settlement.</text>
+</svg>
