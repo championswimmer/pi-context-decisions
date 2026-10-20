@@ -66,19 +66,58 @@ test("untrusted projects are not read, and only Pi's cwd/.pi and agent-dir files
   assert.deepEqual([...untrusted.scopes], [["mcp__same", "global"]]); assert.deepEqual(untrusted.warnings, []);
   const child = join(f.cwd, "subdir"); await mkdir(child);
   const nested = await readMcpConfigScopes({ agentDir: f.agentDir, cwd: child, projectTrusted: true });
-  assert.deepEqual([...nested.scopes], [["mcp__same", "global"]]); assert.deepEqual(nested.warnings, ["mcp-project-missing"]);
+  assert.deepEqual([...nested.scopes], [["mcp__same", "global"]]); assert.deepEqual(nested.warnings, []);
 });
-test("missing, malformed, symlink, oversized and non-regular config files yield only safe warnings and no names", async (t) => {
-  const f = await fixture(t);
-  for (const text of [`{ "mcpServers": { "${SECRET}":`, "[]", '{"mcpServers":[]}', " ".repeat(65537)]) {
-    await writeFile(f.global, text);
+test("missing optional global/project configs are silent, including absent directories, and retain the other scope", async (t) => {
+  for (const missing of ["global", "project", "both"] as const) for (const directoriesPresent of [true, false]) {
+    const f = await fixture(t);
+    const expected: [string, string][] = [];
+    for (const scope of ["global", "project"] as const) {
+      if (missing === "both" || missing === scope) {
+        if (!directoriesPresent) await rm(scope === "global" ? f.agentDir : join(f.cwd, ".pi"), { recursive: true });
+      } else {
+        await writeFile(f[scope], JSON.stringify({ mcpServers: { [scope]: { command: SECRET } } }));
+        expected.push([`mcp__${scope}`, scope]);
+      }
+    }
     const read = await readMcpConfigScopes({ ...f, projectTrusted: true });
-    assert.equal(read.scopes.size, 0); assert.ok(read.warnings.includes("mcp-global-invalid")); assert.doesNotMatch(JSON.stringify(read.warnings), /CONFIG_VALUE|mcp-scope-|SyntaxError/);
+    const context = `${missing} missing; directories present: ${directoriesPresent}`;
+    assert.deepEqual([...read.scopes], expected, context);
+    assert.deepEqual(read.warnings, [], context);
   }
-  await rm(f.global); await symlink(f.project, f.global); await writeFile(f.project, '{"mcpServers":{"secret":{"command":"x"}}}');
-  assert.equal((await readMcpConfigScopes({ ...f, projectTrusted: false })).scopes.size, 0, "symlink not followed");
-  await rm(f.global); await mkdir(f.global);
-  assert.deepEqual((await readMcpConfigScopes({ ...f, projectTrusted: false })).warnings, ["mcp-global-invalid"]);
+});
+test("malformed, symlink, oversized and non-regular global/project configs still yield safe warnings and no names", async (t) => {
+  for (const scope of ["global", "project"] as const) {
+    const f = await fixture(t);
+    const check = async () => {
+      const read = await readMcpConfigScopes({ ...f, projectTrusted: true });
+      assert.equal(read.scopes.size, 0);
+      assert.deepEqual(read.warnings, [`mcp-${scope}-invalid`]);
+      assert.doesNotMatch(JSON.stringify(read.warnings), /CONFIG_VALUE|mcp-scope-|SyntaxError/);
+    };
+    for (const text of [`{ "mcpServers": { "${SECRET}":`, "[]", '{"mcpServers":[]}', " ".repeat(65537)]) {
+      await writeFile(f[scope], text);
+      await check();
+    }
+    await rm(f[scope]);
+    const target = join(f.cwd, "target.json");
+    await symlink(target, f[scope]);
+    await check(); // A dangling symlink is unsafe, not an absent optional file.
+    await writeFile(target, '{"mcpServers":{"secret":{"command":"x"}}}');
+    await check(); // An existing target must not be followed either.
+    await rm(f[scope]); await mkdir(f[scope]);
+    await check();
+  }
+});
+test("non-ENOENT filesystem errors still warn safely for global and project configs", async (t) => {
+  for (const scope of ["global", "project"] as const) {
+    const f = await fixture(t);
+    const directory = scope === "global" ? f.agentDir : join(f.cwd, ".pi");
+    await rm(directory, { recursive: true }); await writeFile(directory, SECRET);
+    const read = await readMcpConfigScopes({ ...f, projectTrusted: true });
+    assert.equal(read.scopes.size, 0);
+    assert.deepEqual(read.warnings, [`mcp-${scope}-unreadable`], "ENOTDIR is not treated as an absent optional file");
+  }
 });
 
 

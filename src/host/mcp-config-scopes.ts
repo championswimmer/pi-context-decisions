@@ -10,7 +10,7 @@ import type { AllowlistScope } from "../apps/allowlist-scope.ts";
 const MAX_BYTES = 65536;
 const MAX_SERVERS = 1000;
 type RecordValue = Record<string, unknown>;
-export type McpScopeWarning = `mcp-${AllowlistScope}-${"missing" | "unreadable" | "invalid" | "entry-invalid" | "name-clash"}`;
+export type McpScopeWarning = `mcp-${AllowlistScope}-${"unreadable" | "invalid" | "entry-invalid" | "name-clash"}`;
 export interface McpConfigScopes { scopes: Map<string, AllowlistScope>; warnings: McpScopeWarning[] }
 const record = (value: unknown): value is RecordValue => value !== null && typeof value === "object" && !Array.isArray(value);
 const strings = (value: unknown): boolean => record(value) && Object.values(value).every((entry) => typeof entry === "string");
@@ -92,10 +92,12 @@ async function readNames(path: string, scope: AllowlistScope, names: Map<string,
       names.set(name, scope);
     }
   } catch (error) {
-    warnings.add(`mcp-${scope}-${error && typeof error === "object" && "code" in error && error.code === "ENOENT" ? "missing" : error instanceof SyntaxError ? "invalid" : "unreadable"}`);
+    // Both config files are optional, including their parent directories.
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+    warnings.add(`mcp-${scope}-${error instanceof SyntaxError ? "invalid" : "unreadable"}`);
   } finally { await file?.close().catch(() => {}); }
 }
-/** Pi's exact two paths/order; no ancestor discovery. Missing/unsafe/malformed scopes contribute no names. */
+/** Pi's exact two paths/order; no ancestor discovery. Missing optional files contribute no names or warnings. */
 export async function readMcpConfigScopes(options: { agentDir: string; cwd?: string; projectTrusted: boolean }): Promise<McpConfigScopes> {
   const names = new Map<string, AllowlistScope>(), warnings = new Set<McpScopeWarning>();
   await readNames(join(options.agentDir, "mcp.json"), "global", names, warnings);

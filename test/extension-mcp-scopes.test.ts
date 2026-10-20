@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { mcpTool, extTool, resourceTools, toolSetup } from "./helpers/tool-fixture.ts";
 import { loadProjectAllowlist, saveProjectAllowlist } from "../src/project-allowlist.ts";
@@ -16,6 +16,19 @@ async function files(h: Awaited<ReturnType<typeof toolSetup>>, project: Record<s
   h.ctx.isProjectTrusted = () => true;
   await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
 }
+
+test("missing optional MCP configs stay silent during inventory classification with filtering on or off", async (t) => {
+  for (const enabled of [true, false]) {
+    const h = await toolSetup(t, { tools: { enabled, alwaysAllowedMcpServers: ["global"] }, extra: [mcpTool("global", "q")] });
+    await rm(join(h.agentDir, "mcp.json"));
+    h.ctx.isProjectTrusted = () => true;
+    await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
+    await h.command("mcp list");
+    await h.start("task");
+    assert.equal(await h.gate("mcp__global__q"), undefined, "unresolved origins retain the Global allowlist fallback");
+    assert.deepEqual(h.messages.filter((message) => /MCP config scope warning/.test(message)), []);
+  }
+});
 
 test("built-in MCP file origins scope gates, resource-only grants, notices and editor saves without leaking config values", async (t) => {
   for (const mode of ["tools", "mcp"] as const) {
