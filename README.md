@@ -60,35 +60,54 @@ Add essentials to the Tools tab's always-allowed lists, then start a fresh sessi
 
 ## Inside the agent loop
 
-### 1. The two context-selection boundaries
+Think of the decider as a **context picker beside your coding agent**, not another agent doing the task. The coding model chooses actions; the decision model only ranks which skills and tools are relevant. Purple boxes below show context selection.
 
-![Pi session loop: before_agent_start picks context before the first request; tool_call gates execution; completed, continuing turn_end commits additions before the next request.](docs/assets/agent-session-loop.png)
+### 1. The familiar loop, with a picker added
 
-`before_agent_start` runs **before Pi commits the submitted user message**. The skill and tool passes overlap there. At `turn_end`, the assistant and all tool results are already persisted; this extension only adds context when the turn completed and `context.canContinue` is true. It preserves earlier handlers' drafts with `[...event.entries, ...ourDrafts]`; Pi commits those drafts before injecting queued user text. The loop returns to the next request, **not** to `before_agent_start`. The extension never sets `continue` or creates an extra model request.
+![Send a task, pick relevant context, then let the model answer or call tools. Tool results loop back to the model; more context can be added before its next step.](docs/assets/agent-session-loop.png)
 
-### 2. What the decider selects—and what reaches the chat model
+The usual loop is unchanged: **task → model → tool → result → model → answer**. Selection happens before the first coding-model step and, when needed, between later steps. The picker never forces an extra coding-model turn. Tool filtering is optional; when enabled, it also checks calls before execution.
 
-![Two additive pipelines: preserve prior grants and scoped pins, score only remaining metadata, apply threshold and per-round caps, then deliver skill deltas or tool availability.](docs/assets/context-decider.png)
+### 2. Keep earlier choices; add relevant ones
 
-The decision provider sees bounded user-task text and candidate metadata, **not** conversation history or tool results. The chat model sees a stable system skills base, new skills as hidden **user-role** custom messages (including their canonical locations), and Pi's active tool declarations. Indirect tools get a separate names-only hidden user-role availability notice. Base/tool ledger records are **not** model context; skill grants come from the deltas Pi actually committed on the active branch.
+![The picker sees your task and short candidate summaries, ranks items not already available, and adds relevant matches while preserving earlier choices and always-allowed items.](docs/assets/context-decider.png)
 
-| Cadence | When selection runs |
+A **skill** is reusable guidance the coding model can load; the picker advertises its description, not its full instructions. Tools can be picked individually, or as whole **MCP-server or extension tool groups**.
+
+For example: “Review this code” might add a review skill. Later, “Prepare a release” can add a release skill **without removing the review skill**. Choices only grow along the current conversation branch. Your always-allowed items skip scoring.
+
+### 3. Finding a tool does not mean it can run
+
+![Direct tool lists withhold unavailable external tools. Search and generated code can still find tools, so every call is checked: available tools run; unavailable calls return an error.](docs/assets/tool-availability-gates.png)
+
+**Direct tools** have their definitions listed in the model request. **Indirect tools** are reached through search or generated code (codemode). A short notice tells the model which indirect tools are available; it does not override the direct list. Both direct and nested calls are checked before the target tool runs. Discovery and MCP connections stay unchanged—this is relevance filtering, **not a sandbox**.
+
+### When does it pick again?
+
+Choose the timing (called *cadence*) separately for skills and tools:
+
+| Setting | In plain English |
 | --- | --- |
-| `prompt` (default, both pipelines) | Each submitted user prompt, plus newest queued steering/follow-up user text at a completed, continuing `turn_end`. |
-| `tool-round` (both pipelines) | Prompt behavior **plus** completed tool rounds. Progressively add next-best remaining candidates for the same user task, reusing cached scores—not inferred subtasks. |
-| `initial` (tools only) | First user prompt after filtering becomes active. Later arrivals use that first task; persisted `considered` candidates are not re-picked. A failed initial pick retries on a later prompt. |
+| **Each prompt** (`prompt`, default) | Pick for each new user task, including an update you queue while the agent is working. |
+| **After tool rounds too** (`tool-round`) | Also add more after completed tool results, before the next model step. Reuse scores for the same user task—not guesses about a new subtask. |
+| **First prompt only** (`initial`, tools only) | Keep using the first task. Later tools are checked against it; candidates already considered are not picked again. A failed first pick can retry. |
 
-Tools also catch up with unscored late arrivals at continuing boundaries, or lazily at `tool_call` in one shared scoring round. With no decision model or below the inventory minimum, selection makes no calls and keeps everything available. Disabled pipelines do not score. Active decision/configuration errors add nothing by default; earlier grants survive. Skills require an active `read` or `bash` reader to be advertised.
+New tools can also be checked when they appear or are first called. With no decision model selected, or too few candidates, everything stays available without scoring. A failed decision adds nothing by default; earlier choices stay.
 
-### 3. Tool declarations are not the indirect-call gate
+<details>
+<summary>Pi hook names and timing details (optional)</summary>
 
-![Declared direct/model-only tools are reconciled through setActiveTools; indirect tools remain discoverable with an availability notice. Every direct or nested call passes tool_call, which allows existing grants, lazily scores eligible late tools, or blocks execution.](docs/assets/tool-availability-gates.png)
+- **Before a run:** `before_agent_start` runs before Pi saves the submitted user message. Skill and tool selection overlap here.
+- **Between steps:** `turn_end` adds context only after a completed turn when `context.canContinue` is true. The assistant and tool results are already saved; Pi saves additions before inserting queued user text. The loop then returns to the next model request, not to `before_agent_start`. This extension never sets `continue`.
+- **What the coding model sees:** always-allowed/base skills in the system skills section; new skills (with file locations) in hidden **user-role** custom messages; active tool declarations; and a separate names-only notice for indirect tools. Bookkeeping records are not model context. Skills need an active `read` or `bash` tool to be advertised.
+- **At execution:** `tool_call` checks direct and nested calls. Eligible unscored tools can trigger one shared decision round. MCP resource calls are routed by their local `server` argument; unscoped resource listing is blocked while filtering is on. No call arguments reach the decision model.
+- **Limits:** late-connecting direct tools can appear in the first request, but calls are still checked. Enabling mid-session preserves registered tools. Compaction can temporarily hide skill additions until they are re-delivered without scoring; tool notices are not re-delivered.
 
-The notice applies **only to indirect tools** reached through codemode/tool search; it does not override tools declared directly. The runtime `tool_call` gate still checks direct and nested external calls. Discovery (`searchTools`, `ALL_TOOLS`, `tool_search`, the `mcp_servers` prompt section) and MCP connections are unchanged. This is relevance gating, **not a sandbox**.
+See [skill picking](docs/skill-picking.md) and [tool-filtering limitations](docs/tool-filtering.md#limits-stated-plainly) for the full contracts.
 
-Important timing limits: a direct tool connecting after the initial hook can appear in the first request (its calls are still gated); enabling mid-session preserves already-registered tools. Compaction can hide a skill delta until the next eligible boundary re-delivers it without scoring; the request immediately after mid-run compaction can miss it. Tool notices are not re-delivered after compaction. See [skill picking](docs/skill-picking.md) and [tool-filtering limitations](docs/tool-filtering.md#limits-stated-plainly) for the full contracts.
+</details>
 
-Editable SVGs: [session loop](docs/assets/agent-session-loop.svg) · [decider](docs/assets/context-decider.svg) · [tool gates](docs/assets/tool-availability-gates.svg). [Offline PNG regeneration and implementation anchors](docs/assets/README.md).
+Editable SVGs: [agent loop](docs/assets/agent-session-loop.svg) · [picker](docs/assets/context-decider.svg) · [tool checks](docs/assets/tool-availability-gates.svg). [Offline PNG regeneration and implementation notes](docs/assets/README.md).
 
 ## Know before enabling
 
