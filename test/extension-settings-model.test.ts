@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DecisionError } from "../src/decision/errors.ts";
 import { defaultSettings, SettingsError } from "../src/settings.ts";
 import {
-  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, layoutMenu, sanitizeTerminalText,
+  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, fieldFor, layoutMenu, sanitizeTerminalText,
 } from "../src/extension/settings-model.ts";
 
 test("settings-model is pure: it imports no Pi or pi-tui module", () => {
@@ -23,6 +23,34 @@ test("Advanced covers every relevance setting except legacy pins, and each field
     if (field.kind === "options") assert.ok((field.options?.length ?? 0) >= 2, `${field.key} needs options`);
   }
   assert.equal(advancedRows(defaultSettings()).length, ADVANCED_FIELDS.length);
+});
+
+test("tool limit metadata follows the mode without changing keys, values, skill rows or static fields", () => {
+  for (const enabled of [false, true]) {
+    const settings = defaultSettings(); settings.tools.enabled = enabled;
+    const original = structuredClone(settings);
+    const toolRows = advancedRows(settings);
+    settings.tools.mode = "mcp";
+    const groupRows = advancedRows(settings);
+    assert.deepEqual(groupRows.map(({ id, value }) => ({ id, value })), toolRows.map(({ id, value }) => ({ id, value })));
+    assert.deepEqual(groupRows.filter((row) => !row.id.startsWith("tools.")), toolRows.filter((row) => !row.id.startsWith("tools.")));
+    const max = groupRows.find((row) => row.id === "tools.maxAdded")!;
+    const min = groupRows.find((row) => row.id === "tools.minCandidates")!;
+    assert.equal(max.label, "MCP/exts · Max added per round");
+    assert.equal(min.label, "MCP/exts · Minimum candidates");
+    assert.match(max.description, /MCP servers or extensions per round/);
+    assert.match(max.description, /whole group counts once/);
+    assert.match(max.description, /allowlisted and already-available groups do not count/);
+    assert.match(min.description, /Below this many groups, no scoring and every tool stays available/);
+    for (const row of [max, min]) {
+      const field = fieldFor("tools", row.id.split(".")[1], settings)!;
+      assert.deepEqual([field.label, field.hint], [row.label, row.description], "editor metadata matches the row");
+    }
+    settings.tools.mode = "tools";
+    assert.deepEqual(advancedRows(settings), toolRows, "switching back restores the tool wording");
+    assert.deepEqual(settings, original, "metadata resolution never changes settings");
+    assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "tools").map((field) => field.label), ["Tools · Max added per round", "Tools · Minimum candidates"]);
+  }
 });
 
 test("feature fields stay on their tabs; all tuning is Advanced", () => {

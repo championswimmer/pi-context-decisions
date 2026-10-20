@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as xtermModule from "@xterm/headless";
 import { Container, Input, TuiMainScreen, type Component, type Terminal } from "@earendil-works/pi-tui";
 import { defaultSettings } from "../src/settings.ts";
-import { dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { ADVANCED_FIELDS, dialogHeightBudget } from "../src/extension/settings-model.ts";
 import { createSettingsDialogComponent, SETTINGS_OVERLAY_OPTIONS, type DialogResult, type InitialRoute, type SettingsDialogOps } from "../src/extension/settings-dialog.ts";
 
 type XTerminal = InstanceType<typeof xtermModule.Terminal>;
@@ -230,6 +230,28 @@ for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview an
   assert.equal(s.tui.getFocusedComponent(), s.dialog); assert.equal(s.editor.getValue(), "");
   s.dialog.close("closed"); s.tui.renderNow(); await s.terminal.flush();
   assert.doesNotMatch(view(), /Decisions|skill-119/); assert.equal(s.tui.getFocusedComponent(), s.editor);
+});
+
+test("real renderer 80x24: MCP-mode Advanced limits and editor wording fit the overlay", async () => {
+  const settings = defaultSettings(); settings.tools.mode = "mcp";
+  const ops = { ...fakeOps(), snapshot: () => ({ settings: structuredClone(settings), hasCwd: true }) };
+  const s = await scenario(24, 0, "advanced", ops);
+  const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + 24).join("\n"); };
+  const send = async (...keys: string[]) => {
+    for (const key of keys) s.tui.getFocusedComponent()!.handleInput!(key);
+    s.tui.renderNow(); await s.terminal.flush();
+  };
+  const minimum = 2 + ADVANCED_FIELDS.findIndex((field) => field.group === "tools" && field.key === "minCandidates");
+  await send(...Array(minimum).fill("\x1b[B"));
+  // The shared value column reserves room for concurrency; long list labels truncate at this width.
+  assert.match(view(), /MCP\/exts · Max added per…\s+8/);
+  assert.match(view(), /MCP\/exts · Minimum candi…\s+0/);
+  await send("\r");
+  assert.match(view(), /MCP\/exts · Minimum candidates/); assert.match(view(), /Below this many groups/);
+  await send("\x1b", "\x1b[A", "\r");
+  assert.match(view(), /MCP\/exts · Max added per round/); assert.match(view(), /whole group counts once/);
+  assert.ok(s.handle.getBounds()!.height <= dialogHeightBudget(24));
+  assert.equal(s.tui.getFocusedComponent(), s.dialog); s.dialog.dispose();
 });
 
 test("real renderer: Advanced is a third peer tab with a selected background, shared backend rows and no feature toggle", async () => {

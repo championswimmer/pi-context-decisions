@@ -13,7 +13,7 @@ import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
-import { ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, describeError, fieldValue, sanitizeTerminalText, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
+import { ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, describeError, fieldForSettings, fieldValue, sanitizeTerminalText, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
 import { readDecisionsHistory, historyReportLines } from "./decisions-history.ts";
@@ -314,11 +314,12 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
 const EDITOR_UNAVAILABLE = "The allow list editors need the terminal UI. Without it, edit globalAllowlist in the settings file or alwaysAllowed in <cwd>/.pi/pi-context-decisions.json, then /reload";
 /** RPC fallback: the same grouping as the terminal dialog, built from select/input requests. */
 async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Skills" | "Tools" | "Advanced", env?: Record<string, string | undefined>) {
-  const fields: readonly AdvancedField[] = tab === "Tools" ? TOOL_FIELDS : tab === "Skills" ? SKILL_FIELDS : ADVANCED_FIELDS;
+  const definitions: readonly AdvancedField[] = tab === "Tools" ? TOOL_FIELDS : tab === "Skills" ? SKILL_FIELDS : ADVANCED_FIELDS;
   const title = `Decisions · ${tab} settings`;
   for (;;) {
     const settings = controller.getSettings();
-    const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}`);
+    const fields = definitions.map((field) => fieldForSettings(field, settings));
+    const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}${field.group === "tools" && field.kind === "int" ? ` · ${field.label}` : ""}`);
     const provider = `Provider / execution: ${settings.backend?.backend ?? "not configured"}`;
     const model = `Model: ${selectionLabel(settings.backend)}`;
     const extras = tab === "Advanced" ? [provider, model] : tab === "Skills" ? ["Allow list (Global)", "Allow list (Project)", "Status"]
@@ -349,7 +350,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
         if (at < 0) continue;
         await controller.update((current) => updateSetting(current, key, field.options![at].value));
       } else {
-        const hint = key === "decision.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : field.key === "threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" || key === "tools.maxAdded" ? " (new items added per picking round)" : "";
+        const hint = field.group === "tools" ? ` (${field.label}; ${field.hint})` : key === "decision.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : field.key === "threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" ? " (new items added per picking round)" : "";
         const value = await ctx.ui.input(`New value for ${key}${hint}`, String(old), { signal: ctx.signal });
         if (value === undefined) continue;
         await controller.update((current) => updateSetting(current, key, value.trim()));

@@ -12,7 +12,7 @@ import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-
 import type { CommandContext } from "./contracts.ts";
 import { HISTORY_NOTE, historyTurnLines, historyTurnSummary, historyTurnTitle, type DecisionsHistory, type HistoryTurn } from "./decisions-history.ts";
 import {
-  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
+  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldForSettings, fieldValue, layoutMenu, modelLabel,
   sanitizeTerminalText, type SettingsGroup,
 } from "./settings-model.ts";
 
@@ -264,7 +264,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         run: () => push({ kind: "history-batch", turn }),
       }));
     }
-    const fields = (values: typeof ADVANCED_FIELDS): Item[] => values.map((field) => ({
+    const fields = (values: typeof ADVANCED_FIELDS): Item[] => values.map((field) => fieldForSettings(field, settings)).map((field) => ({
       label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
       ...(field.key === "failMode" && fieldValue(settings, field.group, field.key) === "open" ? { tone: "warn" as const } : {}),
       run: () => {
@@ -334,7 +334,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     }
     if (route.kind === "options") {
       const group = route.group ?? "relevance";
-      const field = fieldFor(group, route.key);
+      const field = fieldFor(group, route.key, settings);
       return (field?.options ?? []).map((option) => ({
         label: option.value, value: String(fieldValue(settings, group, route.key)) === option.value ? "current" : "",
         tone: route.key === "failMode" && option.value === "open" ? "warn" as const : undefined, description: option.description,
@@ -352,7 +352,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "tools": return "Decisions › Tools";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "edit": case "options": return `Decisions › ${stack[0]?.route.kind === "main" ? "Skills" : stack[0]?.route.kind === "tools" ? "Tools" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
+      case "edit": case "options": return `Decisions › ${stack[0]?.route.kind === "main" ? "Skills" : stack[0]?.route.kind === "tools" ? "Tools" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key, snap.settings)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "history": return "Decisions › History";
       case "history-batch": return `Decisions › History › ${historyTurnTitle(route.turn)}`;
@@ -471,7 +471,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       if (route.kind === "allowlist" && frame.child) body = frame.child.render(inner).slice(0, bodyBudget);
       else if (route.kind === "allowlist") body = fit(bodyBudget, [{ lines: [theme.fg("muted", frame.loading ? "Loading skill inventory…" : "Nothing to show")], min: 1 }, { lines: bannerLines(frame, inner), min: 1 }]);
       else if (route.kind === "edit" && frame.input) {
-        const field = fieldFor(route.group ?? "relevance", route.key);
+        const field = fieldFor(route.group ?? "relevance", route.key, snap.settings);
         body = fit(bodyBudget, [
           { lines: [theme.fg("accent", sanitizeTerminalText(field?.label ?? route.key, 120))], min: 1 },
           { lines: wrap(field?.hint ?? "", inner, 3).map((line) => theme.fg("muted", line)), min: 0 },

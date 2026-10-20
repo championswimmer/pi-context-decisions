@@ -4,7 +4,7 @@ import { CURSOR_MARKER, visibleWidth, stripTerminalSequences } from "@earendil-w
 import type { ScopedSkill } from "../src/apps/allowlist.ts";
 import type { RelevanceItem } from "../src/apps/relevance.ts";
 import { defaultSettings, SettingsError, updateSetting, type ContextDecisionsSettings } from "../src/settings.ts";
-import { dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { ADVANCED_FIELDS, dialogHeightBudget } from "../src/extension/settings-model.ts";
 import {
   createSettingsDialogComponent, createSettingsDialogManager, type DialogResult, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps,
 } from "../src/extension/settings-dialog.ts";
@@ -193,6 +193,41 @@ test("Advanced lists every knob, edit is prefilled, invalid values stay inline a
   assert.match(h.text(), /integer in \[1, 50\]/); assert.match(h.text(), /Value: 999/, "the text is kept after a failed save");
   h.press(KEY.esc); assert.match(h.text(), /Decisions › Advanced/); assert.doesNotMatch(h.text(), /Value:/);
   assert.equal(f.calls.filter((call) => call.startsWith("updateSetting")).length, 1);
+  h.component.dispose();
+});
+
+test("Advanced tool limits and editor help refresh after mode changes in the same dialog", async () => {
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 50 });
+  const assertLabels = (noun: string) => {
+    assert.ok(h.text(140).includes(`${noun} · Max added per round`));
+    assert.ok(h.text(140).includes(`${noun} · Minimum candidates`));
+    assert.match(h.text(140), /Skills · Max added per round/);
+    assert.match(h.text(140), /Skills · Minimum inventory/);
+  };
+  assertLabels("Tools");
+  h.press(KEY.shiftTab, KEY.down, KEY.enter, KEY.down, KEY.enter); await tick(); // Tools → Mode → mcp
+  assert.equal(f.settings.tools.mode, "mcp"); assert.equal(f.settings.tools.enabled, false);
+  h.press(KEY.tab); assertLabels("MCP/exts");
+  toRow(h, 2 + ADVANCED_FIELDS.findIndex((field) => field.group === "tools" && field.key === "maxAdded"));
+  h.press(KEY.enter);
+  assert.match(h.text(140), /Decisions › Advanced › MCP\/exts · Max added per round/);
+  assert.match(h.text(140), /whole group counts once/); assert.match(h.text(140), /Value: 8/);
+  h.press(KEY.backspace, "3", KEY.enter); await tick();
+  assert.equal(f.settings.tools.maxAdded, 3);
+  h.press(KEY.down, KEY.enter);
+  assert.match(h.text(140), /Decisions › Advanced › MCP\/exts · Minimum candidates/);
+  assert.match(h.text(140), /Below this many groups, no scoring and every tool stays available/);
+  assert.match(h.text(140), /Value: 0/);
+  h.press(KEY.backspace, "2", KEY.enter); await tick();
+  assert.equal(f.settings.tools.minCandidates, 2);
+  h.press(KEY.shiftTab, KEY.down, KEY.enter, KEY.enter); await tick(); // Tools → Mode → tools
+  assert.equal(f.settings.tools.mode, "tools");
+  h.press(KEY.tab); assertLabels("Tools"); assert.doesNotMatch(h.text(140), /MCP\/exts/);
+  toRow(h, 2 + ADVANCED_FIELDS.findIndex((field) => field.group === "tools" && field.key === "maxAdded"));
+  h.press(KEY.enter);
+  assert.match(h.text(140), /Decisions › Advanced › Tools · Max added per round/);
+  assert.match(h.text(140), /Value: 3/); assert.doesNotMatch(h.text(140), /whole group counts once/);
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:tools.mode=mcp", "updateSetting:tools.maxAdded=3", "updateSetting:tools.minCandidates=2", "updateSetting:tools.mode=tools"]);
   h.component.dispose();
 });
 

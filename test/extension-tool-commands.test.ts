@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import { defaultSettings, loadSettings, updateSetting } from "../src/settings.ts";
-import { setModel } from "./helpers/settings-ui.ts";
+import { rpcContext, setModel } from "./helpers/settings-ui.ts";
 import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
 import type { SimToolInfo } from "./helpers/pi-sim.ts";
 import { extTool, mcpTool, toolSetup, resourceTools, type ToolHarness } from "./helpers/tool-fixture.ts";
@@ -81,6 +81,38 @@ test("status shows tool filtering lines and the not-a-sandbox sentence; off says
   assert.match(text, /not a sandbox/); assert.match(text, /discovery listings/); assert.match(text, /mid-session keeps tools already registered available/);
   assert.doesNotMatch(text, /ext_a/, "status carries counts, never tool names");
 });
+test("RPC tool-limit labels and input help follow mode changes while edits keep their original keys", async (t) => {
+  const h = await toolSetup(t, { tools: { enabled: false } });
+  type Select = (title: string, options: string[]) => string | undefined;
+  const pick = (prefix: string): Select => (_title, options) => { const option = options.find((value) => value.startsWith(prefix)); assert.ok(option, `missing ${prefix}`); return option; };
+  const limit = (key: string, noun: string, max: number, min: number): Select => (title, options) => {
+    assert.equal(title, "Decisions · Advanced settings");
+    assert.ok(options.includes(`tools.maxAdded: ${max} · ${noun} · Max added per round`));
+    assert.ok(options.includes(`tools.minCandidates: ${min} · ${noun} · Minimum candidates`));
+    return key === "Back" ? "Back" : pick(`tools.${key}:`)(title, options);
+  };
+  const actions: Select[] = [
+    () => "Advanced", limit("maxAdded", "Tools", 8, 0), limit("minCandidates", "Tools", 3, 0), () => "Back",
+    () => "Tools", pick("tools.mode:"), pick("mcp ·"), () => "Back",
+    () => "Advanced", limit("maxAdded", "MCP/exts", 3, 2), limit("minCandidates", "MCP/exts", 5, 2), () => "Back",
+    () => "Tools", pick("tools.mode:"), pick("tools ·"), () => "Back",
+    () => "Advanced", limit("Back", "Tools", 5, 4), () => "Done",
+  ];
+  const titles: string[] = []; const inputs = ["3", "2", "5", "4"];
+  await h.sim.command("", rpcContext(h.ctx, {
+    async select(title: string, options: string[]) { assert.ok(actions.length, "unexpected menu"); return actions.shift()!(title, options); },
+    async input(title: string) { titles.push(title); return inputs.shift(); },
+    custom() { throw new Error("custom overlay in rpc"); },
+  }));
+  assert.equal(actions.length, 0); assert.equal(inputs.length, 0);
+  assert.match(titles[0], /tools\.maxAdded.*Tools · Max added per round/);
+  assert.match(titles[1], /tools\.minCandidates.*Tools · Minimum candidates/);
+  assert.match(titles[2], /tools\.maxAdded.*MCP\/exts · Max added per round.*whole group counts once/);
+  assert.match(titles[3], /tools\.minCandidates.*MCP\/exts · Minimum candidates.*Below this many groups/);
+  assert.deepEqual((await saved(h)).tools, { ...defaultSettings().tools, maxAdded: 5, minCandidates: 4 });
+  assert.equal(h.requests.length, 0, "settings edits never score candidates");
+});
+
 test("RPC mode keeps select/input menus for the tools group and never calls custom overlays", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
   const picks: string[] = [];

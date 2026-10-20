@@ -83,7 +83,17 @@ export const ADVANCED_FIELDS = [
   ...RELEVANCE_FIELDS.filter((field) => !SKILL_FIELDS.includes(field)),
   ...ALL_TOOL_FIELDS.filter((field) => !TOOL_FIELDS.includes(field)),
 ];
-export function fieldFor(group: SettingsGroup, key: string): AdvancedField | undefined { return [...SKILL_FIELDS, ...TOOL_FIELDS, ...ADVANCED_FIELDS].find((field) => field.group === group && field.key === key); }
+/** Resolve display metadata from the current snapshot, never mutating field definitions or policy. */
+export function fieldForSettings(field: AdvancedField, settings: ContextDecisionsSettings): AdvancedField {
+  if (field.group !== "tools" || settings.tools.mode !== "mcp") return field;
+  if (field.key === "maxAdded") return { ...field, label: "MCP/exts · Max added per round", hint: "0–1000 new MCP servers or extensions per round, best first. Each whole group counts once; allowlisted and already-available groups do not count." };
+  if (field.key === "minCandidates") return { ...field, label: "MCP/exts · Minimum candidates", hint: "0–1000 MCP servers or extensions. Gating starts at zero by default. Below this many groups, no scoring and every tool stays available." };
+  return field;
+}
+export function fieldFor(group: SettingsGroup, key: string, settings: ContextDecisionsSettings): AdvancedField | undefined {
+  const field = [...SKILL_FIELDS, ...TOOL_FIELDS, ...ADVANCED_FIELDS].find((field) => field.group === group && field.key === key);
+  return field && fieldForSettings(field, settings);
+}
 export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown { return (settings[group] as unknown as Record<string, unknown>)[key]; }
 export function toolsSummary(settings: ContextDecisionsSettings): string { return settings.tools.enabled ? `On · ${settings.tools.mode} · ${settings.tools.cadence}` : "Off"; }
 
@@ -96,7 +106,7 @@ export function advancedValueText(field: AdvancedField, settings: ContextDecisio
 
 export interface RowDescription { id: string; label: string; value: string; description: string }
 export function advancedRows(settings: ContextDecisionsSettings): RowDescription[] {
-  return ADVANCED_FIELDS.map((field) => ({
+  return ADVANCED_FIELDS.map((field) => fieldForSettings(field, settings)).map((field) => ({
     id: `${field.group}.${field.key}`, label: field.label, value: advancedValueText(field, settings), description: field.hint,
   }));
 }
