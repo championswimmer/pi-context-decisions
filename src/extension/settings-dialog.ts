@@ -10,7 +10,7 @@ import type { BackendSelection } from "../core/backends/factory.ts";
 import type { ContextDecisionsSettings } from "../settings.ts";
 import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext } from "./contracts.ts";
-import { HISTORY_NOTE, historyBatchLines, historyBatchSummary, historyBatchTitle, type DecisionsHistory, type HistoryBatch } from "./decisions-history.ts";
+import { HISTORY_NOTE, historyTurnLines, historyTurnSummary, historyTurnTitle, type DecisionsHistory, type HistoryTurn } from "./decisions-history.ts";
 import {
   ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
   sanitizeTerminalText, type SettingsGroup,
@@ -28,7 +28,7 @@ export type SettingsRoute =
   | { kind: "main" } | { kind: "advanced" } | { kind: "tools" } | { kind: "provider" }
   | { kind: "model"; filter?: { backend: BackendSelection["backend"]; provider?: string } }
   | { kind: "edit"; key: string; group?: SettingsGroup } | { kind: "options"; key: string; group?: SettingsGroup }
-  | { kind: "status" } | { kind: "history" } | { kind: "history-batch"; batch: HistoryBatch }
+  | { kind: "status" } | { kind: "history" } | { kind: "history-batch"; turn: HistoryTurn }
   | { kind: "allowlist"; scope: AllowlistScope; list?: AllowlistKind };
 export type InitialRoute = "main" | "advanced" | "tools" | "provider" | "model" | "history" | { allowlist: AllowlistScope; list?: AllowlistKind };
 export type DialogResult = "closed" | "shutdown";
@@ -184,7 +184,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     else if (route.kind === "model") load(frame, (signal) => ops.listModels(route.filter, signal), (rows) => { frame.models = rows; frame.selected = 0; });
     else if (route.kind === "status") load(frame, (signal) => ops.statusLines(signal), (lines) => { frame.lines = lines.map((line) => sanitizeTerminalText(line, 800)); frame.scroll = 0; });
     else if (route.kind === "history") load(frame, (signal) => ops.history ? ops.history(signal) : Promise.reject(new Error("Session history is unavailable")), (history) => { frame.history = history; frame.selected = 0; frame.offset = 0; });
-    else if (route.kind === "history-batch") { frame.lines = historyBatchLines(route.batch); frame.scroll = 0; }
+    else if (route.kind === "history-batch") { frame.lines = historyTurnLines(route.turn); frame.scroll = 0; }
     else if (route.kind === "edit") {
       const input = new Input({ prompt: "Value: " });
       input.setValue(String(fieldValue(snap.settings, route.group ?? "relevance", route.key)));
@@ -258,10 +258,10 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     const settings = snap.settings;
     if (route.kind === "history") {
       if (!frame.history) return [{ label: frame.loading ? "Reading committed branch…" : "History unavailable", disabled: "Ctrl+R retries reading the active branch. No decision calls are made.", run: () => {} }];
-      if (!frame.history.batches.length) return [{ label: "No committed additions on this branch", disabled: "Empty turns are omitted. Ctrl+R refreshes the committed branch snapshot.", run: () => {} }];
-      return [...frame.history.batches].reverse().map((batch) => ({
-        label: historyBatchTitle(batch), value: historyBatchSummary(batch), description: HISTORY_NOTE,
-        run: () => push({ kind: "history-batch", batch }),
+      if (!frame.history.turns.length) return [{ label: "No committed additions on this branch", disabled: "Empty turns are omitted. Ctrl+R refreshes the committed branch snapshot.", run: () => {} }];
+      return [...frame.history.turns].reverse().map((turn) => ({
+        label: `${historyTurnTitle(turn)}: (${historyTurnSummary(turn)})`, description: HISTORY_NOTE,
+        run: () => push({ kind: "history-batch", turn }),
       }));
     }
     const fields = (values: typeof ADVANCED_FIELDS): Item[] => values.map((field) => ({
@@ -355,7 +355,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "edit": case "options": return `Decisions › ${stack[0]?.route.kind === "main" ? "Skills" : stack[0]?.route.kind === "tools" ? "Tools" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "history": return "Decisions › History";
-      case "history-batch": return `Decisions › History › ${historyBatchTitle(route.batch)}`;
+      case "history-batch": return `Decisions › History › ${historyTurnTitle(route.turn)}`;
       case "allowlist": return `Decisions › Always allowed${route.list === "tools" ? " tools" : route.list === "mcp" ? " MCP servers & extensions" : ""} · ${route.scope === "global" ? "Global" : "Project"}`;
     }
   };
@@ -364,7 +364,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "main": case "tools": case "advanced": return "Tab switch · ↑↓ move · Enter select · Space toggle · Esc close";
       case "edit": return "Enter save · Esc cancel";
       case "status": return "↑↓ scroll · Enter refresh · Esc back";
-      case "history": return "↑↓ batch · Enter details · Ctrl+R refresh · Esc back";
+      case "history": return "↑↓ turn · Enter expand · Ctrl+R refresh · Esc back";
       case "history-batch": return "↑↓ / PgUp/PgDn scroll · Home/End · Esc back";
       case "allowlist": return "Esc back";
       default: return "↑↓ move · Enter select · Space toggle · Esc back";
@@ -413,14 +413,15 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     frame.selected = Math.min(Math.max(0, frame.selected), Math.max(0, items.length - 1));
     const selected = items[frame.selected];
     const longest = items.reduce((max, item) => Math.max(max, visibleWidth(sanitizeTerminalText(item.label, 120))), 0);
-    // In history the turn number is the primary navigation cue: counts must yield before it is clipped.
-    const valueWidth = Math.min(frame.route.kind === "history" ? Math.max(0, inner - 22) : 28,
+    const valueWidth = Math.min(28,
       items.reduce((max, item) => Math.max(max, visibleWidth(sanitizeTerminalText(item.value ?? "", 160))), 0));
     // Labels get every column the values do not need, so long provider names are not clipped needlessly.
     const labelCol = Math.max(8, Math.min(longest, inner - 2 - 2 - valueWidth));
+    // History is one seamless label: the turn number stays first and counts yield at narrow widths.
+    const rowLabelCol = frame.route.kind === "history" ? Math.max(1, inner - 2) : labelCol;
     const row = (item: Item, index: number): string => {
       const mark = index === frame.selected ? "❯" : " ";
-      const text = `${mark} ${truncateToWidth(sanitizeTerminalText(item.label, 120), labelCol, "…", true)}${item.value ? `  ${sanitizeTerminalText(item.value, 160)}` : ""}`;
+      const text = `${mark} ${truncateToWidth(sanitizeTerminalText(item.label, 120), rowLabelCol, "…", true)}${item.value ? `  ${sanitizeTerminalText(item.value, 160)}` : ""}`;
       const line = truncateToWidth(text, inner, "…");
       return index === frame.selected ? theme.fg("accent", line) : item.disabled ? theme.fg("dim", line) : item.tone === "warn" ? theme.fg("warning", line) : item.tone === "ok" ? theme.fg("success", line) : item.tone === "muted" ? theme.fg("muted", line) : line;
     };

@@ -208,16 +208,21 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
 });
 
 for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview and scrollable details reuse the focused overlay while the transcript grows`, async () => {
-  const ops: SettingsDialogOps = { ...fakeOps(), async history() { return { batches: [{ turn: 4, answered: true,
-    items: { skills: Array.from({ length: 120 }, (_, n) => `skill-${n}`), pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }; } };
+  const ops: SettingsDialogOps = { ...fakeOps(), async history() { return { turns: [{ turn: 4, batches: [{ turn: 4, answered: true,
+    items: { skills: Array.from({ length: 119 }, (_, n) => `skill-${n}`), pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }, { turn: 7, answered: true,
+    marks: { skills: new Map([["skill-119", "score 1.6 / ≥0.75"]]) },
+    items: { skills: ["skill-119"], pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }] }; } };
   const s = await scenario(rows, 0, "history", ops);
   const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + rows).join("\n"); };
   await new Promise((resolve) => setImmediate(resolve)); s.tui.renderNow(); await s.terminal.flush();
-  assert.match(view(), /Before turn 4/);
+  assert.match(view(), /Turn 4: \(120 skills, 0 tools\/MCPs added\)/);
+  assert.doesNotMatch(view(), /Turn 7/, "internal turns are not top-level rows");
   s.tui.getFocusedComponent()!.handleInput!("\r"); s.tui.renderNow(); await s.terminal.flush();
-  assert.match(view(), /Before turn 4/);
+  assert.match(view(), /Turn 4/);
   s.tui.getFocusedComponent()!.handleInput!("\x1b[F"); s.tui.renderNow(); await s.terminal.flush();
   assert.match(view(), /skill-119/);
+  assert.match(view(), /Internal turn 7/, "expansion preserves internal turn numbering");
+  assert.match(view(), /skill-119  score 1\.6 \/ ≥0\.75/);
   const bounds = s.handle.getBounds()!;
   assert.ok(bounds.height <= dialogHeightBudget(rows));
   for (let n = 30; n < 50; n++) { s.append(n); s.tui.renderNow(); await s.terminal.flush(); }

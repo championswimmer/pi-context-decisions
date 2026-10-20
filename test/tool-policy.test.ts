@@ -98,14 +98,17 @@ test("baseGrowth records allowlisted names and available groups once; mcp mode a
   const tools = availability(inv, "tools", l, a);
   assert.deepEqual(baseGrowth(inv, "tools", l, a, tools), { tools: ["ext_a"], groups: ["mcp__docs"] });
   const mcpMode = availability(inv, "mcp", l, a);
-  assert.deepEqual(baseGrowth(inv, "mcp", l, a, mcpMode), { tools: ["ext_a"], groups: ["ext__ext_a", "mcp__docs"] }, "ext_a is allowlisted by name and promotes its extension");
+  assert.deepEqual(baseGrowth(inv, "mcp", l, a, mcpMode), { tools: [], groups: ["ext__ext_a", "mcp__docs"] }, "ext_a promotes its extension; the group grant covers the pin");
   const withLoose = availability(shared, "mcp", l, allow());
   assert.deepEqual(baseGrowth(shared, "mcp", l, allow(), withLoose), { tools: ["loose"], groups: [] }, "grouped extension tools are covered by their group, never recorded one by one");
   // Already recorded names are not repeated, and a promoted group becomes a recorded group.
   const known = ledger(["ext_a"], ["mcp__docs", "ext__ext_a"]);
   assert.deepEqual(baseGrowth(inv, "mcp", known, a, availability(inv, "mcp", known, a)), { tools: [], groups: [] });
   const promoted = availability(inv, "mcp", ledger(), allow(["mcp__dev_radius__q"]));
-  assert.deepEqual(baseGrowth(inv, "mcp", ledger(), allow(["mcp__dev_radius__q"]), promoted).groups, ["mcp__dev_radius"]);
+  assert.deepEqual(baseGrowth(inv, "mcp", ledger(), allow(["mcp__dev_radius__q"]), promoted), { tools: [], groups: ["mcp__dev_radius"] });
+  const groupAndPin = allow(["ext_a", "mcp__docs__s"], ["ext__ext_a", "mcp__docs"]);
+  assert.deepEqual(baseGrowth(inv, "mcp", ledger(), groupAndPin, availability(inv, "mcp", ledger(), groupAndPin)),
+    { tools: [], groups: ["ext__ext_a", "mcp__docs"] }, "allowlisted whole groups also cover individual pins");
   // Internal tools are never recorded.
   assert.ok(!baseGrowth(inv, "mcp", l, allow(["read"]), mcpMode).tools.includes("read"));
 });

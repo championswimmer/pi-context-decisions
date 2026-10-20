@@ -61,6 +61,8 @@ export interface ToolFilter {
   /** Settings/allowlist saved: project list cache and scores are stale. */
   invalidate(): void;
   describe(ctx: CommandContext): Promise<ToolReport>;
+  /** Names-only membership from the existing session registry snapshot. Never refreshes the registry or reads settings. */
+  historyToolGroups(): ReadonlyMap<string, string>;
   last(): LastToolDecision | undefined;
   /** Status-line text, or undefined when filtering is off. */
   status(): string | undefined;
@@ -298,7 +300,13 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
    * registers later in the same run is never mistaken for "filtering was enabled mid-session" (which would record it as already seen).
    */
   const toRecords = (taken: Pending, ledger: ToolLedgerState): ToolLedgerData[] => {
-    const tools = [...taken.tools].filter((name) => !ledger.tools.has(name));
+    const groupMode = deps.getSettings().tools.mode === "mcp";
+    const tools = [...taken.tools].filter((name) => {
+      const group = snapshot?.byName.get(name)?.group;
+      // Also covers mid-session base/restore records and pending individual grants promoted by a mode change.
+      // Do not erase old individual ledger records or scoped mixed-origin pins without a whole-group grant.
+      return !ledger.tools.has(name) && !(groupMode && group && (taken.groups.has(group) || ledger.groups.has(group)));
+    });
     const groups = [...taken.groups].filter((key) => !ledger.groups.has(key));
     const recorded = new Set([...tools, ...groups]);
     const records = toolRecords({
@@ -624,6 +632,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       cacheEpoch++; pend = fresh(); runTask = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear();
     },
     invalidate() { cacheEpoch++; projectCache = undefined; failedKey = undefined; last = undefined; inflight = undefined; cache.clear(); },
+    historyToolGroups: () => new Map((snapshot?.tools ?? []).flatMap((tool) => tool.group ? [[tool.name, tool.group] as const] : [])),
     last: () => last ? structuredClone(last) : undefined,
     status() {
       const settings = deps.getSettings();

@@ -407,7 +407,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
     async history(signal) {
       const session = scoped(signal).sessionManager;
       if (!session) throw new SettingsError("This Pi host does not expose session history");
-      return readDecisionsHistory(session);
+      return readDecisionsHistory(session, controller.historyToolGroups());
     },
     allowlist: (scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal),
     toolAllowlist: (list, scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal, list),
@@ -470,7 +470,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
           if (terminal(ctx)) await openDialog(ctx, "history");
           else {
             if (!ctx.sessionManager) throw new SettingsError("This Pi host does not expose session history");
-            controller.report(ctx, historyReportLines(readDecisionsHistory(ctx.sessionManager)).join("\n"));
+            controller.report(ctx, historyReportLines(readDecisionsHistory(ctx.sessionManager, controller.historyToolGroups())).join("\n"));
           }
         }
         else if (action === "tools" || action === "mcp") await listCommand(ctx, action, tokens);

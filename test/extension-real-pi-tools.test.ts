@@ -118,7 +118,7 @@ test("R1 real Pi: the first request declares core tools and the chosen tool only
   const ledger = h.sessionManager.getBranch().filter((entry) => entry.type === "custom" && entry.customType === "context-decisions-tools");
   assert.deepEqual(ledger.map((entry) => (entry as { data?: unknown }).data), [{ v: 1, tools: ["ext_a"], withheld: ["ext_b", "mcp__srv__x"], picks: { ext_a: { score: 2, threshold: 0.375 } } }]);
   const history = readDecisionsHistory(h.sessionManager);
-  assert.deepEqual(history.batches.map((b) => [b.turn, b.items.tools, b.items.noticeTools]), [[1, ["ext_a"], []]], "availability is recorded without inventing a notice for declared tools");
+  assert.deepEqual(history.turns[0].batches.map((b) => [b.turn, b.items.tools, b.items.noticeTools]), [[1, ["ext_a"], []]], "availability is recorded without inventing a notice for declared tools");
 });
 
 test("R2 real Pi: a tool registered during the first tool execution is reconciled at turn_end and reaches the SECOND request of the same run", async (t) => {

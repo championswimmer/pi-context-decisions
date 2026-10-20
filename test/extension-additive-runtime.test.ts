@@ -90,6 +90,19 @@ test("round 1 adds the best skills; the system prompt keeps only the stable base
   assert.deepEqual(h.scoredNames(), h.inventory.map((s) => s.name), "all twelve candidates were scored in round 1");
   assert.doesNotMatch(JSON.stringify(h.requests), /SKILL\.md|private/, "locations never enter the decision payload");
 });
+test("prompt and cached tool-round skill picks survive canonical delta writes into history", async (t) => {
+  const h = await setup(t, { relevance: { cadence: "tool-round", maxSkills: 1 }, score: (name) => name === "skill-0" ? 1.6 : name === "skill-1" ? 1.4 : 0 });
+  await h.start("choose relevant skills");
+  assert.deepEqual((h.deltas()[0].details as { picks?: unknown }).picks, { "skill-0": { score: 1.6, threshold: 0.375 } });
+  await h.end({ toolResults: TOOL });
+  assert.deepEqual((h.deltas()[1].details as { picks?: unknown }).picks, { "skill-1": { score: 1.4, threshold: 0.375 } });
+  assert.equal(h.requests.length, 1);
+  await h.command("history");
+  assert.match(h.messages.at(-1)!, /\+ skill-0  score 1\.6 \/ ≥0\.75/);
+  assert.match(h.messages.at(-1)!, /\+ skill-1  score 1\.4 \/ ≥0\.75/);
+  assert.doesNotMatch(h.messages.at(-1)!, /PRIVATE|private|SKILL\.md/);
+});
+
 test("round 2 never scores or re-adds what is already advertised, even for a different prompt", async (t) => {
   const h = await setup(t);
   await h.start("first task");

@@ -72,6 +72,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     getLastDecision: () => last ? structuredClone(last) : undefined,
     getLastToolDecision: () => toolFilter.last(),
     describeTools: (ctx) => toolFilter.describe(ctx),
+    historyToolGroups: () => toolFilter.historyToolGroups(),
     getInventory() {
       if (inventorySnapshot) return structuredClone(inventorySnapshot);
       return toScopedSkills((pi.getCommands?.() ?? []).filter((command) => command.source === "skill" && command.name.startsWith("skill:")).map((command) => ({ name: command.name.slice(6), description: command.description ?? "", sourceInfo: { scope: command.sourceInfo?.scope } })));

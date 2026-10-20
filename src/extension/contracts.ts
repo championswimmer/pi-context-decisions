@@ -92,6 +92,8 @@ export interface Controller {
   getLastToolDecision(): LastToolDecision | undefined;
   /** Local inventory + availability on the current branch. `ctx` supplies the session branch and cwd. */
   describeTools(ctx: CommandContext): Promise<ToolReport>;
+  /** Existing registry snapshot, names only; history must not refresh the inventory or infer membership from tool names. */
+  historyToolGroups(): ReadonlyMap<string, string>;
   getInventory(): ScopedSkill[];
   loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad>;
   /** Names only: the skill list (iterable) or any subset of `{ skills, tools, mcpServers }`; omitted lists keep their value. */

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { projectAllowlistPath } from "../src/project-allowlist.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
 import { CORE, extTool, mcpTool, resourceTools, toolSetup } from "./helpers/tool-fixture.ts";
+import { toolRecords } from "../src/extension/tool-ledger.ts";
+import { readDecisionsHistory, historyTurnSummary } from "../src/extension/decisions-history.ts";
 import { builtinSource, extensionSource, type SimToolInfo } from "./helpers/pi-sim.ts";
 
 const A = extTool("ext_a"), B = extTool("ext_b"), C = extTool("ext_c");
@@ -118,6 +120,73 @@ test("mcp mode: allowlisting ONE tool of a namespace promotes the whole namespac
   assert.deepEqual(h.ledger()[0].groups, ["mcp__dev_radius"]);
   assert.ok(h.active().includes("mcp__dev_radius__q") && !h.active().includes("mcp__docs__s"));
 });
+for (const grant of ["tool pins", "group pins"] as const) test(`mcp history: ${grant} write whole MCP/extension grants only, surviving pin removal and a mode change`, async (t) => {
+  const plug = (name: string, exposure: SimToolInfo["exposure"] = "direct") => extTool(name, exposure, { sourceInfo: extensionSource("plug") });
+  const pins = ["plug_one", "mcp__docs__q"];
+  const h = await toolSetup(t, { tools: { mode: "mcp", alwaysAllowedTools: pins,
+    ...(grant === "group pins" ? { alwaysAllowedMcpServers: ["ext__plug", "mcp__docs"] } : {}) },
+    extra: [plug("plug_one"), plug("plug_two", "codemode"), mcpTool("docs", "q", "direct"), mcpTool("docs", "r"), B] });
+  await h.start("use the pinned groups");
+  assert.equal(h.ledger()[0].tools, undefined, "the writer must not duplicate individual grants covered by a whole group");
+  assert.deepEqual(h.ledger()[0].groups, ["ext__plug", "mcp__docs"]);
+  assert.deepEqual(h.ledger()[0].allowlisted, ["ext__plug", "mcp__docs"]);
+  const history = readDecisionsHistory(h.sim.session as unknown as Parameters<typeof readDecisionsHistory>[0]);
+  assert.equal(historyTurnSummary(history.turns[0]), "0 skills, 2 tools/MCPs added");
+  await h.command("history");
+  assert.match(h.messages.at(-1)!, /Turn 1: \(0 skills, 2 tools\/MCPs added\)/);
+  assert.doesNotMatch(h.messages.at(-1)!, /\+ (plug_one|mcp__docs__q)/);
+  for (const name of ["plug_one", "plug_two", "mcp__docs__q", "mcp__docs__r"]) assert.equal(await h.gate(name), undefined, name);
+  assert.match((await h.gate("ext_b"))!.reason, /unavailable/);
+  await h.end();
+  const settings = (await loadSettings(h.path)).settings;
+  await saveSettings({ ...settings, tools: { ...settings.tools, mode: "tools", alwaysAllowedTools: [], alwaysAllowedMcpServers: [] } }, h.path);
+  await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
+  h.sim.registerTool(plug("plug_late")); h.sim.registerTool(mcpTool("docs", "late", "direct"));
+  await h.start("now in tools mode without pins");
+  for (const name of [...pins, "plug_two", "mcp__docs__r", "plug_late", "mcp__docs__late"]) assert.equal(await h.gate(name), undefined, name);
+  assert.ok(h.active().includes("plug_late") && h.active().includes("mcp__docs__late"));
+  assert.match((await h.gate("ext_b"))!.reason, /unavailable/);
+  assert.equal(h.ledger().flatMap((record) => record.tools ?? []).length, 0, "mode changes do not invent member grants for whole groups");
+});
+
+test("history uses the existing snapshot to collapse legacy writer records without refreshing tools or changing their gates", async (t) => {
+  const h = await toolSetup(t, { tools: { mode: "mcp" }, extra: [extTool("plug_one", "direct", { sourceInfo: extensionSource("plug") }),
+    extTool("plug_two", "codemode", { sourceInfo: extensionSource("plug") })] });
+  for (const data of toolRecords({ tools: ["plug_one"], groups: ["ext__plug"], allowlisted: ["plug_one", "ext__plug"] })) {
+    h.sim.session.appendCustom("context-decisions-tools", data);
+  }
+  await h.start("old records remain available");
+  assert.equal(await h.gate("plug_one"), undefined); assert.equal(await h.gate("plug_two"), undefined);
+  const before = { ...h.sim.calls };
+  const length = h.sim.session.getBranch().length;
+  await h.command("history");
+  assert.match(h.messages.at(-1)!, /Turn 1: \(0 skills, 1 tools\/MCPs added\)/);
+  assert.match(h.messages.at(-1)!, /\+ ext__plug  pinned \(allowlist\)/);
+  assert.doesNotMatch(h.messages.at(-1)!, /\+ plug_one/);
+  assert.deepEqual(h.sim.calls, before, "history only consults the existing snapshot, never getAllTools or setActiveTools");
+  assert.equal(h.sim.session.getBranch().length, length);
+  assert.deepEqual(h.ledger()[0].tools, ["plug_one"], "reading does not rewrite old records");
+});
+
+test("tools-to-mcp promotion restores withheld siblings while history retains the earlier tools-mode addition", async (t) => {
+  const plug = (name: string) => extTool(name, "direct", { sourceInfo: extensionSource("plug") });
+  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["plug_one"] }, extra: [plug("plug_one"), plug("plug_two")] });
+  await h.start("tools mode");
+  assert.deepEqual(h.ledger()[0].tools, ["plug_one"]); assert.equal(h.ledger()[0].groups, undefined);
+  assert.ok(!h.active().includes("plug_two")); assert.match((await h.gate("plug_two"))!.reason, /unavailable/);
+  await h.end(); await h.set("tools.mode", "mcp");
+  await h.start("group mode");
+  assert.deepEqual(h.ledger().at(-1)?.groups, ["ext__plug"]);
+  assert.equal(h.ledger().at(-1)?.tools, undefined);
+  assert.deepEqual(h.ledger().at(-1)?.released, ["plug_two"], "reconcile restores only the sibling we withheld");
+  assert.ok(h.active().includes("plug_two")); assert.equal(await h.gate("plug_two"), undefined);
+  await h.command("history");
+  const report = h.messages.at(-1)!;
+  assert.match(report, /Turn 1: \(0 skills, 1 tools\/MCPs added\)/);
+  assert.match(report, /Turn 2: \(0 skills, 1 tools\/MCPs added\)/);
+  assert.match(report, /\+ plug_one/); assert.match(report, /\+ ext__plug/);
+});
+
 test("tools mode: a server allowlist accepts `-` or `_` spelling and the canonical namespace key", async (t) => {
   for (const entry of ["dev-radius", "dev_radius", "mcp__dev_radius"]) {
     const h = await toolSetup(t, { tools: { alwaysAllowedMcpServers: [entry] }, extra: [mcpTool("dev-radius", "q", "codemode")] });
@@ -241,6 +310,69 @@ test("late tools: a tool registered mid-run is scored at turn_end (kept or withh
   assert.match((await h.gate("mcp__srv__y"))!.reason, BLOCKED); assert.match((await h.gate("mcp__srv__y"))!.reason, BLOCKED);
   assert.equal(h.requests.length, before + 1, "scored once; the cached rejection answers later calls");
 });
+for (const mode of ["tools", "mcp"] as const) {
+  const browser = mode === "mcp" ? "mcp__agent_browser" : "mcp__agent_browser__run";
+  const plugin = mode === "mcp" ? "ext__plugin" : "plugin";
+  for (const cadence of ["prompt", "initial", "tool-round"] as const) {
+    test(`${mode}/${cadence}: committed writer records retain numeric tool/group picks`, async (t) => {
+      const h = await toolSetup(t, { tools: { mode, cadence }, extra: [mcpTool("agent_browser", "run"), extTool("plugin", "codemode")],
+        scores: { [browser]: 1.6, [plugin]: 1.4 } });
+      await h.start("use browser and plugin");
+      assert.deepEqual(h.ledger()[0].picks, { [browser]: { score: 1.6, threshold: 0.375 }, [plugin]: { score: 1.4, threshold: 0.375 } });
+      await h.command("history");
+      assert.ok(h.messages.at(-1)!.includes(`+ ${browser}  score 1.6 / ≥0.75`));
+      assert.ok(h.messages.at(-1)!.includes(`+ ${plugin}  score 1.4 / ≥0.75`));
+    });
+    for (const flush of ["turn_end", "agent_end"] as const) test(`${mode}/${cadence}: lazy picks survive ${flush} flush`, async (t) => {
+      const h = await toolSetup(t, { tools: { mode, cadence }, scores: { [browser]: 1.6 } });
+      await h.start("use a browser when it arrives");
+      h.sim.registerTool(mcpTool("agent_browser", "run"));
+      assert.equal(await h.gate("mcp__agent_browser__run"), undefined);
+      if (flush === "turn_end") await h.end({ toolResults: [{}] }); else await h.agentEnd();
+      assert.deepEqual(h.ledger().at(-1)?.picks, { [browser]: { score: 1.6, threshold: 0.375 } });
+      await h.command("history");
+      assert.ok(h.messages.at(-1)!.includes(`+ ${browser}  score 1.6 / ≥0.75`));
+    });
+  }
+  test(`${mode}: late catch-up grants retain their picks`, async (t) => {
+    const h = await toolSetup(t, { tools: { mode, cadence: "initial" }, scores: { [browser]: 1.6 } });
+    await h.start("use a browser");
+    h.sim.registerTool(mcpTool("agent_browser", "run"));
+    await h.end({ toolResults: [{}] });
+    assert.deepEqual(h.ledger().at(-1)?.picks, { [browser]: { score: 1.6, threshold: 0.375 } });
+  });
+}
+
+test("cached group tool-round grants keep their group score alongside the turn_end notice", async (t) => {
+  const h = await toolSetup(t, { tools: { mode: "mcp", cadence: "tool-round", maxAdded: 1 },
+    extra: [mcpTool("anchor", "run"), mcpTool("agent_browser", "run"), extTool("plugin", "codemode")],
+    scores: { mcp__anchor: 2, mcp__agent_browser: 1.6, ext__plugin: 1.4 } });
+  await h.start("use the available groups");
+  await h.end({ toolResults: [{}] });
+  assert.deepEqual(h.ledger().at(-1)?.picks, { mcp__agent_browser: { score: 1.6, threshold: 0.375 } });
+  assert.ok(h.notices().some((notice) => (notice.details as { groups?: string[] }).groups?.includes("mcp__agent_browser")));
+  await h.end({ toolResults: [{}] });
+  assert.deepEqual(h.ledger().at(-1)?.picks, { ext__plugin: { score: 1.4, threshold: 0.375 } });
+  assert.equal(h.requests.length, 1, "tool-round additions used cached scores but still persisted their numeric picks");
+  await h.set("decision.threshold", "0.9");
+  await h.command("history");
+  assert.match(h.messages.at(-1)!, /\+ mcp__agent_browser  score 1\.6 \/ ≥0\.75 · notice/);
+  assert.match(h.messages.at(-1)!, /\+ ext__plugin  score 1\.4 \/ ≥0\.75 · notice/);
+});
+
+test("non-scored writer grants never invent scores or fail-open/base reasons", async (t) => {
+  for (const policy of ["pinned", "fail-open", "unconfigured"] as const) {
+    const h = await toolSetup(t, { tools: { mode: "mcp", ...(policy === "pinned" ? { alwaysAllowedMcpServers: ["mcp__agent_browser"] } : {}) },
+      extra: [mcpTool("agent_browser", "run")], fail: policy === "fail-open", unconfigured: policy === "unconfigured", decision: { failMode: "open" } });
+    await h.start("use browser");
+    assert.equal(h.ledger()[0].picks, undefined);
+    await h.command("history");
+    const expected = policy === "pinned" ? "pinned (allowlist)" : "unknown (no recorded pick)";
+    assert.ok(h.messages.at(-1)!.includes(`+ mcp__agent_browser  ${expected}`));
+    assert.doesNotMatch(h.messages.at(-1)!, /\+ mcp__agent_browser  score/);
+  }
+});
+
 test("failure: a failed round adds nothing and never fails open for config errors; failMode open adds the remainder; the gate still blocks", async (t) => {
   const h = await toolSetup(t, { extra: [A, B], fail: true });
   await h.start("task");

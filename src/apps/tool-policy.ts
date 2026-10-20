@@ -66,11 +66,13 @@ export function remaining(inventory: ToolInventory, mode: ToolFilterMode, avail:
 /**
  * Identifiers that belong in the ledger as "base" so that availability only ever grows: allowlisted tools/groups
  * that are registered (removing an allowlist entry later never takes availability away) and, in `mcp` mode, every
- * ungrouped extension tool (a later switch to `tools` mode must not remove them; grouped ones are covered by their group).
+ * ungrouped extension tool (a later switch to `tools` mode must not remove them). Whole-group grants cover their members,
+ * including individual pins; mixed-origin pins still need an individual record when no whole-group grant exists.
  */
 export function baseGrowth(inventory: ToolInventory, mode: ToolFilterMode, ledger: AvailabilityLedger, allow: EffectiveAllowlists, avail: Availability): { tools: string[]; groups: string[] } {
   const groups = [...avail.groups].filter((key) => !ledger.groups.has(key));
   const tools = inventory.tools.filter((tool) => tool.kind !== "internal" && !ledger.tools.has(tool.name)
+    && !(mode === "mcp" && tool.group && avail.isGroupAvailable(tool.group))
     && (allow.tools.has(tool.name) || (mode === "mcp" && tool.kind === "extension" && !tool.group))).map((tool) => tool.name);
   return { tools, groups };
 }
