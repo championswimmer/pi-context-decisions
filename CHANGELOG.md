@@ -4,6 +4,20 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 ## [v2.0.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.0.0) — Major release (2026-10-18)
 
+### Highlights
+
+- Tool/MCP allowlists now select and grant items only from their own scope. The **Global** lists cover global items and save to `<agent-dir>/pi-context-decisions/settings.json`; the **Project** lists cover project items and save to `<project>/.pi/pi-context-decisions.json`.
+- Built-in MCP origins are determined from bounded, read-only config inspection: `<agent-dir>/mcp.json`, followed by trusted `<project>/.pi/mcp.json`. Only canonical server names, scopes and safe warning codes are retained; commands, URLs, environment variables, headers and credentials are never retained or forwarded.
+- MCP scopes are captured at session start and remain stable until `/reload` or session replacement, matching the live connections Pi loaded. Agent-directory overrides, project trust and Pi's global/project override precedence are respected.
+
+### Breaking changes and migration
+
+- Existing global/project tool and MCP pins now apply **only to items in the matching scope**; a pin in the other list no longer makes an item always available. Review both lists after upgrading.
+- For MCP servers whose effective configuration is project-scoped, move existing MCP/server or tool pins from the Global list to the Project list. A project settings-only override retains the global server's scope; a full valid project definition makes it project-scoped.
+- Mixed-origin groups can no longer be pinned as a whole. Pin their individual tools in the matching Global or Project tool list instead; individual pins do not unlock tools of the opposite scope.
+- Extension and extension-provided MCP scopes continue to follow Pi's public tool provenance. Unresolved built-in MCP origins retain the Global fallback. Filtering remains opt-in relevance gating, not a sandbox or permission boundary.
+
+
 <!-- Release notes generated using configuration in .github/release.yml at v2.0.0 -->
 
 ### What's Changed
@@ -12,6 +26,14 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v1.4.0...v2.0.0
+
+### [v2.3.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.3.0) — Minor release (2026-10-22)
+
+<!-- Release notes generated using configuration in .github/release.yml at v2.3.0 -->
+
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v2.2.1...v2.3.0
 
 ### [v2.2.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.2.0) — Minor release (2026-10-20)
 
@@ -46,6 +68,15 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v0.3.0...v1.0.0
 
 ### [v1.4.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v1.4.0) — Minor release (2026-10-16)
+
+#### Highlights
+
+- Simplified `/decisions` into three peer tabs: **Skills**, **Tools**, and **Advanced**, with matching RPC menus.
+- Skills and tool/MCP/extension filtering can now be enabled independently.
+- One shared `decision.*` policy controls threshold, batching, concurrency, timeout, failure mode, and prompt/description limits across the framework. Feature-specific caps and minimum inventory gates retain their existing defaults.
+- Existing settings migrate in memory without rewriting files on load. Explicit shared settings take precedence; the old disabled master switch migrates both independent switches off.
+- Decisions history includes per-item skill/tool scores.
+
 
 <!-- Release notes generated using configuration in .github/release.yml at v1.4.0 -->
 
