@@ -1,6 +1,6 @@
 {
   "name": "pi-context-decisions",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "Pi extension that uses decision/classifier models (Pi, TypeSafe JEV, OpenAI, OpenRouter) to filter which skills are advertised and, opt-in, which external tools and MCP servers are available for each prompt",
   "type": "module",
   "license": "MIT",
