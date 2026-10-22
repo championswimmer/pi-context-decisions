@@ -290,7 +290,8 @@ test("R3 real Pi lazy gate: an MCP server that connects AFTER the first boundary
   // The codemode script waits for the server it names, so the namespace registers while the script runs: it was not part of the first
   // boundary's inventory and is scored (once) by the gate, then allowed because it qualifies.
   assert.deepEqual(h.decisions.map((d) => d.names), [["mcp__srv"]]);
-  assert.match(lastToolText(h.requests[1]), /ran srv\/x/);
+  assert.match(h.requests[1].text.join(), /ran srv\/x/);
+  assert.match(lastToolText(h.requests[1]), /now also available: MCP servers: mcp__srv/, "the late lazy grant is announced after its result");
   assert.deepEqual(mcp.calls, [{ server: "srv", tool: "x" }]);
 });
 
@@ -408,4 +409,88 @@ test("real Pi keeps live MCP scope stable after disk edits, including resource r
   await until(() => mcp.origins.get("live") === "project" && ready(), "project MCP connection after reload");
   assert.equal(await gate("mcp__live__q"), undefined, "reload captures the new Project origin alongside Pi's replacement connection");
   assert.equal(await gate("list_mcp_resources", { server: "live" }), undefined);
+});
+
+test("real Pi tool-round: capped direct additions reach each next same-run request from cached scores", async (t) => {
+  const h = await realPi(t, (h) => [call(h, "ext_a"), call(h, "ext_a"), finish(h)], {
+    tools: { cadence: "tool-round", maxAdded: 1 },
+    earlier: [toolsExtension([{ name: "ext_a" }, { name: "ext_b" }, { name: "ext_c" }])],
+    scores: { ext_a: 2, ext_b: 1.5, ext_c: 1 },
+  });
+  await h.session.prompt("do the task");
+  assert.deepEqual(h.requests.map((r) => r.declared), [[...CORE, "ext_a"], [...CORE, "ext_a", "ext_b"], [...CORE, "ext_a", "ext_b", "ext_c"]]);
+  assert.equal(h.decisions.length, 1, "same-task rounds reuse scores, not new model decisions");
+});
+
+test("real Pi tool-round: capped indirect group additions and earlier drafts reach each next request", async (t) => {
+  const h = await realPi(t, (h) => [call(h, "read", { path: "a.txt" }), call(h, "read", { path: "a.txt" }), finish(h)], {
+    tools: { mode: "mcp", cadence: "tool-round", maxAdded: 1 }, files: { "a.txt": "TOOL-RESULT-SECRET" },
+    earlier: [(pi) => {
+      toolsExtension(["a", "b", "c"].map((name) => ({ name: `mcp__${name}__q`, exposure: "deferred", namespace: { name: `mcp__${name}` } })))(pi);
+      pi.on("turn_end", (event) => event.toolResults.length ? { entries: [...event.entries, { type: "custom", customType: "earlier-round", data: true }] } : undefined);
+    }], scores: { mcp__a: 2, mcp__b: 1.5, mcp__c: 1 },
+  });
+  await h.session.prompt("do the task");
+  assert.match(h.requests[0].text.join(), /MCP servers: mcp__a/);
+  assert.match(h.requests[1].text.join(), /MCP servers: mcp__b/);
+  assert.match(h.requests[2].text.join(), /MCP servers: mcp__c/);
+  assert.equal(h.decisions.length, 1);
+  assert.doesNotMatch(h.decisions[0].raw, /TOOL-RESULT-SECRET/);
+  assert.equal(h.sessionManager.getBranch().filter((e) => e.type === "custom" && e.customType === "earlier-round").length, 2);
+});
+
+test("real Pi tool-round: queued user task refreshes remaining scores, then later rounds use that task's cache", async (t) => {
+  const h = await realPi(t, (h) => [
+    h.step(() => { void h.session.steer("new USER task"); h.scores.ext_b = 1.5; h.scores.ext_c = 1; return fauxAssistantMessage([TOOL_CALL("ext_a")], { stopReason: "toolUse" }); }),
+    call(h, "ext_a"), finish(h),
+  ], { tools: { cadence: "tool-round", maxAdded: 1 }, earlier: [toolsExtension([{ name: "ext_a" }, { name: "ext_b" }, { name: "ext_c" }])], scores: { ext_a: 2 } });
+  await h.session.prompt("original USER task");
+  assert.deepEqual(h.requests.map((r) => r.declared), [[...CORE, "ext_a"], [...CORE, "ext_a", "ext_b"], [...CORE, "ext_a", "ext_b", "ext_c"]]);
+  assert.deepEqual(h.decisions.map((d) => [d.task, d.names]), [["original USER task", ["ext_a", "ext_b", "ext_c"]], ["new USER task", ["ext_b", "ext_c"]]]);
+});
+
+test("real Pi tool-round: a newly registered indirect tool is announced even without an earlier baseline notice", async (t) => {
+  let register!: () => void;
+  const h = await realPi(t, (h) => [
+    h.step(() => { register(); return fauxAssistantMessage([TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }), finish(h),
+  ], { tools: { cadence: "tool-round" }, files: { "a.txt": "TOOL-RESULT-SECRET" }, scores: { mcp__late__q: 2 }, earlier: [(pi) => {
+    register = () => toolsExtension([{ name: "mcp__late__q", exposure: "deferred", namespace: { name: "mcp__late" } }])(pi);
+  }] });
+  await h.session.prompt("use the late tool");
+  assert.doesNotMatch(h.requests[0].text.join(), /Tool availability/);
+  assert.deepEqual(h.decisions.map((d) => d.names), [["mcp__late__q"]]);
+  assert.match(h.requests[1].text.join(), /now also available: tools: mcp__late__q/);
+});
+
+test("real Pi tool-round: a delayed first baseline still includes previously available indirect tools", async (t) => {
+  let register!: () => void;
+  const h = await realPi(t, (h) => [
+    h.step(() => { register(); return fauxAssistantMessage([TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }), finish(h),
+  ], { tools: { cadence: "tool-round" }, files: { "a.txt": "result" }, scores: { mcp__early__q: 2 }, earlier: [(pi) => {
+    toolsExtension([{ name: "mcp__early__q", exposure: "deferred", namespace: { name: "mcp__early" } }])(pi);
+    register = () => toolsExtension([{ name: "mcp__late__q", exposure: "deferred", namespace: { name: "mcp__late" } }])(pi);
+  }] });
+  await h.session.prompt("task");
+  assert.doesNotMatch(h.requests[0].text.join(), /Tool availability/);
+  assert.match(lastToolText(h.requests[1]), /only these are available now: tools: mcp__early__q/);
+  assert.doesNotMatch(lastToolText(h.requests[1]), /mcp__late/);
+});
+
+test("real Pi tool-round: an additive notice does not suppress a later full baseline", async (t) => {
+  let register!: (name: string) => void;
+  const h = await realPi(t, (h) => [
+    h.step(() => { register("b"); return fauxAssistantMessage([TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }),
+    h.step(() => { register("c"); return fauxAssistantMessage([TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }),
+    finish(h),
+  ], { tools: { cadence: "tool-round" }, files: { "a.txt": "result" }, scores: { mcp__a__q: 2, mcp__b__q: 2 }, earlier: [(pi) => {
+    register = (name) => toolsExtension([{ name: `mcp__${name}__q`, exposure: "deferred", namespace: { name: `mcp__${name}` } }])(pi);
+    register("a");
+  }] });
+  await h.session.prompt("task");
+  assert.doesNotMatch(h.requests[0].text.join(), /Tool availability/);
+  assert.match(lastToolText(h.requests[1]), /now also available: tools: mcp__b__q/);
+  assert.doesNotMatch(lastToolText(h.requests[1]), /mcp__a__q/);
+  assert.match(lastToolText(h.requests[2]), /only these are available now: tools: mcp__a__q, mcp__b__q/);
+  assert.match(lastToolText(h.requests[2]), /Other indirect ones are unavailable/);
+  assert.doesNotMatch(lastToolText(h.requests[2]), /mcp__c__q/);
 });

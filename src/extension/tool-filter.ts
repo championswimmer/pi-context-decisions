@@ -95,7 +95,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   const readLedger = (ctx: ExtensionContext): ToolLedgerState => {
     try { return readToolLedger(ctx.sessionManager); }
     // Never invent evidence: an unreadable branch is not "mid-session" (that would grant every tool). It is unreadable, and only the fail-closed gate acts.
-    catch { return { tools: new Set(), groups: new Set(), withheld: new Set(), considered: new Set(), present: false, announced: new Set(), noticed: false, hasMessages: false, unreadable: true }; }
+    catch { return { tools: new Set(), groups: new Set(), withheld: new Set(), considered: new Set(), present: false, announced: new Set(), noticed: false, baselineNoticed: false, hasMessages: false, unreadable: true }; }
   };
   /** The branch ledger plus additions not yet flushed. */
   const merged = (ctx: ExtensionContext): ToolLedgerState => {
@@ -278,9 +278,14 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         if (avail.isAvailable(tool)) announce.add(tool.name); else hiddenUnavailable = true;
       }
     }
-    const newItems = [...announce].filter((name) => !ledger.announced.has(name));
-    const baseline = how === "on" && !ledger.noticed && hiddenUnavailable;
-    const notice = how === "on" && (baseline || (ledger.noticed && newItems.length))
+    const baseline = how === "on" && !ledger.baselineNoticed && hiddenUnavailable;
+    const committed = readLedger(ctx);
+    // A delayed baseline must state the FULL available membership, including additive notices already delivered.
+    const newItems = [...announce].filter((name) => baseline || (!ledger.announced.has(name)
+      && (ledger.baselineNoticed || (!committed.tools.has(name) && !committed.groups.has(name)))));
+    // A prior filtering boundary may have needed no baseline notice (e.g. no indirect tools existed yet).
+    // Still announce later indirect additions; requiring a prior notice silently loses those context updates.
+    const notice = how === "on" && (baseline || ((ledger.baselineNoticed || ledger.present) && newItems.length))
       ? buildToolNotice(newItems.filter((name) => !inv.groups.has(name)), newItems.filter((name) => inv.groups.has(name)), baseline)
       : undefined;
     const pending = flushRecord();

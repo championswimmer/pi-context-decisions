@@ -537,7 +537,7 @@ test("notice: a baseline is sent once, only while a codemode/deferred candidate 
   assert.match(message.content, /only these are available now: tools: lazy_a\./);
   assert.match(message.content, /calls to them are blocked/);
   assert.doesNotMatch(message.content, /lazy_b|mcp__srv|ext_a|Does |on srv|srv server/, "unavailable candidates, direct tools and descriptions are never listed");
-  assert.deepEqual(message.details, { v: 1, tools: ["lazy_a"], groups: [] });
+  assert.deepEqual(message.details, { v: 1, tools: ["lazy_a"], groups: [], baseline: true });
   assert.equal(h.notices().length, 1);
   await h.start("again"); await h.end({ toolResults: [{}] });
   assert.equal(h.notices().length, 1, "the baseline is not repeated");
@@ -560,7 +560,7 @@ test("notice: increments announce newly available codemode tools and servers at 
   const m = await toolSetup(t, { tools: { mode: "mcp", maxAdded: 1 }, extra: [mcpTool("dev-radius", "q"), mcpTool("docs", "s"), mcpTool("wiki", "w")], scores: { mcp__dev_radius: 2, mcp__docs: 1.5 } });
   await m.start("task");
   assert.match(noticeText(m.notices()[0]), /only these are available now: MCP servers: mcp__dev_radius\./);
-  assert.deepEqual(m.notices()[0].details, { v: 1, tools: [], groups: ["mcp__dev_radius"] });
+  assert.deepEqual(m.notices()[0].details, { v: 1, tools: [], groups: ["mcp__dev_radius"], baseline: true });
   await m.start("second");
   assert.equal(noticeText(m.notices()[1]), "Tool availability (pi-context-decisions): these indirect MCP servers, extensions or tools are now also available: MCP servers: mcp__docs.");
   assert.doesNotMatch(JSON.stringify(m.notices()), /mcp__wiki|mcp__dev_radius__q|dev-radius server/);

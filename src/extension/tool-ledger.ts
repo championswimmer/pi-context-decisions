@@ -11,6 +11,7 @@ export const TOOLS_NOTICE_TYPE = "context-decisions-tools-notice";
 const MAX_NAMES = 1000;
 const MAX_NAME_CHARS = 256;
 const MAX_TASK_CHARS = 100_000;
+const BASELINE_PREFIX = "Tool availability (pi-context-decisions): among the MCP servers, extensions and tools that are reached indirectly";
 
 export interface ToolLedgerData {
   v: 1;
@@ -42,6 +43,8 @@ export interface ToolLedgerState {
   /** Names/keys announced to the model by notice messages. */
   announced: Set<string>;
   noticed: boolean;
+  /** A full membership notice explaining that other indirect tools are blocked was committed. */
+  baselineNoticed: boolean;
   /** The branch already contains conversation messages. */
   hasMessages: boolean;
   /** The session branch could not be read: nothing is known, so only the fail-closed gate acts. */
@@ -55,13 +58,17 @@ function names(value: unknown): string[] {
 }
 /** Robust to malformed entries: anything that is not a well-formed v1 record is ignored. */
 export function readToolLedger(session: ToolsLedgerSession): ToolLedgerState {
-  const state: ToolLedgerState = { tools: new Set(), groups: new Set(), withheld: new Set(), considered: new Set(), present: false, announced: new Set(), noticed: false, hasMessages: false };
+  const state: ToolLedgerState = { tools: new Set(), groups: new Set(), withheld: new Set(), considered: new Set(), present: false, announced: new Set(), noticed: false, baselineNoticed: false, hasMessages: false };
   for (const entry of session.getBranch()) {
     if (entry.type === "message") { state.hasMessages = true; continue; }
     if (entry.type === "custom_message" && entry.customType === TOOLS_NOTICE_TYPE) {
-      const details = entry.details as { v?: unknown; tools?: unknown; groups?: unknown } | undefined;
+      const details = entry.details as { v?: unknown; tools?: unknown; groups?: unknown; baseline?: unknown } | undefined;
       if (details && typeof details === "object" && details.v === 1) {
         state.noticed = true;
+        // Older v1 notices have no discriminator. Recognize their fixed baseline wording rather than
+        // treating an additive-only legacy notice as proof that the blocking policy was delivered.
+        const legacyBaseline = details.baseline === undefined && typeof entry.content === "string" && entry.content.startsWith(BASELINE_PREFIX);
+        if (details.baseline === true || legacyBaseline) state.baselineNoticed = true;
         for (const name of [...names(details.tools), ...names(details.groups)]) state.announced.add(name);
       }
       continue;
@@ -115,7 +122,7 @@ export interface ToolNotice {
   customType: typeof TOOLS_NOTICE_TYPE;
   content: string;
   display: false;
-  details: { v: 1; tools: string[]; groups: string[] };
+  details: { v: 1; tools: string[]; groups: string[]; baseline: boolean };
 }
 const NOTICE_LIMIT = 100;
 function safeName(value: string): string { return value.replace(/[\p{Cc}\p{Cf}\s]+/gu, "_").slice(0, 128); }
@@ -137,7 +144,7 @@ export function buildToolNotice(newTools: readonly string[], newGroups: readonly
   if (newTools.length) parts.push(`tools: ${list(newTools)}`);
   // Scoped to what the filter actually withholds: tools reached INDIRECTLY (codemode scripts, tool_search). Direct declarations are Pi's own.
   const content = baseline
-    ? `Tool availability (pi-context-decisions): among the MCP servers, extensions and tools that are reached indirectly (through codemode or tool search, not declared to you directly), only these are available now: ${parts.length ? parts.join("; ") : "none"}. Other indirect ones are unavailable unless a later notice adds them, and calls to them are blocked. Tools declared to you directly, built-in tools and unfiltered extension tools are unaffected.`
+    ? `${BASELINE_PREFIX} (through codemode or tool search, not declared to you directly), only these are available now: ${parts.length ? parts.join("; ") : "none"}. Other indirect ones are unavailable unless a later notice adds them, and calls to them are blocked. Tools declared to you directly, built-in tools and unfiltered extension tools are unaffected.`
     : `Tool availability (pi-context-decisions): these indirect MCP servers, extensions or tools are now also available: ${parts.join("; ")}.`;
-  return { customType: TOOLS_NOTICE_TYPE, content, display: false, details: { v: 1, tools: unique(newTools).slice(0, MAX_NAMES), groups: unique(newGroups).slice(0, MAX_NAMES) } };
+  return { customType: TOOLS_NOTICE_TYPE, content, display: false, details: { v: 1, tools: unique(newTools).slice(0, MAX_NAMES), groups: unique(newGroups).slice(0, MAX_NAMES), baseline } };
 }

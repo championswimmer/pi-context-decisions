@@ -141,3 +141,20 @@ test("real Pi: our turn_end draft does not erase another extension's boundary dr
   assert.equal(entries.filter((entry) => entry.type === "custom" && entry.customType === "earlier-extension").length, 1, "the earlier extension's draft is committed");
   assert.deepEqual(entries.filter((entry) => entry.type === "custom_message").map((entry) => (entry.details as { added: string[] }).added), [["skill-0", "skill-1"], ["skill-2", "skill-3"]], "and so is ours");
 });
+
+test("real Pi skills tool-round: queued user text changes the task, then cached additions continue across the next round", async (t) => {
+  let h!: Awaited<ReturnType<typeof realPi>>;
+  h = await realPi(t, "tool-round", ({ session }) => [
+    (ctx) => { h.record(ctx); void session().steer("new user task"); return fauxAssistantMessage([TOOL()], { stopReason: "toolUse" }); },
+    (ctx) => { h.record(ctx); return fauxAssistantMessage([TOOL()], { stopReason: "toolUse" }); },
+    (ctx) => { h.record(ctx); return fauxAssistantMessage([fauxText("done")]); },
+  ]);
+  await h.session.prompt("original user task");
+  assert.deepEqual(h.decisions, [
+    { task: "original user task", skills: ["skill-0", "skill-1", "skill-2", "skill-3", "skill-4", "skill-5"] },
+    { task: "new user task", skills: ["skill-2", "skill-3", "skill-4", "skill-5"] },
+  ], "only the new USER task causes another decision; subsequent rounds reuse its scores");
+  assert.match(h.contexts[1].messages.filter((m) => m.role === "user").map(h.text).join(), /<name>skill-2<\/name>[\s\S]*<name>skill-3<\/name>/);
+  assert.match(h.contexts[2].messages.filter((m) => m.role === "user").map(h.text).join(), /<name>skill-4<\/name>[\s\S]*<name>skill-5<\/name>/);
+  assert.equal(h.contexts.length, 3, "the final assistant turn never creates another request");
+});
