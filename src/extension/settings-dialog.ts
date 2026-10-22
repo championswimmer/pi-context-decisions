@@ -1,3 +1,4 @@
+import { SUBAGENT_HELP } from "./subagent-manager.ts";
 // Floating /decisions settings dialog: ONE overlay with an internal route stack.
 // The three roots, "main" (Skills), "tools" (Tools) and "advanced", are peer tabs; other routes are pushed above the active tab.
 // Never opens nested ctx.ui.select/input/custom: Pi's custom `done` removes the TOPMOST overlay,
@@ -33,7 +34,7 @@ export type SettingsRoute =
 export type InitialRoute = "main" | "advanced" | "tools" | "provider" | "model" | "history" | { allowlist: AllowlistScope; list?: AllowlistKind };
 export type DialogResult = "closed" | "shutdown";
 
-export interface DialogSnapshot { settings: ContextDecisionsSettings; settingsError?: string; hasCwd: boolean }
+export interface DialogSnapshot { settings: ContextDecisionsSettings; settingsError?: string; hasCwd: boolean; subagentManagerPresent?: boolean }
 export interface ProviderRow { id: string; backend: "pi" | "typesafe" | "openai" | "openrouter"; provider: string; label: string; status: AuthStatus; guide?: string }
 export interface ModelRow { id: string; label: string; selection: BackendSelection | null; status: AuthStatus | "none"; guide?: string; note?: string }
 /** Built in commands.ts. No ctx crosses this boundary; every async method receives a dialog-owned signal. */
@@ -265,6 +266,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       }));
     }
     const fields = (values: typeof ADVANCED_FIELDS): Item[] => values.map((field) => fieldForSettings(field, settings)).map((field) => ({
+      ...(field.key === "allowSubagentInheritedTools" && !snap.subagentManagerPresent && !settings.tools.allowSubagentInheritedTools ? { disabled: SUBAGENT_HELP } : {}),
       label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
       ...(field.key === "failMode" && fieldValue(settings, field.group, field.key) === "open" ? { tone: "warn" as const } : {}),
       run: () => {

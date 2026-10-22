@@ -191,7 +191,7 @@ test("the shipped example config parses without warnings and uses only the new s
 
 test("tools block defaults: off, tools mode, prompt cadence, fail closed, empty allowlists, independent per call", () => {
   const { tools } = defaultSettings();
-  assert.deepEqual(tools, { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
+  assert.deepEqual(tools, { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
   assert.equal(defaultSettings().relevance.enabled, true, "skill filtering default is untouched");
   const a = defaultToolSettings(); a.alwaysAllowedTools.push("x"); assert.deepEqual(defaultToolSettings().alwaysAllowedTools, []);
   assert.deepEqual([...TOOL_FILTER_MODES], ["tools", "mcp"]); assert.deepEqual([...TOOL_CADENCES], ["initial", "prompt", "tool-round"]);
@@ -329,4 +329,13 @@ test("settings documentation canonical defaults stay valid, warning-free and in 
   const warnings: string[] = [];
   assert.deepEqual(parseSettings(JSON.parse(json), warnings), defaultSettings());
   assert.deepEqual(warnings, []);
+});
+
+test("inherited-tools setting defaults off, validates and roundtrips", async (t) => {
+  assert.equal(parseSettings({}).tools.allowSubagentInheritedTools, false);
+  assert.throws(() => parseSettings({ tools: { allowSubagentInheritedTools: "true" } }));
+  const path = join(await directory(t), "settings.json");
+  const settings = updateSetting(defaultSettings(), "tools.allowSubagentInheritedTools", "true");
+  await saveSettings(settings, path);
+  assert.equal((await loadSettings(path)).settings.tools.allowSubagentInheritedTools, true);
 });

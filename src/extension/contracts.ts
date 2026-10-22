@@ -86,6 +86,7 @@ export interface ToolReport {
 }
 export interface Controller {
   ensureLoaded(): Promise<void>;
+  subagentManagerPresent?(): boolean;
   getSettings(): ContextDecisionsSettings;
   getSettingsError(): string | undefined;
   getLastDecision(): LastDecision | undefined;

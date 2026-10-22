@@ -58,6 +58,25 @@ To try tool filtering, open `/decisions` → **Tools**, enable **Tool filtering*
 
 Add essentials to the Tools tab's always-allowed lists, then start a fresh session. `/decisions tools list` and `/decisions mcp list` show availability without making decision calls.
 
+## Using with pi-subagent-manager
+
+Enable the manager's `subagentExtensions: true` and install this extension as a **configured package** (for example, `npm:pi-context-decisions` in Pi's `packages` setting), not just a one-off `-e` load. Children have no skills, so skill picking is inert. Opt-in tool filtering runs independently in each child, using its user task; **each child makes its own decision calls** (and may incur charges).
+
+Before enabling filtering, globally allowlist the manager's tools under **Tools → Always allowed tools · Global**:
+
+```text
+agent_types, agent_spawn, agent_wait, agent_steer, agent_status,
+agent_update, agent_pause, agent_stop, agent_output
+```
+
+Use individual names, not a wildcard; there is no automatic `agent_*` exemption. Global tool-name pins work in both parent and child. Alternatively, children have one SDK group **per tool**, `ext__<tool-name>` (e.g. `ext__agent_spawn`, `ext__agent_wait`), selectable under **Always allowed MCP servers · Global**. A parent package group such as `ext__pi_subagent_manager` does **not** cover those child SDK groups.
+
+Bridged parent tools lose their original extension provenance: `<subagent-inherited-tools>` becomes the external group **`ext__subagent_inherited_tools`**, not internal tools. In both modes, direct bridge tools can be withheld and indirect calls gated. To keep these bridges available without scoring, open `/decisions` → **Advanced** → **Subagents · Allow inherited tools** (`tools.allowSubagentInheritedTools`, default `false`). This can only be enabled when public command provenance identifies pi-subagent-manager (or tool provenance when filtering is already on); otherwise the row explains the prerequisites. A saved `true` is ineffective without the manager/child bridges and is not rewritten. This setting pins the inherited-tools group in children in both modes (including on decision failures), but does not create bridges or bypass the manager’s tool restrictions. You can also globally pin essential tool names or that entire group; in `mcp` mode, pinning any member promotes the whole group. Tools retaining a public `mcp__…` namespace use that namespace instead. Check `/decisions tools list` and `/decisions mcp list`; child-local codemode/tool-search factories can have separate groups too.
+
+Automatic headless warnings/errors report to stderr in both top-level runs and embedded children. Historical child ownership records cannot reliably distinguish a live child from a top-level resumed/forked transcript, so failures remain visible. Identical automatic diagnostics are deduplicated per extension instance with a bounded 64-message cache (oldest entries may report again after eviction); the first diagnostic can still disturb the parent's terminal. Explicit `/decisions` reports are never deduplicated; UI/RPC notifications and model-facing tool-availability notices remain unchanged. SDK hosts can supply a reporting sink to avoid stderr entirely.
+
+This is relevance gating, **not a sandbox**: discovery and server connections are unaffected. Offline coverage: `test/extension-subagent.test.ts` exercises the real Pi SDK; the optional `scripts/verify-subagent-manager.mjs` also exercises the sibling manager runtime with faux providers and existing local dependencies only.
+
 ## Inside the agent loop
 
 Think of the decider as a **context picker beside your coding agent**, not another agent doing the task. The coding model chooses actions; the decision model only ranks which skills and tools are relevant. Purple boxes below show context selection.

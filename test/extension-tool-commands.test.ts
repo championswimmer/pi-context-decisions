@@ -24,7 +24,7 @@ test("tool settings: mode, cadence and scalars validate through the same strict 
   const h = await toolSetup(t, { tools: { enabled: false } });
   await h.set("tools.mode", "mcp"); await h.set("tools.cadence", "initial"); await h.set("decision.threshold", "0.5"); await h.set("tools.maxAdded", "3");
   await h.set("tools.minCandidates", "2"); await h.set("decision.failMode", "open"); await h.set("decision.maxDescriptionChars", "120");
-  assert.deepEqual({ ...(await saved(h)).tools }, { enabled: false, mode: "mcp", cadence: "initial", maxAdded: 3, minCandidates: 2, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
+  assert.deepEqual({ ...(await saved(h)).tools }, { enabled: false, mode: "mcp", cadence: "initial", maxAdded: 3, minCandidates: 2, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
   assert.deepEqual((await saved(h)).decision, { ...defaultSettings().decision, threshold: 0.5, failMode: "open", maxDescriptionChars: 120 });
   for (const [key, bad] of [["decision.threshold", "2"], ["decision.threshold", "-1"], ["tools.maxAdded", "1001"], ["decision.maxDescriptionChars", "0"], ["tools.mode", "everything"], ["tools.cadence", "sometimes"]] as const) {
     const before = JSON.stringify(await saved(h));

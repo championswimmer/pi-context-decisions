@@ -9,6 +9,7 @@ import { readLedger } from "../src/extension/skill-ledger.ts";
 import contextDecisions from "../src/extension.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionDependencies, ExtensionRegistry } from "../src/extension/contracts.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { pickerEntries } from "../src/extension/commands.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
@@ -286,4 +287,100 @@ test("direct OpenAI status uses env when OAuth active, never displays tokens", a
   await setModel(h.command, c.ctx, "openai direct gpt-6-luna"); await h.command("status", c.ctx);
   assert.match(h.messages.at(-1)!.text, /Credentials: environment/); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE/);
   assert.equal(JSON.parse(await readFile(h.path, "utf8")).backend.model, "gpt-6-luna");
+});
+
+test("headless diagnostics deduplicate repeated messages; explicit status remains available", async (t) => {
+  const stderr: string[] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => stderr.push(args.join(" ")));
+  for (const mode of ["print", "json", "rpc"] as const) {
+    const h = await setup(t, { report: undefined, async load() { return { settings: defaultSettings(), warnings: ["SAFE_WARNING"] }; } });
+    const c = context(); c.ctx.mode = mode;
+    await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
+    assert.match(stderr.pop() ?? "", /SAFE_WARNING/, "top-level print must keep automatic diagnostics");
+    h.session.appendCustom("pi-subagent:thread:v1", { rootId: "root-fixture", threadPath: "/child", inheritedCount: 0 });
+    await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
+    assert.deepEqual(stderr, [], "repeated identical automatic diagnostics should be deduplicated");
+    assert.deepEqual(h.calls, { getAllTools: 0, setActiveTools: 0 });
+    await h.command("status", c.ctx);
+    assert.match(stderr.pop() ?? "", /\[context-decisions\] Context decisions:/);
+    await h.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, c.ctx);
+  }
+  for (const mode of ["tui", "rpc"] as const) {
+    const h = await setup(t, { report: undefined, async load() { return { settings: defaultSettings(), warnings: ["SAFE_WARNING"] }; } });
+    const c = context({}, true); c.ctx.mode = mode;
+    await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
+    assert.deepEqual(c.notifications, [{ text: "SAFE_WARNING", level: "warning" }]);
+  }
+  assert.deepEqual(stderr, []);
+});
+
+test("RPC Advanced rejects enabling inherited tools without manager provenance; enables with package provenance", async (t) => {
+  const h = await setup(t); const c = context();
+  const run = (args: string, ctx: CommandContext) => h.command(args, ctx);
+  await setSetting(run, c.ctx, "tools.allowSubagentInheritedTools");
+  assert.equal((await loadSettings(h.path)).settings.tools.allowSubagentInheritedTools, false);
+  assert.ok(h.messages.some((m) => /Requires enabled pi-subagent-manager/.test(m.text)));
+  h.pi.getCommands = () => [{ name: "agents", source: "extension", description: "manager",
+    sourceInfo: { path: "/pkg/src/index.ts", source: "npm:pi-subagent-manager@0.29.3", origin: "package", scope: "user" } }];
+  await setSetting(run, c.ctx, "tools.allowSubagentInheritedTools");
+  assert.equal((await loadSettings(h.path)).settings.tools.allowSubagentInheritedTools, true);
+  assert.deepEqual(h.calls, { getAllTools: 0, setActiveTools: 0 });
+});
+
+test("saved inherited-tools setting never reads the registry when tool filtering is off", async (t) => {
+  const settings = defaultSettings(); settings.tools.allowSubagentInheritedTools = true;
+  const h = await setup(t, { async load() { return { settings, warnings: [] }; } });
+  const c = context();
+  await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
+  await h.command("status", c.ctx);
+  assert.deepEqual(h.calls, { getAllTools: 0, setActiveTools: 0 });
+});
+
+for (const child of [false, true]) test(`headless configuration and classification failures: ${child ? "child reports once" : "top-level reports"}`, async (t) => {
+  const stderr: string[] = [];
+  t.mock.method(console, "error", (...args: unknown[]) => stderr.push(args.join(" ")));
+  const h = await setup(t, { report: undefined }, true); const c = context({ async classify() { throw new DecisionError("network", "PRIVATE"); } });
+  if (child) h.session.appendCustom("pi-subagent:thread:v1", { rootId: "root-fixture", threadPath: "/child", inheritedCount: 0 });
+  await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
+  await h.emit("before_agent_start", event(), c.ctx);
+  assert.match(stderr.join("\n"), /Skill advertisements fail-closed \(network\)/);
+  assert.doesNotMatch(stderr.join("\n"), /PRIVATE/);
+  stderr.length = 0;
+  const bad = await setup(t, { report: undefined, async load() { return { settings: defaultSettings(), warnings: [], error: "SAFE_CONFIG_ERROR" }; } });
+  if (child) bad.session.appendCustom("pi-subagent:thread:v1", { rootId: "root-fixture", threadPath: "/child", inheritedCount: 0 });
+  await bad.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
+  assert.match(stderr.join("\n"), /Settings error: SAFE_CONFIG_ERROR/);
+  assert.deepEqual(bad.calls, { getAllTools: 0, setActiveTools: 0 });
+});
+
+for (const kind of ["resume", "fork", "live-child"] as const) test(`headless ${kind} with manager ownership reports config failures without a live-host guess`, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "child-report-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const child = SessionManager.create(root, root);
+  const leaf = child.appendCustomEntry("pi-subagent:thread:v1", { rootId: "fixture-root", threadPath: "/child", inheritedCount: 0 });
+  // Persist an actual transcript, then use Pi's public open/fork paths.
+  child.appendMessage({ role: "user", content: "task", timestamp: Date.now() });
+  const file = kind === "fork" ? child.createBranchedSession(child.getLeafId()!) : child.getSessionFile();
+  assert.ok(file); assert.ok(leaf);
+  const manager = kind === "live-child" ? child : SessionManager.open(file, root);
+  assert.ok(manager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi-subagent:thread:v1"));
+  const stderr: string[] = []; t.mock.method(console, "error", (...args: unknown[]) => stderr.push(args.join(" ")));
+  const h = await setup(t, { report: undefined, async load() { return { settings: defaultSettings(), warnings: [], error: "SAFE_CONFIG_ERROR" }; } });
+  // No /agents command, as for both a live child and a top-level resume without the manager installed.
+  h.pi.getCommands = () => [];
+  const c = context(); c.ctx.sessionManager = manager;
+  const start = () => Promise.all((h.handlers.get("session_start") ?? []).map((handler) => handler({ type: "session_start", reason: "startup" }, c.ctx as ExtensionContext)));
+  await start();
+  assert.match(stderr.join("\n"), /Settings error: SAFE_CONFIG_ERROR/);
+  for (let i = 0; i < 20; i++) await start();
+  assert.equal(stderr.length, 1, "identical automatic diagnostics do not flood stderr");
+  await h.command("status", c.ctx); await h.command("status", c.ctx);
+  assert.equal(stderr.length, 3, "explicit reports are never deduplicated");
+  assert.deepEqual(h.calls, { getAllTools: 0, setActiveTools: 0 });
+  const scoring = await setup(t, { report: undefined }, true);
+  const scoringCtx = context({ async classify() { throw new DecisionError("network", "PRIVATE"); } }).ctx;
+  scoringCtx.sessionManager = manager;
+  for (const handler of scoring.handlers.get("before_agent_start") ?? []) await handler(event(), scoringCtx as ExtensionContext);
+  assert.match(stderr.at(-1) ?? "", /Skill advertisements fail-closed \(network\)/);
+  assert.doesNotMatch(stderr.join("\n"), /PRIVATE/);
+  assert.deepEqual(scoring.calls, { getAllTools: 0, setActiveTools: 0 });
 });

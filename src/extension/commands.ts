@@ -1,3 +1,4 @@
+import { SUBAGENT_HELP } from "./subagent-manager.ts";
 import { buildPickerEntries, type AuthStatus, type PickerEntry } from "../catalog/picker-models.ts";
 import { OPENROUTER_DECISION_SNAPSHOT } from "../catalog/openrouter-models.ts";
 import { resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey, type CredentialSource } from "../core/auth.ts";
@@ -170,6 +171,7 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
   return [
     `Context decisions: ${selectionLabel(settings.backend)}`,
     `Credentials: ${credentials}`,
+    `Subagents · Allow inherited tools: ${settings.tools.allowSubagentInheritedTools ? controller.subagentManagerPresent?.() ? "on (effective for bridged child tools)" : "on (ineffective: pi-subagent-manager not detected)" : "off"}. ${SUBAGENT_HELP}`,
     `Skills: ${settings.relevance.enabled ? "on" : "off"} · picker ${settings.relevance.cadence} · max ${settings.relevance.maxSkills} added per round · minimum inventory ${settings.relevance.minCandidates}. Skills are only ever added; already-added skills are never re-scored`,
     `Shared tuning (Advanced): threshold ${settings.decision.threshold} (0–1), fail-${settings.decision.failMode}; shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, timeout ${settings.decision.timeoutMs}ms, prompt ${settings.decision.maxPromptChars} chars, description ${settings.decision.maxDescriptionChars} chars. Skill/tool picking policy; limits also apply to allowlist ranking`,
     `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
@@ -319,7 +321,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
   for (;;) {
     const settings = controller.getSettings();
     const fields = definitions.map((field) => fieldForSettings(field, settings));
-    const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}${field.group === "tools" && field.kind === "int" ? ` · ${field.label}` : ""}`);
+    const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}${field.group === "tools" && field.kind === "int" ? ` · ${field.label}` : ""}${field.key === "allowSubagentInheritedTools" && !settings.tools.allowSubagentInheritedTools && !controller.subagentManagerPresent?.() ? ` · unavailable: ${SUBAGENT_HELP}` : ""}`);
     const provider = `Provider / execution: ${settings.backend?.backend ?? "not configured"}`;
     const model = `Model: ${selectionLabel(settings.backend)}`;
     const extras = tab === "Advanced" ? [provider, model] : tab === "Skills" ? ["Allow list (Global)", "Allow list (Project)", "Status"]
@@ -341,6 +343,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
       const group = field.group;
       const key = `${group}.${field.key}`;
       const old = fieldValue(settings, group, field.key);
+      if (key === "tools.allowSubagentInheritedTools" && !old && !controller.subagentManagerPresent?.()) throw new SettingsError(SUBAGENT_HELP);
       if (typeof old === "boolean") await controller.update((current) => updateSetting(current, key, String(!old)));
       else if (field.kind === "options") {
         // Same values and descriptions as the terminal dialog's option list.
@@ -373,7 +376,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
   const scoped = (signal?: AbortSignal) => scopedContext(ctx, signal, life.isOpen);
   const refreshStatus = () => { if (life.isOpen()) statusSafely(controller, scoped()); };
   return {
-    snapshot: () => ({ settings: controller.getSettings(), settingsError: controller.getSettingsError(), hasCwd: !!cwd }),
+    snapshot: () => ({ settings: controller.getSettings(), settingsError: controller.getSettingsError(), hasCwd: !!cwd, subagentManagerPresent: controller.subagentManagerPresent?.() ?? false }),
     async projectCount() {
       if (!cwd) return { count: 0 };
       const result = await controller.loadProjectAllowlist(cwd);
@@ -381,7 +384,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
       return { count: result.names.length, tools: result.tools.length, mcpServers: result.mcpServers.length, ...(warning ? { warning: sanitizeTerminalText(warning, 300) } : {}) };
     },
     async toggleEnabled() { await controller.update((current) => ({ ...current, relevance: { ...current.relevance, enabled: !current.relevance.enabled } })); refreshStatus(); },
-    async updateSetting(key, text) { await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
+    async updateSetting(key, text) { if (key === "tools.allowSubagentInheritedTools" && text === "true" && !controller.subagentManagerPresent?.()) throw new SettingsError(SUBAGENT_HELP); await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
     async listProviders(signal): Promise<ProviderRow[]> {
       const choices = await providerChoices(scoped(signal), env);
       return choices.map((choice) => ({

@@ -1,3 +1,4 @@
+import { INHERITED_TOOLS_GROUP } from "./subagent-manager.ts";
 // Opt-in tool and MCP filtering. Independent of skill filtering: its own settings block, ledger entry type and caches.
 //
 // Host contract (Pi 1.1.0, public APIs only):
@@ -110,6 +111,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   };
   /** Last registry/origin snapshot for this session; branch changes retain it, session replacement does not. */
   let snapshot: ToolInventory | undefined;
+  const childInventories = new WeakSet<ToolInventory>();
+  const globalServers = (settings: ContextDecisionsSettings, inv: ToolInventory) => new Set([...settings.tools.alwaysAllowedMcpServers,
+    ...(settings.tools.allowSubagentInheritedTools && childInventories.has(inv) ? [INHERITED_TOOLS_GROUP] : [])]);
   const scopeWarnings = new Set<string>();
   let scopeEpoch = 0;
   let mcpOrigins: McpConfigScopes = { scopes: new Map(), warnings: [] };
@@ -117,7 +121,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     const generation = deps.generation();
     // Disk edits do not replace Pi's live MCP connections. All classifications use the session-start capture.
     const read = mcpOrigins;
-    const inv = classifyTools(pi.getAllTools!(), read.scopes);
+    const tools = pi.getAllTools!();
+    const inv = classifyTools(tools, read.scopes);
+    if (tools.some((tool) => tool.sourceInfo?.path === "<subagent-inherited-tools>")) childInventories.add(inv);
     if (generation === deps.generation()) {
       snapshot = inv;
       for (const warning of read.warnings) {
@@ -161,7 +167,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         project = read;
       } catch { /* keep `project` as is */ }
     }
-    return effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: new Set(settings.tools.alwaysAllowedMcpServers) },
+    return effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: globalServers(settings, inv) },
       { tools: new Set(project?.tools ?? []), servers: new Set(project?.servers ?? []) });
   };
   const cacheKey = (task: string, settings: ContextDecisionsSettings) =>
@@ -662,7 +668,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const inv = classify(ctx);
       let project = { tools: [] as string[], servers: [] as string[] };
       if (ctx.cwd) { const loaded = await deps.loadProjectAllowlist(ctx.cwd); project = { tools: loaded.tools, servers: loaded.mcpServers }; }
-      const allow: EffectiveAllowlists = state === "off" ? NO_ALLOWLISTS : effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: new Set(settings.tools.alwaysAllowedMcpServers) },
+      const allow: EffectiveAllowlists = state === "off" ? NO_ALLOWLISTS : effectiveToolAllowlists(inv, { tools: new Set(settings.tools.alwaysAllowedTools), servers: globalServers(settings, inv) },
         { tools: new Set(project.tools), servers: new Set(project.servers) });
       const avail = availability(inv, mode, ledger, allow);
       const rows = inv.tools.map((tool): ToolReport["rows"][number] => ({

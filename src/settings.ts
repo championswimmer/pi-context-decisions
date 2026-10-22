@@ -43,6 +43,8 @@ export interface ToolFilterSettings {
   /** New tools (or whole servers/extensions in group mode) per round; not a skill cap. */
   maxAdded: number;
   minCandidates: number;
+  /** Opt-in pin for the manager’s observable child bridge; never creates inherited tools. */
+  allowSubagentInheritedTools: boolean;
   /** Global-source tools only (public user/temporary/missing scope); project-source pins live in the project file. */
   alwaysAllowedTools: string[];
   /** Global-source MCP names/namespace keys and canonical extension keys; retains its original setting name. */
@@ -60,7 +62,7 @@ export function defaultDecisionSettings(): DecisionSettings {
     maxDescriptionChars: 400, chunkSize: 50, concurrency: 0 };
 }
 export function defaultToolSettings(): ToolFilterSettings {
-  return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
+  return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
 }
 export function defaultSettings(): ContextDecisionsSettings {
   return { backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(),
@@ -189,6 +191,7 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
   keys(tool, [...Object.keys(result.tools), ...LEGACY_TOOL_KEYS], warnings);
   keys(decision, SHARED_KEYS, warnings);
   if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
+  if (tool.allowSubagentInheritedTools !== undefined) result.tools.allowSubagentInheritedTools = boolean(tool.allowSubagentInheritedTools, "tools.allowSubagentInheritedTools");
   if (tool.enabled !== undefined) result.tools.enabled = boolean(tool.enabled, "tools.enabled");
   if (skill.cadence !== undefined) result.relevance.cadence = enumValue(skill.cadence, PICKER_CADENCES, "relevance.cadence") as PickerCadence;
   if (tool.cadence !== undefined) result.tools.cadence = enumValue(tool.cadence, TOOL_CADENCES, "tools.cadence") as ToolCadence;

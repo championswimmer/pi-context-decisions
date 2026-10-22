@@ -1,3 +1,4 @@
+import { subagentManagerPresent } from "./subagent-manager.ts";
 import type { BeforeAgentStartEvent, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
 import { taskWithoutExpandedSkill } from "../apps/skill-filter.ts";
@@ -61,11 +62,35 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const result = await (deps.load ?? loadSettings)(deps.settingsPath);
     settings = result.settings; settingsError = result.error; warnings = result.warnings; loaded = true;
   };
+  // Print/SDK contexts expose no reliable live-host identity. Persisted ownership records
+  // survive top-level resume/fork, so always fail visible unless the host injects a sink.
+  // Bound duplicate memory per extension instance (not module-global); explicit reports bypass it.
+  const reportedHeadless = new Set<string>();
+  const report = (ctx: Parameters<Controller["report"]>[0], message: string, level: "info" | "warning" | "error" = "info", explicit = false) => {
+    if (deps.report) deps.report(ctx, message, level);
+    else if (ctx.hasUI) ctx.ui.notify(message, level);
+    else {
+      if (!explicit) {
+        const key = JSON.stringify([level, message]);
+        if (reportedHeadless.has(key)) return;
+        if (reportedHeadless.size >= 64) reportedHeadless.delete(reportedHeadless.values().next().value!);
+        reportedHeadless.add(key);
+      }
+      console.error(`[context-decisions] ${message}`); // stderr, never the JSON/RPC stdout stream
+    }
+  };
   const controller: Controller = {
     async ensureLoaded() {
       if (loaded) return;
       loading ??= load().finally(() => { loading = undefined; });
       await loading;
+    },
+    subagentManagerPresent: () => {
+      // Parent manager registers /agents with public sourceInfo. Command provenance avoids
+      // getAllTools entirely while tool filtering is off, including dialogs and read-only status.
+      try { if (subagentManagerPresent(pi.getCommands?.() ?? [])) return true; } catch { /* try tools only if on */ }
+      if (!settings.tools.enabled) return false;
+      try { return subagentManagerPresent(pi.getAllTools?.() ?? []); } catch { return false; }
     },
     getSettings: () => structuredClone(settings),
     getSettingsError: () => settingsError,
@@ -109,11 +134,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       const abort = new AbortController(); pending.add(abort);
       return { signal: abort.signal, close() { pending.delete(abort); } };
     },
-    report(ctx, message, level = "info") {
-      if (deps.report) deps.report(ctx, message, level);
-      else if (ctx.hasUI) ctx.ui.notify(message, level);
-      else console.error(`[context-decisions] ${message}`); // stderr, not the JSON/RPC protocol stream
-    },
+    report,
     setStatus(ctx) {
       if (!ctx.hasUI) return;
       const state = settingsError ? "settings error · open /decisions to repair" : !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions" : last
@@ -125,7 +146,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (toolsText !== undefined || toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", toolsText); toolsStatusShown = toolsText !== undefined; }
     },
   };
-  const commands = registerCommands(pi, controller, deps.env);
+  const commands = registerCommands(pi, { ...controller, report: (ctx, message, level) => report(ctx, message, level, true) }, deps.env);
   pi.on("session_start", async (_event, ctx) => {
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row

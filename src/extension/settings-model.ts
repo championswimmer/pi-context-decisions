@@ -1,3 +1,4 @@
+import { SUBAGENT_HELP } from "./subagent-manager.ts";
 // Pure data and layout helpers for the floating /decisions dialog.
 // No Pi or pi-tui imports: everything here is unit-testable without a terminal.
 import { DecisionError } from "../decision/errors.ts";
@@ -64,6 +65,7 @@ export function advancedField(key: string): AdvancedField | undefined { return R
  * Opt-in tool and MCP filtering (default off), independent of skills; all scoring tuning is shared.
  */
 const ALL_TOOL_FIELDS: readonly AdvancedField[] = [
+  { key: "allowSubagentInheritedTools", group: "tools", label: "Subagents · Allow inherited tools", kind: "bool", hint: SUBAGENT_HELP },
   { key: "enabled", group: "tools", label: "Tool filtering", kind: "bool", hint: "Off by default and independent of skill filtering. When on, external tools, MCP servers or extensions are made available per prompt by the decision model; Pi's built-in tools are never filtered. Calls to unavailable tools are blocked. This is not a sandbox." },
   { key: "mode", group: "tools", label: "Mode", kind: "options", hint: "What is decided.", options: [
     { value: "tools", description: "Every external tool is decided on its own, whichever MCP server or extension it comes from (default)." },

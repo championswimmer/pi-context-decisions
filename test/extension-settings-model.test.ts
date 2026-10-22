@@ -49,7 +49,7 @@ test("tool limit metadata follows the mode without changing keys, values, skill 
     settings.tools.mode = "tools";
     assert.deepEqual(advancedRows(settings), toolRows, "switching back restores the tool wording");
     assert.deepEqual(settings, original, "metadata resolution never changes settings");
-    assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "tools").map((field) => field.label), ["Tools · Max added per round", "Tools · Minimum candidates"]);
+    assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "tools").map((field) => field.label), ["Subagents · Allow inherited tools", "Tools · Max added per round", "Tools · Minimum candidates"]);
   }
 });
 
@@ -129,6 +129,6 @@ test("shared decision tuning appears once, exclusively in Advanced; feature caps
   assert.equal(new Set(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key)).size, Object.keys(settings.decision).length);
   assert.ok([...SKILL_FIELDS, ...TOOL_FIELDS].every((field) => field.group !== "decision"));
   assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group !== "decision").map((field) => `${field.group}.${field.key}`),
-    ["relevance.maxSkills", "relevance.minCandidates", "tools.maxAdded", "tools.minCandidates"]);
+    ["relevance.maxSkills", "relevance.minCandidates", "tools.allowSubagentInheritedTools", "tools.maxAdded", "tools.minCandidates"]);
   assert.deepEqual([settings.relevance.maxSkills, settings.tools.maxAdded, settings.relevance.minCandidates, settings.tools.minCandidates], [12, 8, 8, 0]);
 });

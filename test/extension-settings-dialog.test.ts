@@ -716,3 +716,15 @@ for (const initialRoute of ["main", "tools", "advanced"] as const) test(`Esc on 
   h.press(KEY.esc, KEY.esc);
   assert.deepEqual(h.results, ["closed"]);
 });
+
+for (const present of [false, true]) test(`Advanced inherited-tools row: manager ${present ? "present" : "absent"}`, async () => {
+  const f = fakeOps(); const snapshot = f.ops.snapshot;
+  f.ops.snapshot = () => ({ ...snapshot(), subagentManagerPresent: present });
+  const h = mount(f, { initialRoute: "advanced" });
+  for (let i = 0; i < 30 && !/❯ Subagents · Allow inherited tools/.test(h.text()); i++) h.press(KEY.down);
+  assert.match(h.text(), /❯ Subagents · Allow inherited tools/);
+  h.press(KEY.enter); await tick();
+  assert.equal(f.settings.tools.allowSubagentInheritedTools, present);
+  if (!present) { assert.match(h.text(), /Requires enabled pi-subagent-manager/); assert.ok(!f.calls.some((c) => c.startsWith("updateSetting:tools.allowSubagent"))); }
+  h.component.dispose();
+});
