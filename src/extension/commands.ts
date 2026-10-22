@@ -168,9 +168,11 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
   const last = controller.getLastDecision();
   const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
+  const managerStatus = controller.managerDiagnosticsStatus?.();
   return [
     `Context decisions: ${selectionLabel(settings.backend)}`,
     `Credentials: ${credentials}`,
+    ...(managerStatus ? [managerStatus] : []),
     `Subagents · Allow inherited tools: ${settings.tools.allowSubagentInheritedTools ? controller.subagentManagerPresent?.() ? "on (effective for bridged child tools)" : "on (ineffective: pi-subagent-manager not detected)" : "off"}. ${SUBAGENT_HELP}`,
     `Skills: ${settings.relevance.enabled ? "on" : "off"} · picker ${settings.relevance.cadence} · max ${settings.relevance.maxSkills} added per round · minimum inventory ${settings.relevance.minCandidates}. Skills are only ever added; already-added skills are never re-scored`,
     `Shared tuning (Advanced): threshold ${settings.decision.threshold} (0–1), fail-${settings.decision.failMode}; shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, timeout ${settings.decision.timeoutMs}ms, prompt ${settings.decision.maxPromptChars} chars, description ${settings.decision.maxDescriptionChars} chars. Skill/tool picking policy; limits also apply to allowlist ranking`,

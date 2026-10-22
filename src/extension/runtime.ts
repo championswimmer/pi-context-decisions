@@ -1,4 +1,5 @@
 import { subagentManagerPresent } from "./subagent-manager.ts";
+import { MIN_SUBAGENT_MANAGER_DIAGNOSTICS_VERSION, MANAGER_DIAGNOSTICS_HELP, createManagerDiagnostics } from "./manager-diagnostics.ts";
 import type { BeforeAgentStartEvent, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
 import { taskWithoutExpandedSkill } from "../apps/skill-filter.ts";
@@ -62,8 +63,15 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const result = await (deps.load ?? loadSettings)(deps.settingsPath);
     settings = result.settings; settingsError = result.error; warnings = result.warnings; loaded = true;
   };
-  // Print/SDK contexts expose no reliable live-host identity. Persisted ownership records
-  // survive top-level resume/fork, so always fail visible unless the host injects a sink.
+  // Only a live versioned host capability can redirect headless reports. Persisted ownership
+  // survives top-level resume/fork and must never suppress stderr.
+  const managerDiagnostics = createManagerDiagnostics(pi);
+  let managerNoticeShown = false;
+  const warnManagerCapability = (ctx: ExtensionContext) => {
+    if (managerNoticeShown || !ctx.hasUI || ctx.mode !== "tui" || !controller.subagentManagerPresent?.() || managerDiagnostics.parentAvailable()) return;
+    managerNoticeShown = true;
+    ctx.ui.notify(MANAGER_DIAGNOSTICS_HELP, "warning");
+  };
   // Bound duplicate memory per extension instance (not module-global); explicit reports bypass it.
   const reportedHeadless = new Set<string>();
   const report = (ctx: Parameters<Controller["report"]>[0], message: string, level: "info" | "warning" | "error" = "info", explicit = false) => {
@@ -75,6 +83,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         if (reportedHeadless.has(key)) return;
         if (reportedHeadless.size >= 64) reportedHeadless.delete(reportedHeadless.values().next().value!);
         reportedHeadless.add(key);
+        if (managerDiagnostics.send(level, message)) return;
       }
       console.error(`[context-decisions] ${message}`); // stderr, never the JSON/RPC stdout stream
     }
@@ -92,6 +101,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (!settings.tools.enabled) return false;
       try { return subagentManagerPresent(pi.getAllTools?.() ?? []); } catch { return false; }
     },
+    managerDiagnosticsStatus: () => !controller.subagentManagerPresent?.() ? undefined
+      : managerDiagnostics.parentAvailable() ? `Subagent diagnostics: parent routing available (protocol 1, manager >= ${MIN_SUBAGENT_MANAGER_DIAGNOSTICS_VERSION})`
+      : `Subagent diagnostics unavailable: ${MANAGER_DIAGNOSTICS_HELP}`,
     getSettings: () => structuredClone(settings),
     getSettingsError: () => settingsError,
     getLastDecision: () => last ? structuredClone(last) : undefined,
@@ -149,6 +161,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   const commands = registerCommands(pi, { ...controller, report: (ctx, message, level) => report(ctx, message, level, true) }, deps.env);
   pi.on("session_start", async (_event, ctx) => {
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
+    managerDiagnostics.reset();
+    managerNoticeShown = false;
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
     scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset(true);
@@ -160,6 +174,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     await toolFilter.startSession(ctx);
     if (settingsError) controller.report(ctx, `Settings error: ${settingsError}; skill advertisements fail closed until repaired`, "error");
     for (const warning of warnings) controller.report(ctx, warning, "warning");
+    warnManagerCapability(ctx);
     controller.setStatus(ctx);
   });
   pi.on("session_tree", () => {
@@ -171,6 +186,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
     // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
     commands.closeDialogs();
+    managerDiagnostics.reset();
     resetDecisionLoader();
     abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
     if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
@@ -223,6 +239,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let skillPass: Promise<{ message: SkillsDelta } | undefined> | undefined;
   const toolsActive = () => settings.tools.enabled;
   pi.on("before_agent_start", async (event, ctx) => {
+    warnManagerCapability(ctx);
     skillPass = undefined;
     await controller.ensureLoaded();
     if (toolsActive() || settingsError) {

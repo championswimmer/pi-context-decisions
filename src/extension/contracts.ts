@@ -9,7 +9,7 @@ import type { ToolFilterMode } from "../settings.ts";
 
 /** `appendEntry` records the stable-base ledger; `getActiveTools` chooses Pi's skill-file reader for deltas. */
 export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand" | "appendEntry" | "getActiveTools">
-  & Partial<Pick<ExtensionAPI, "getCommands" | "getAllTools" | "setActiveTools">>;
+  & Partial<Pick<ExtensionAPI, "getCommands" | "getAllTools" | "setActiveTools" | "events">>;
 export interface ExtensionRegistry extends RegistryLike {
   getProviderAuthStatus?(provider: string): { configured: boolean };
 }
@@ -87,6 +87,7 @@ export interface ToolReport {
 export interface Controller {
   ensureLoaded(): Promise<void>;
   subagentManagerPresent?(): boolean;
+  managerDiagnosticsStatus?(): string | undefined;
   getSettings(): ContextDecisionsSettings;
   getSettingsError(): string | undefined;
   getLastDecision(): LastDecision | undefined;
