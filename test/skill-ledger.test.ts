@@ -119,3 +119,10 @@ test("manual-only skills are never advertised by a delta, and an empty delta is 
   const mixed = buildSkillsDelta([skill("manual", { disableModelInvocation: true }), skill("auto")], [], "read")!;
   assert.deepEqual(mixed.details.added, ["auto"]); assert.doesNotMatch(mixed.content, /manual/);
 });
+test("picks (numbers only) are recorded for newly added skills; re-deliveries and unscored adds carry none", () => {
+  const picks = new Map([["b", { score: 1.6, threshold: 0.375 }], ["old", { score: 2, threshold: 0.375 }]]);
+  const built = buildSkillsDelta([skill("b"), skill("c")], [skill("old")], "read", picks)!;
+  assert.deepEqual(built.details, { v: 1, added: ["b", "c"], redelivered: ["old"], picks: { b: { score: 1.6, threshold: 0.375 } } });
+  assert.doesNotMatch(JSON.stringify(built.details), /SKILL\.md|Description|PRIVATE/);
+  assert.equal(buildSkillsDelta([skill("x")], [], "read", new Map())!.details.picks, undefined);
+});

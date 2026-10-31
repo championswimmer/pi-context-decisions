@@ -1,3 +1,4 @@
+import { SUBAGENT_HELP } from "./subagent-manager.ts";
 import { buildPickerEntries, type AuthStatus, type PickerEntry } from "../catalog/picker-models.ts";
 import { OPENROUTER_DECISION_SNAPSHOT } from "../catalog/openrouter-models.ts";
 import { resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey, type CredentialSource } from "../core/auth.ts";
@@ -13,7 +14,7 @@ import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
-import { ADVANCED_FIELDS, TOOL_FIELDS, describeError, fieldFor, fieldValue, iconStyleText, sanitizeTerminalText, toolsSummary, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
+import { ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, describeError, fieldFor, fieldForSettings, fieldValue, iconStyleText, sanitizeTerminalText, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
 import { readDecisionsHistory, historyReportLines } from "./decisions-history.ts";
@@ -37,6 +38,8 @@ export class DialogClosedError extends Error { constructor() { super("Settings d
  */
 export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefined, isOpen: () => boolean): CommandContext {
   const hasUI = ctx.hasUI, mode = ctx.mode, cwd = ctx.cwd;
+  let projectTrusted = false;
+  try { projectTrusted = ctx.isProjectTrusted?.() === true; } catch { /* unknown trust is untrusted */ }
   const guard = <T,>(read: () => T): T => { if (!isOpen()) throw new DialogClosedError(); return read(); };
   return Object.defineProperties({} as CommandContext, {
     hasUI: { value: hasUI, enumerable: true }, mode: { value: mode, enumerable: true }, cwd: { value: cwd, enumerable: true },
@@ -44,6 +47,7 @@ export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefin
     modelRegistry: { get: () => guard(() => ctx.modelRegistry), enumerable: true },
     sessionManager: { get: () => guard(() => ctx.sessionManager), enumerable: true },
     signal: { value: signal, enumerable: true },
+    isProjectTrusted: { value: () => projectTrusted, enumerable: true },
   });
 }
 function statusSafely(controller: Controller, ctx: CommandContext): void { try { controller.setStatus(ctx); } catch { /* cosmetic; the dialog may have closed */ } }
@@ -164,10 +168,14 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
   const last = controller.getLastDecision();
   const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
+  const managerStatus = controller.managerDiagnosticsStatus?.();
   return [
-    `Context decisions: ${settings.enabled ? "enabled" : "disabled"}; ${selectionLabel(settings.backend)}`,
-    `Credentials: ${credentials}; relevance ${settings.relevance.enabled ? "on" : "off"}, threshold ${settings.relevance.threshold} (0–1), picker ${settings.relevance.cadence}, fail-${settings.relevance.failMode}`,
-    `Scoring: shard ${settings.relevance.chunkSize}, concurrency ${settings.relevance.concurrency === 0 ? "all shards parallel (0)" : settings.relevance.concurrency}, max ${settings.relevance.maxSkills} added per round, minimum inventory ${settings.relevance.minCandidates}, timeout ${settings.relevance.timeoutMs}ms. Skills are only ever added; already-added skills are never re-scored`,
+    `Context decisions: ${selectionLabel(settings.backend)}`,
+    `Credentials: ${credentials}`,
+    ...(managerStatus ? [managerStatus] : []),
+    `Subagents · Allow inherited tools: ${settings.tools.allowSubagentInheritedTools ? controller.subagentManagerPresent?.() ? "on (effective for bridged child tools)" : "on (ineffective: pi-subagent-manager not detected)" : "off"}. ${SUBAGENT_HELP}`,
+    `Skills: ${settings.relevance.enabled ? "on" : "off"} · picker ${settings.relevance.cadence} · max ${settings.relevance.maxSkills} added per round · minimum inventory ${settings.relevance.minCandidates}. Skills are only ever added; already-added skills are never re-scored`,
+    `Shared tuning (Advanced): threshold ${settings.decision.threshold} (0–1), fail-${settings.decision.failMode}; shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, timeout ${settings.decision.timeoutMs}ms, prompt ${settings.decision.maxPromptChars} chars, description ${settings.decision.maxDescriptionChars} chars. Skill/tool picking policy; limits also apply to allowlist ranking`,
     `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
     ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
     ...(error ? [`Settings error: ${error}. Repair the settings file, or choose a model in /decisions.`] : []),
@@ -180,11 +188,12 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
 /** Tool filtering status. Counts and modes only: no tool names, task text, arguments or results. */
 function toolStatusLines(controller: Controller, settings: ReturnType<Controller["getSettings"]>): string[] {
   const t = settings.tools;
-  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tool picker tab)"];
+  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tools tab)"];
   const last = controller.getLastToolDecision();
   return [
-    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · threshold ${t.threshold} · max ${t.maxAdded} added per round · minimum ${t.minCandidates} · fail-${t.failMode}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
+    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · max ${t.maxAdded} added per round · minimum ${t.minCandidates}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
     `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
+    "Built-in MCP allowlist scope is captured from bounded names-only Pi config reads at session_start (trusted full project definitions override global; settings-only overrides keep global). Disk edits require /reload. Extensions use public sourceInfo.scope. Unresolved built-in origins use Global.",
     ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
     "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
   ];
@@ -236,24 +245,24 @@ async function saveToolLists(controller: Controller, ctx: CommandContext, scope:
   }
   statusSafely(controller, ctx);
 }
-/** Names-only editor items for tools and MCP servers / extensions. `scope` is the list's scope, not where the tool came from (that is not observable). */
-function toolPickerItems(report: ToolReport, kind: Exclude<AllowlistKind, "skills">, scope: AllowlistScope): ScopedSkill[] {
+/** Names-only editor items retain the public provenance scope, never the scope of the list being edited. */
+function toolPickerItems(report: ToolReport, kind: Exclude<AllowlistKind, "skills">): ScopedSkill[] {
   const typeOf = (key: string) => report.groups.find((group) => group.key === key)?.type;
   if (kind === "tools") {
     return report.rows.filter((row) => row.kind !== "internal").map((row) => {
       const prefix = row.group && row.groupLabel ? `[${typeOf(row.group) === "extension" ? "extension" : "MCP server"} ${row.groupLabel}] ` : "";
-      return { name: row.name, description: `${prefix}${row.description}`, scope, disableModelInvocation: false };
+      return { name: row.name, description: `${prefix}${row.description}`, scope: row.scope, disableModelInvocation: false };
     });
   }
   // One row per group, MCP server or extension alike, named by its canonical key (what the group allowlist stores).
-  return report.groups.map((group) => ({ name: group.key, label: `${group.label} (${group.type === "mcp" ? "MCP server" : "extension"})`, scope, disableModelInvocation: false,
+  return report.groups.filter((group) => group.scope !== "mixed").map((group) => ({ name: group.key, label: `${group.label} (${group.type === "mcp" ? "MCP server" : "extension"})`, scope: group.scope as AllowlistScope, disableModelInvocation: false,
     description: `${group.type === "mcp" ? "MCP server" : "Extension"} ${group.label}. Tools: ${group.toolNames.join(", ")}` }));
 }
 /** The nested tool editor's structure: built-in tools, then each group with ALL its (not truncated) member tools. */
-function toolTree(report: ToolReport, initialGroups: readonly string[]): NonNullable<AllowlistPickerDeps["tree"]> {
+function toolTree(report: ToolReport, initialGroups: readonly string[], scope: AllowlistScope): NonNullable<AllowlistPickerDeps["tree"]> {
   return {
     internal: report.rows.filter((row) => row.kind === "internal").map((row) => ({ name: row.name, description: row.description })),
-    groups: report.groups.map((group) => ({ key: group.key, label: group.label, type: group.type, description: "", tools: report.rows.filter((row) => row.group === group.key).map((row) => row.name) })),
+    groups: report.groups.filter((group) => group.scope === scope).map((group) => ({ key: group.key, label: group.label, type: group.type, description: "", tools: report.rows.filter((row) => row.group === group.key).map((row) => row.name) })),
     initialGroups,
   };
 }
@@ -266,7 +275,7 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
   const base = scopedContext(ctx, dialogSignal, isOpen);
   const initial = await listNames(controller, base, scope, false, kind);
   const report = kind === "skills" ? undefined : await controller.describeTools(base);
-  const items = report ? toolPickerItems(report, kind as Exclude<AllowlistKind, "skills">, scope) : controller.getInventory();
+  const items = report ? toolPickerItems(report, kind as Exclude<AllowlistKind, "skills">) : controller.getInventory();
   // The tool editor also edits the group list (MCP servers and extensions); read it together with the tool list.
   const initialGroups = kind === "tools" ? await listNames(controller, base, scope, false, "mcp") : undefined;
   const settings = controller.getSettings();
@@ -292,34 +301,53 @@ async function allowlistDeps(controller: Controller, ctx: CommandContext, scope:
       return await rankSkills(query, skills.map(({ name, description }) => ({ name, description })), {
         decide: (request, options) => client.decide(request, options),
         ...(capped.maxQuestions === undefined ? {} : { maxQuestions: capped.maxQuestions }),
-      }, { ...current.relevance, rubric: "topic", maxQuestions: 50, signal, ...(kind === "skills" ? {} : { subject: kind === "tools" ? "tool" as const : "mcp_server" as const, maxDescriptionChars: current.tools.maxDescriptionChars }) });
+      }, { ...current.decision, rubric: "topic", maxQuestions: 50, signal, ...(kind === "skills" ? {} : { subject: kind === "tools" ? "tool" as const : "mcp_server" as const }) });
     } finally { operation.close(); }
   };
   return {
     scope, skills: items, initial, noun: kind === "mcp" ? "MCP server or extension" : KIND_LABEL[kind] as "skill" | "tool",
-    locationLabel: scope === "global" ? "Pi user context-decisions settings.json" : projectAllowlistPath(base.cwd!),
+    locationLabel: scope === "global" ? "Pi agent dir: pi-context-decisions/settings.json" : projectAllowlistPath(base.cwd!),
+    ...(kind !== "skills" ? { scopeNote: "Built-in MCP scope: session-start config capture, honoring project trust; disk edits require /reload. Extensions: public provenance. Unresolved origins use Global.",
+      compactScopeNote: "MCP session scope; /reload config edits" } : {}),
     ...(kind === "mcp" ? { heading: "Always allowed MCP servers & extensions", normalize: canonicalServerKey } : {}),
-    ...(kind === "tools" && report ? { tree: toolTree(report, initialGroups ?? []), normalize: canonicalServerKey } : {}),
+    ...(kind === "tools" && report ? { tree: toolTree(report, initialGroups ?? [], scope), normalize: canonicalServerKey } : {}),
     save: kind === "tools" && report ? (names, groups) => saveToolLists(controller, base, scope, names, groups ?? initialGroups ?? []) : (names) => saveNames(controller, base, scope, names, kind),
     ...(rank ? { rank, rankLabel: `${selectionLabel(settings.backend)} · explicit ranking may incur charges` } : { unavailable }),
   };
 }
 const EDITOR_UNAVAILABLE = "The allow list editors need the terminal UI. Without it, edit globalAllowlist in the settings file or alwaysAllowed in <cwd>/.pi/pi-context-decisions.json, then /reload";
 /** RPC fallback: the same grouping as the terminal dialog, built from select/input requests. */
-async function fieldsMenu(controller: Controller, ctx: CommandContext, group: SettingsGroup) {
-  const fields: readonly AdvancedField[] = group === "tools" ? TOOL_FIELDS : ADVANCED_FIELDS;
-  const title = group === "tools" ? "Decisions · Tools & MCP settings" : "Decisions · Advanced relevance settings";
+async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Skills" | "Tools" | "Advanced", env?: Record<string, string | undefined>) {
+  const definitions: readonly AdvancedField[] = tab === "Tools" ? TOOL_FIELDS : tab === "Skills" ? SKILL_FIELDS : ADVANCED_FIELDS;
+  const title = `Decisions · ${tab} settings`;
   for (;;) {
     const settings = controller.getSettings();
-    const labels = fields.map((field) => `${group}.${field.key}: ${group === "relevance" && field.key === "concurrency" && settings.relevance.concurrency === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, group, field.key))}`);
-    const pick = await ctx.ui.select(title, [...labels, "Back"], { signal: ctx.signal });
+    const fields = definitions.map((field) => fieldForSettings(field, settings));
+    const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}${field.group === "tools" && field.kind === "int" ? ` · ${field.label}` : ""}${field.key === "allowSubagentInheritedTools" && !settings.tools.allowSubagentInheritedTools && !controller.subagentManagerPresent?.() ? ` · unavailable: ${SUBAGENT_HELP}` : ""}`);
+    const provider = `Provider / execution: ${settings.backend?.backend ?? "not configured"}`;
+    const model = `Model: ${selectionLabel(settings.backend)}`;
+    const icons = `Footer icons: ${iconStyleText(settings)}`;
+    const extras = tab === "Advanced" ? [provider, model] : tab === "Skills" ? ["Allow list (Global)", "Allow list (Project)", "Status"]
+      : ["Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers & extensions · Global", "Always allowed MCP servers & extensions · Project"];
+    const pick = await ctx.ui.select(title, [...(tab === "Advanced" ? extras : []), ...labels, ...(tab === "Advanced" ? [icons] : []), ...(tab !== "Advanced" ? extras : []), "Back"], { signal: ctx.signal });
     if (!pick || pick === "Back") return;
     try {
+      if (pick === provider) { await chooseProvider(controller, ctx, env); continue; }
+      if (pick === model) {
+        const backend = settings.backend;
+        await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
+        continue;
+      }
+      if (tab === "Advanced" && pick === icons) { await iconStyleMenu(controller, ctx); continue; }
+      if (pick === "Status") { await status(controller, ctx, env); continue; }
+      if (extras.includes(pick)) throw new SettingsError(EDITOR_UNAVAILABLE);
       const index = labels.indexOf(pick);
       if (index < 0) throw new SettingsError("Invalid settings selection");
       const field = fields[index];
+      const group = field.group;
       const key = `${group}.${field.key}`;
       const old = fieldValue(settings, group, field.key);
+      if (key === "tools.allowSubagentInheritedTools" && !old && !controller.subagentManagerPresent?.()) throw new SettingsError(SUBAGENT_HELP);
       if (typeof old === "boolean") await controller.update((current) => updateSetting(current, key, String(!old)));
       else if (field.kind === "options") {
         // Same values and descriptions as the terminal dialog's option list.
@@ -329,7 +357,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, group: Se
         if (at < 0) continue;
         await controller.update((current) => updateSetting(current, key, field.options![at].value));
       } else {
-        const hint = key === "relevance.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : field.key === "threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" || key === "tools.maxAdded" ? " (new items added per picking round)" : "";
+        const hint = field.group === "tools" ? ` (${field.label}; ${field.hint})` : key === "decision.concurrency" ? " (0 = all shards parallel; 1–32 = limit)" : field.key === "threshold" ? " (0–1, inclusive)" : key === "relevance.maxSkills" ? " (new items added per picking round)" : "";
         const value = await ctx.ui.input(`New value for ${key}${hint}`, String(old), { signal: ctx.signal });
         if (value === undefined) continue;
         await controller.update((current) => updateSetting(current, key, value.trim()));
@@ -338,47 +366,23 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, group: Se
     } catch (error) { controller.report(ctx, safeError(error), "error"); }
   }
 }
-const advancedMenu = (controller: Controller, ctx: CommandContext) => fieldsMenu(controller, ctx, "relevance");
-/** RPC counterpart of the dialog's shared "Footer icons" options row: same labels and descriptions, saved as the top-level `iconStyle`. */
+/** RPC counterpart of the Advanced tab's shared "Footer icons" options row: same labels and descriptions, saved as the top-level `iconStyle`. */
 async function iconStyleMenu(controller: Controller, ctx: CommandContext) {
-  const field = fieldFor("general", "iconStyle")!;
+  const settings = controller.getSettings();
+  const field = fieldFor("general", "iconStyle", settings)!;
   const options = field.options ?? [];
-  const current = String(fieldValue(controller.getSettings(), "general", "iconStyle"));
   const choices = options.map((option) => `${option.value} · ${option.label ?? option.value} · ${option.description}`);
-  const picked = await ctx.ui.select(`${field.label} (currently ${current})`, [...choices, "Back"], { signal: ctx.signal });
+  const picked = await ctx.ui.select(`${field.label} (currently ${String(fieldValue(settings, "general", "iconStyle"))})`, [...choices, "Back"], { signal: ctx.signal });
   const at = picked === undefined ? -1 : choices.indexOf(picked);
   if (at < 0) return;
-  await controller.update((settings) => updateSetting(settings, "iconStyle", options[at].value));
+  await controller.update((current) => updateSetting(current, "iconStyle", options[at].value));
   controller.setStatus(ctx);
 }
 async function settingsMenu(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
-  if (!ctx.hasUI) { controller.report(ctx, JSON.stringify(controller.getSettings(), null, 2)); return; }
   for (;;) {
-    const settings = controller.getSettings();
-    const toggle = `Context decisions: ${settings.enabled ? "On" : "Off"}`;
-    const provider = `Provider / execution: ${settings.backend?.backend === "pi" ? `Pi internal · ${cleanLabel(settings.backend.provider)}` : settings.backend ? `${settings.backend.backend} direct` : "not configured"}`;
-    const model = `Model: ${selectionLabel(settings.backend)}`;
-    const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
-    const globalAllow = `Allow list (Global) · ${settings.globalAllowlist.length}`;
-    const projectAllow = `Allow list (Project) · ${project?.names.length ?? 0}`;
-    const tools = `Tools & MCP…: ${toolsSummary(settings)}`;
-    const icons = `Footer icons: ${iconStyleText(settings)}`;
-    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, "Advanced…", tools, icons, "Status", "Done"], { signal: ctx.signal });
+    const pick = await ctx.ui.select("Decisions · settings", ["Skills", "Tools", "Advanced", "Done"], { signal: ctx.signal });
     if (!pick || pick === "Done") return;
-    try {
-      if (pick === toggle) {
-        await controller.update((current) => ({ ...current, enabled: !current.enabled }));
-        controller.setStatus(ctx); controller.report(ctx, `Context decisions ${!settings.enabled ? "enabled" : "disabled"}`);
-      } else if (pick === provider) await chooseProvider(controller, ctx, env);
-      else if (pick === model) {
-        const backend = settings.backend;
-        await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
-      } else if (pick === globalAllow || pick === projectAllow) throw new SettingsError(EDITOR_UNAVAILABLE);
-      else if (pick === "Advanced…") await advancedMenu(controller, ctx);
-      else if (pick === tools) await fieldsMenu(controller, ctx, "tools");
-      else if (pick === icons) await iconStyleMenu(controller, ctx);
-      else if (pick === "Status") await status(controller, ctx, env);
-    } catch (error) { controller.report(ctx, safeError(error), "error"); }
+    if (pick === "Skills" || pick === "Tools" || pick === "Advanced") await fieldsMenu(controller, ctx, pick, env);
   }
 }
 
@@ -388,15 +392,15 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
   const scoped = (signal?: AbortSignal) => scopedContext(ctx, signal, life.isOpen);
   const refreshStatus = () => { if (life.isOpen()) statusSafely(controller, scoped()); };
   return {
-    snapshot: () => ({ settings: controller.getSettings(), settingsError: controller.getSettingsError(), hasCwd: !!cwd }),
+    snapshot: () => ({ settings: controller.getSettings(), settingsError: controller.getSettingsError(), hasCwd: !!cwd, subagentManagerPresent: controller.subagentManagerPresent?.() ?? false }),
     async projectCount() {
       if (!cwd) return { count: 0 };
       const result = await controller.loadProjectAllowlist(cwd);
       const warning = result.error ?? result.warnings[0];
       return { count: result.names.length, tools: result.tools.length, mcpServers: result.mcpServers.length, ...(warning ? { warning: sanitizeTerminalText(warning, 300) } : {}) };
     },
-    async toggleEnabled() { await controller.update((current) => ({ ...current, enabled: !current.enabled })); refreshStatus(); },
-    async updateSetting(key, text) { await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
+    async toggleEnabled() { await controller.update((current) => ({ ...current, relevance: { ...current.relevance, enabled: !current.relevance.enabled } })); refreshStatus(); },
+    async updateSetting(key, text) { if (key === "tools.allowSubagentInheritedTools" && text === "true" && !controller.subagentManagerPresent?.()) throw new SettingsError(SUBAGENT_HELP); await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
     async listProviders(signal): Promise<ProviderRow[]> {
       const choices = await providerChoices(scoped(signal), env);
       return choices.map((choice) => ({
@@ -423,7 +427,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
     async history(signal) {
       const session = scoped(signal).sessionManager;
       if (!session) throw new SettingsError("This Pi host does not expose session history");
-      return readDecisionsHistory(session);
+      return readDecisionsHistory(session, controller.historyToolGroups());
     },
     allowlist: (scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal),
     toolAllowlist: (list, scope, signal) => allowlistDeps(controller, ctx, scope, env, life.isOpen, signal, list),
@@ -444,7 +448,7 @@ function toolListLines(report: ToolReport, which: "tools" | "mcp"): string[] {
     lines.push(`MCP servers and extensions (${report.groups.length}, ${state}); grouped only by Pi's public metadata (mcp__ namespace for servers, sourceInfo for extensions):`);
     for (const group of report.groups.slice(0, LIST_LIMIT)) lines.push(`  ${group.type === "mcp" ? "MCP" : "extension"} ${cleanLabel(group.label)} (${group.key}) · ${group.tools} tools · ${group.available ? (group.allowlisted ? "allowlisted" : "available") : "unavailable"}${group.type === "mcp" && !group.verified ? " · not registered by Pi's built-in MCP" : ""}`);
     if (report.groups.length > LIST_LIMIT) lines.push(`  … and ${report.groups.length - LIST_LIMIT} more`);
-    lines.push("Resource-only or disconnected servers with no tools are not observable: the Tool picker cannot add them. Allowlist by name in tools.alwaysAllowedMcpServers (settings.json) or alwaysAllowedMcpServers in the project .pi/pi-context-decisions.json, then /reload.");
+    lines.push("Resource-only or disconnected servers with no tools are not editor candidates: the Tools tab cannot add them. Pin file-configured names in their defining scope (global tools.alwaysAllowedMcpServers or project .pi/pi-context-decisions.json). Unknown origins use Global; then /reload.");
     if (report.ungrouped) lines.push(`${report.ungrouped} extension tools expose no usable provenance: they belong to no group and are never filtered in mcp mode.`);
     return lines;
   }
@@ -464,7 +468,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
   };
   /** Read-only inventory reports: `tools list` / `mcp list`. Everything editable lives in the dialog. */
   const listCommand = async (ctx: CommandContext, which: "tools" | "mcp", tokens: string[]): Promise<void> => {
-    if (tokens.length !== 1 || tokens[0] !== "list") throw new SettingsError(`Use /decisions ${which} list. Change tool and MCP settings and allowlists in the /decisions Tool picker tab`);
+    if (tokens.length !== 1 || tokens[0] !== "list") throw new SettingsError(`Use /decisions ${which} list. Change tool and MCP settings and allowlists in the /decisions Tools tab`);
     controller.report(ctx, toolListLines(await controller.describeTools(ctx), which).join("\n"));
   };
   pi.registerCommand("decisions", {
@@ -486,7 +490,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
           if (terminal(ctx)) await openDialog(ctx, "history");
           else {
             if (!ctx.sessionManager) throw new SettingsError("This Pi host does not expose session history");
-            controller.report(ctx, historyReportLines(readDecisionsHistory(ctx.sessionManager)).join("\n"));
+            controller.report(ctx, historyReportLines(readDecisionsHistory(ctx.sessionManager, controller.historyToolGroups())).join("\n"));
           }
         }
         else if (action === "tools" || action === "mcp") await listCommand(ctx, action, tokens);
@@ -503,7 +507,7 @@ export function registerCommands(pi: ExtensionHost, controller: Controller, env?
           const operation = controller.beginOperation();
           try {
             const signal = ctx.signal ? AbortSignal.any([ctx.signal, operation.signal]) : operation.signal;
-            const result = await controller.createClient(settings.backend, ctx).bool({ task: "Synthetic extension self-test" }, { instructions: "Does state.task describe a synthetic test?" }, { signal, timeoutMs: settings.relevance.timeoutMs });
+            const result = await controller.createClient(settings.backend, ctx).bool({ task: "Synthetic extension self-test" }, { instructions: "Does state.task describe a synthetic test?" }, { signal, timeoutMs: settings.decision.timeoutMs });
             controller.report(ctx, `Synthetic bool test: probability ${result.answer.probability}, ${Date.now() - start}ms${result.response.usage ? `; usage ${JSON.stringify(result.response.usage)}` : ""}`);
           } finally { operation.close(); }
         } else throw new SettingsError(`Use /decisions ${COMMANDS.join("|")}`);

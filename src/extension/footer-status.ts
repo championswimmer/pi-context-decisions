@@ -23,7 +23,6 @@ export function skillFooter(settings: ContextDecisionsSettings, settingsError: s
   const icons = FOOTER_ICONS[settings.iconStyle];
   const prefix = `${icons.decisions} ${icons.skills} `;
   if (settingsError) return `${icons.decisions} !config`;
-  if (!settings.enabled) return `${icons.decisions} off`;
   if (!settings.relevance.enabled) return `${prefix}off`;
   if (!settings.backend) return `${icons.decisions} setup`;
   if (!last) return `${prefix}ready`;
@@ -34,7 +33,7 @@ export interface ToolFooterCounts { mode: ToolFilterMode; available: number; ext
 export function toolFooter(settings: ContextDecisionsSettings, options: {
   supported: boolean; settingsError?: string; counts?: ToolFooterCounts; last?: LastToolDecision;
 }): string | undefined {
-  if (!settings.enabled || !settings.tools.enabled) return undefined;
+  if (!settings.tools.enabled) return undefined;
   const icon = FOOTER_ICONS[settings.iconStyle].tools;
   if (!options.supported) return `${icon} !host`;
   if (options.settingsError) return `${icon} !config`;

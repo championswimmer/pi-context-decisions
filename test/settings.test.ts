@@ -13,8 +13,8 @@ async function directory(t: { after(fn: () => Promise<void>): void }) {
 }
 test("defaults are independent, disabled until a backend is chosen, fail closed, and bounded", async (t) => {
   const a = defaultSettings(); const b = defaultSettings(); a.relevance.pinned.push("one");
-  assert.deepEqual(b.relevance.pinned, []); assert.equal(b.backend, null); assert.equal(b.relevance.failMode, "closed");
-  assert.equal(b.relevance.maxPromptChars, 4000); assert.equal(b.relevance.maxDescriptionChars, 400); assert.equal(b.relevance.chunkSize, 50); assert.equal(b.relevance.concurrency, 0);
+  assert.deepEqual(b.relevance.pinned, []); assert.equal(b.backend, null); assert.equal(b.decision.failMode, "closed");
+  assert.equal(b.decision.maxPromptChars, 4000); assert.equal(b.decision.maxDescriptionChars, 400); assert.equal(b.decision.chunkSize, 50); assert.equal(b.decision.concurrency, 0);
   assert.deepEqual((await loadSettings(join(await directory(t), "missing.json"))).settings, b);
 });
 test("every static router ID accepted by direct and native, aliases and outside-ten rejected", () => {
@@ -36,7 +36,7 @@ test("nonrouter Pi selections remain independent; direct versions and fields val
 test("partial config receives defaults, unknown read fields warn but cannot be saved", () => {
   const warnings: string[] = [];
   const parsed = parseSettings({ enabled: false, relevance: { cadence: "tool-round", mystery: 1 }, extra: 1 }, warnings);
-  assert.equal(parsed.enabled, false); assert.equal(parsed.relevance.cadence, "tool-round"); assert.equal(parsed.relevance.threshold, 0.375); assert.equal(warnings.length, 2);
+  assert.equal(parsed.relevance.enabled, false); assert.equal(parsed.relevance.cadence, "tool-round"); assert.equal(parsed.decision.threshold, 0.375); assert.equal(warnings.length, 3);
   assert.throws(() => parseSettings({ ...defaultSettings(), mystery: 1 }), SettingsError);
 });
 test("invalid settings cannot enable unbounded disclosure or invalid fail-open", () => {
@@ -59,13 +59,13 @@ test("atomic settings replacement roundtrips with no temporary files and mode 06
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   assert.deepEqual((await loadSettings(path)).settings, { ...settings, relevance: { ...settings.relevance, pinned: ["one"] } });
   assert.deepEqual(await readdir(join(root, "nested")), ["settings.json"]);
-  const next = { ...settings, enabled: false }; await saveSettings(next, path);
-  assert.equal(JSON.parse(await readFile(path, "utf8")).enabled, false);
+  const next = { ...settings, relevance: { ...settings.relevance, enabled: false } }; await saveSettings(next, path);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).relevance.enabled, false);
 });
 test("invalid writes leave existing file unchanged; rename failure cleans temp", async (t) => {
   const root = await directory(t); const path = join(root, "settings.json"); await saveSettings(defaultSettings(), path);
   const original = await readFile(path, "utf8");
-  await assert.rejects(saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, failMode: "bad" as "open" } }, path), SettingsError);
+  await assert.rejects(saveSettings({ ...defaultSettings(), decision: { ...defaultSettings().decision, failMode: "bad" as "open" } }, path), SettingsError);
   assert.equal(await readFile(path, "utf8"), original);
   const occupied = join(root, "occupied"); await mkdir(occupied);
   await assert.rejects(saveSettings(defaultSettings(), occupied), /Could not save/);
@@ -89,29 +89,29 @@ test("oversized valid-shaped settings cannot be written as an unreadable file", 
   await assert.rejects(saveSettings(settings, path), /exceeds 64 KiB/);
 });
 test("defaults: normalized threshold 0.375, prompt cadence, score-only shape with no legacy keys", () => {
-  const { relevance } = defaultSettings();
-  assert.equal(relevance.threshold, 0.375); assert.equal(relevance.cadence, "prompt"); assert.equal(relevance.maxSkills, 12); assert.equal(relevance.chunkSize, 50);
+  const { relevance, decision } = defaultSettings();
+  assert.equal(decision.threshold, 0.375); assert.equal(relevance.cadence, "prompt"); assert.equal(relevance.maxSkills, 12); assert.equal(decision.chunkSize, 50);
   for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.equal(Object.hasOwn(relevance, removed), false, removed);
 });
 test("decimal thresholds persist, old settings receive defaults, and bad bounds/types are rejected", async (t) => {
-  assert.equal(parseSettings({ relevance: { chunkSize: 5 } }).relevance.threshold, 0.375);
-  const settings = updateSetting(defaultSettings(), "relevance.threshold", "0.625");
-  assert.equal(settings.relevance.threshold, 0.625);
+  assert.equal(parseSettings({ relevance: { chunkSize: 5 } }).decision.threshold, 0.375);
+  const settings = updateSetting(defaultSettings(), "decision.threshold", "0.625");
+  assert.equal(settings.decision.threshold, 0.625);
   const path = join(await directory(t), "settings.json");
-  await saveSettings(settings, path); assert.equal((await loadSettings(path)).settings.relevance.threshold, 0.625);
+  await saveSettings(settings, path); assert.equal((await loadSettings(path)).settings.decision.threshold, 0.625);
   const text = JSON.parse(await readFile(path, "utf8")).relevance;
   for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.equal(Object.hasOwn(text, removed), false, `save writes only the new shape (${removed})`);
-  for (const ok of [0, 1, 0.5, 0.375]) assert.equal(parseSettings({ relevance: { threshold: ok } }).relevance.threshold, ok);
-  for (const value of [NaN, Infinity, -0.01, 1.01, 2, "0.5", true, null]) assert.throws(() => parseSettings({ relevance: { threshold: value } }), SettingsError);
-  for (const value of ["NaN", "Infinity", "-1", "1.01", "2", "1e0", "true", "1.2.3", ""]) assert.throws(() => updateSetting(settings, "relevance.threshold", value), SettingsError);
-  assert.equal(updateSetting(settings, "relevance.threshold", ".5").relevance.threshold, 0.5);
-  assert.equal(updateSetting(settings, "relevance.threshold", "1").relevance.threshold, 1);
+  for (const ok of [0, 1, 0.5, 0.375]) assert.equal(parseSettings({ decision: { threshold: ok } }).decision.threshold, ok);
+  for (const value of [NaN, Infinity, -0.01, 1.01, 2, "0.5", true, null]) assert.throws(() => parseSettings({ decision: { threshold: value } }), SettingsError);
+  for (const value of ["NaN", "Infinity", "-1", "1.01", "2", "1e0", "true", "1.2.3", ""]) assert.throws(() => updateSetting(settings, "decision.threshold", value), SettingsError);
+  assert.equal(updateSetting(settings, "decision.threshold", ".5").decision.threshold, 0.5);
+  assert.equal(updateSetting(settings, "decision.threshold", "1").decision.threshold, 1);
 });
 test("cadence is a validated enum and every picker control updates through the shared path", () => {
   const settings = defaultSettings();
   assert.equal(updateSetting(settings, "relevance.cadence", "tool-round").relevance.cadence, "tool-round");
   assert.throws(() => updateSetting(settings, "relevance.cadence", "every-token"), SettingsError);
-  assert.equal(updateSetting(settings, "relevance.chunkSize", "10").relevance.chunkSize, 10);
+  assert.equal(updateSetting(settings, "decision.chunkSize", "10").decision.chunkSize, 10);
   assert.equal(updateSetting(settings, "relevance.maxSkills", "3").relevance.maxSkills, 3);
   assert.equal(updateSetting(settings, "relevance.maxSkills", "0").relevance.maxSkills, 0);
 });
@@ -128,19 +128,19 @@ test("legacy settings migrate losslessly on load: threshold = raw / 2, direct wh
   for (const [legacy, expected] of cases) {
     const warnings: string[] = [];
     const parsed = parseSettings({ relevance: { ...legacy, maxSkills: 7 } }, warnings);
-    assert.equal(parsed.relevance.threshold, expected, JSON.stringify(legacy));
+    assert.equal(parsed.decision.threshold, expected, JSON.stringify(legacy));
     assert.equal(parsed.relevance.maxSkills, 7);
-    assert.deepEqual(warnings, [], "a clean migration raises no warning");
+    assert.equal(warnings.length, 1); assert.match(warnings[0], /Legacy settings migrated/);
     for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.equal(Object.hasOwn(parsed.relevance, removed), false);
   }
 });
 test("legacy choice mode migrates to score with one safe warning; an explicit threshold beats legacy keys", () => {
   const warnings: string[] = [];
   const parsed = parseSettings({ relevance: { mode: "choice", minLabel: "directly_relevant", directThreshold: 1.5 } }, warnings);
-  assert.equal(parsed.relevance.threshold, 0.75);
+  assert.equal(parsed.decision.threshold, 0.75);
   assert.equal(warnings.length, 1); assert.match(warnings[0], /Choice scoring was removed/);
   const both: string[] = [];
-  assert.equal(parseSettings({ relevance: { threshold: 0.2, relatedThreshold: 1.25 } }, both).relevance.threshold, 0.2);
+  assert.equal(parseSettings({ relevance: { threshold: 0.2, relatedThreshold: 1.25 } }, both).decision.threshold, 0.2);
   assert.equal(both.length, 1); assert.match(both[0], /threshold is set/);
 });
 test("invalid legacy values stay settings errors with their original rules, so the picker fails closed", async (t) => {
@@ -160,11 +160,11 @@ test("migrated settings load from disk without rewriting and save in the new sha
   const legacy = { relevance: { mode: "score", minLabel: "related", relatedThreshold: 1.25, directThreshold: 1.75, maxSkills: 5 } };
   await writeFile(path, JSON.stringify(legacy));
   const loaded = await loadSettings(path);
-  assert.equal(loaded.error, undefined); assert.equal(loaded.settings.relevance.threshold, 0.625); assert.deepEqual(loaded.warnings, []);
+  assert.equal(loaded.error, undefined); assert.equal(loaded.settings.decision.threshold, 0.625); assert.equal(loaded.warnings.length, 1);
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), legacy);
   await saveSettings(loaded.settings, path);
   assert.deepEqual(Object.keys(JSON.parse(await readFile(path, "utf8")).relevance).sort(), Object.keys(defaultSettings().relevance).sort());
-  assert.equal((await loadSettings(path)).settings.relevance.threshold, 0.625);
+  assert.equal((await loadSettings(path)).settings.decision.threshold, 0.625);
 });
 test("removed settings cannot be set through the UI/CLI path and point to the threshold", () => {
   for (const key of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) {
@@ -173,17 +173,17 @@ test("removed settings cannot be set through the UI/CLI path and point to the th
 });
 test("UI/CLI updates share validation, no coercive booleans or scientific/fractional limits", () => {
   const settings = defaultSettings();
-  assert.equal(updateSetting(settings, "relevance.failMode", "open").relevance.failMode, "open");
-  assert.equal(updateSetting(settings, "enabled", "false").enabled, false);
+  assert.equal(updateSetting(settings, "decision.failMode", "open").decision.failMode, "open");
+  assert.equal(updateSetting(settings, "relevance.enabled", "false").relevance.enabled, false);
   assert.equal(updateSetting(settings, "relevance.minCandidates", "0").relevance.minCandidates, 0);
-  for (const [key, value] of [["enabled", "yes"], ["relevance.chunkSize", "1e2"], ["relevance.maxSkills", "1.5"], ["relevance.maxPromptChars", "5000"], ["relevance.pinned", "secret"], ["backend", "openai"]]) assert.throws(() => updateSetting(settings, key, value), SettingsError);
-  assert.equal(settings.enabled, true);
+  for (const [key, value] of [["enabled", "yes"], ["decision.chunkSize", "1e2"], ["relevance.maxSkills", "1.5"], ["decision.maxPromptChars", "5000"], ["relevance.pinned", "secret"], ["backend", "openai"]]) assert.throws(() => updateSetting(settings, key, value), SettingsError);
+  assert.equal(settings.relevance.enabled, true);
 });
 test("the shipped example config parses without warnings and uses only the new shape", async () => {
   const text = await readFile(new URL("../examples/skill-picker-demo/config/pi-context-decisions.example.json", import.meta.url), "utf8");
   const warnings: string[] = [];
   const parsed = parseSettings(JSON.parse(text), warnings);
-  assert.deepEqual(warnings, []); assert.equal(parsed.relevance.threshold, 0.5); assert.equal(parsed.relevance.cadence, "prompt");
+  assert.deepEqual(warnings, []); assert.equal(parsed.decision.threshold, 0.5); assert.equal(parsed.relevance.cadence, "prompt");
   for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.doesNotMatch(text, new RegExp(`"${removed}"`));
 });
 
@@ -191,7 +191,7 @@ test("the shipped example config parses without warnings and uses only the new s
 
 test("tools block defaults: off, tools mode, prompt cadence, fail closed, empty allowlists, independent per call", () => {
   const { tools } = defaultSettings();
-  assert.deepEqual(tools, { enabled: false, mode: "tools", cadence: "prompt", threshold: 0.375, maxAdded: 8, minCandidates: 0, failMode: "closed", maxDescriptionChars: 400, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
+  assert.deepEqual(tools, { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] });
   assert.equal(defaultSettings().relevance.enabled, true, "skill filtering default is untouched");
   const a = defaultToolSettings(); a.alwaysAllowedTools.push("x"); assert.deepEqual(defaultToolSettings().alwaysAllowedTools, []);
   assert.deepEqual([...TOOL_FILTER_MODES], ["tools", "mcp"]); assert.deepEqual([...TOOL_CADENCES], ["initial", "prompt", "tool-round"]);
@@ -209,7 +209,7 @@ test("a settings file without `tools` loads identically, is never rewritten, and
 });
 test("a saved tools block roundtrips with sorted, de-duplicated allowlists", async (t) => {
   const path = join(await directory(t), "settings.json");
-  const settings = parseSettings({ ...defaultSettings(), tools: { ...defaultToolSettings(), enabled: true, mode: "mcp", cadence: "tool-round", threshold: 0.5, maxAdded: 3, alwaysAllowedTools: ["z_tool", "a_tool", "z_tool"], alwaysAllowedMcpServers: ["dev-radius", "docs"] } });
+  const settings = parseSettings({ ...defaultSettings(), decision: { ...defaultSettings().decision, threshold: 0.5 }, tools: { ...defaultToolSettings(), enabled: true, mode: "mcp", cadence: "tool-round", maxAdded: 3, alwaysAllowedTools: ["z_tool", "a_tool", "z_tool"], alwaysAllowedMcpServers: ["dev-radius", "docs"] } });
   await saveSettings(settings, path);
   const back = (await loadSettings(path)).settings;
   assert.deepEqual(back, settings);
@@ -259,20 +259,83 @@ test("updateSetting edits tools scalars through the same validation; allowlist a
   assert.equal(updateSetting(settings, "tools.mode", "mcp").tools.mode, "mcp");
   assert.equal(updateSetting(settings, "tools.enabled", "true").tools.enabled, true);
   assert.equal(updateSetting(settings, "tools.cadence", "initial").tools.cadence, "initial");
-  assert.equal(updateSetting(settings, "tools.threshold", ".25").tools.threshold, 0.25);
+  assert.equal(updateSetting(settings, "decision.threshold", ".25").decision.threshold, 0.25);
   assert.equal(updateSetting(settings, "tools.maxAdded", "0").tools.maxAdded, 0);
-  assert.equal(updateSetting(settings, "tools.failMode", "open").tools.failMode, "open");
+  assert.equal(updateSetting(settings, "decision.failMode", "open").decision.failMode, "open");
   assert.equal(settings.tools.mode, "tools", "the input is never mutated");
-  for (const [key, value] of [["tools.mode", "server"], ["tools.cadence", "sometimes"], ["tools.enabled", "yes"], ["tools.threshold", "1.5"], ["tools.maxAdded", "-1"], ["tools.maxAdded", "1001"], ["tools.maxDescriptionChars", "0"], ["tools.nope", "1"]]) {
+  for (const [key, value] of [["tools.mode", "server"], ["tools.cadence", "sometimes"], ["tools.enabled", "yes"], ["decision.threshold", "1.5"], ["tools.maxAdded", "-1"], ["tools.maxAdded", "1001"], ["decision.maxDescriptionChars", "0"], ["tools.nope", "1"]]) {
     assert.throws(() => updateSetting(settings, key, value), SettingsError, `${key}=${value}`);
   }
   for (const key of ["tools.alwaysAllowedTools", "tools.alwaysAllowedMcpServers"]) assert.throws(() => updateSetting(settings, key, "x"), /allowlists/);
   assert.throws(() => updateSetting(settings, "tools", "x"), SettingsError);
 });
-test("changing a tools setting leaves skill settings and the master switch alone", () => {
+test("changing a tool feature setting leaves skill policy and shared tuning alone", () => {
   const before = defaultSettings();
   const after = updateSetting(before, "tools.enabled", "true");
   assert.deepEqual({ ...after, tools: before.tools }, before);
   const skills = updateSetting(after, "relevance.enabled", "false");
   assert.equal(skills.tools.enabled, true); assert.equal(skills.relevance.enabled, false);
+});
+
+test("shared decision migration merges legacy policies conservatively, warns once, and never rewrites on load", async (t) => {
+  const path = join(await directory(t), "settings.json");
+  const legacy = { enabled: false, relevance: { enabled: true, threshold: 0.25, failMode: "open", maxDescriptionChars: 200, chunkSize: 3, concurrency: 2, timeoutMs: 1200, maxPromptChars: 90, maxSkills: 7 },
+    tools: { enabled: true, threshold: 0.75, failMode: "closed", maxDescriptionChars: 60, maxAdded: 4 } };
+  const text = JSON.stringify(legacy); await writeFile(path, text);
+  const loaded = await loadSettings(path);
+  assert.equal(loaded.error, undefined); assert.equal(loaded.warnings.length, 1); assert.match(loaded.warnings[0], /Legacy settings migrated/);
+  assert.deepEqual(loaded.settings.decision, { threshold: 0.75, failMode: "closed", maxDescriptionChars: 60, chunkSize: 3, concurrency: 2, timeoutMs: 1200, maxPromptChars: 90 });
+  assert.deepEqual([loaded.settings.relevance.enabled, loaded.settings.tools.enabled], [false, false]);
+  assert.deepEqual([loaded.settings.relevance.maxSkills, loaded.settings.tools.maxAdded], [7, 4]);
+  assert.equal(await readFile(path, "utf8"), text);
+  const independent = updateSetting(loaded.settings, "tools.enabled", "true");
+  assert.deepEqual([independent.relevance.enabled, independent.tools.enabled], [false, true]);
+  await saveSettings(independent, path);
+  const saved = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(Object.hasOwn(saved, "enabled"), false);
+  for (const group of [saved.relevance, saved.tools]) for (const key of Object.keys(defaultSettings().decision)) assert.equal(Object.hasOwn(group, key), false, key);
+  assert.deepEqual((await loadSettings(path)).warnings, []);
+});
+
+test("explicit shared values win per field; a lone legacy feature value migrates, and omitted fields keep defaults", () => {
+  assert.deepEqual(parseSettings({ tools: { threshold: 0.5, failMode: "open", maxDescriptionChars: 50 } }).decision,
+    { ...defaultSettings().decision, threshold: 0.5, failMode: "open", maxDescriptionChars: 50 });
+  const warnings: string[] = [];
+  const parsed = parseSettings({ relevance: { threshold: 0.9, maxPromptChars: 123, maxDescriptionChars: 90, failMode: "closed" },
+    tools: { threshold: 0.8, maxDescriptionChars: 40 }, decision: { threshold: 0.2, maxDescriptionChars: 150, failMode: "open" } }, warnings);
+  assert.deepEqual(parsed.decision, { ...defaultSettings().decision, threshold: 0.2, maxPromptChars: 123, maxDescriptionChars: 150, failMode: "open" });
+  assert.equal(warnings.length, 1);
+  assert.deepEqual(parseSettings({ enabled: true, relevance: { enabled: false }, tools: { enabled: true } }).relevance.enabled, false);
+});
+
+test("shadowed legacy values and all shared bounds stay errors; shared saves cannot retain old scalar setters", () => {
+  for (const [key, bad] of Object.entries({ threshold: 1.1, chunkSize: 51, concurrency: 33, timeoutMs: 0, maxPromptChars: 4001, maxDescriptionChars: 401, failMode: "maybe" })) {
+    assert.throws(() => parseSettings({ decision: { [key]: bad } }), SettingsError, key);
+    assert.throws(() => parseSettings({ relevance: { [key]: bad }, decision: defaultSettings().decision }), SettingsError, key);
+  }
+  for (const [key, bad] of Object.entries({ threshold: -1, failMode: true, maxDescriptionChars: 0 })) {
+    assert.throws(() => parseSettings({ tools: { [key]: bad }, decision: defaultSettings().decision }), SettingsError, key);
+  }
+  for (const enabled of ["false", null, 0]) assert.throws(() => parseSettings({ enabled }), SettingsError);
+  for (const key of Object.keys(defaultSettings().decision)) assert.throws(() => updateSetting(defaultSettings(), `relevance.${key}`, "1"), /use decision/);
+  for (const key of ["threshold", "failMode", "maxDescriptionChars"]) assert.throws(() => updateSetting(defaultSettings(), `tools.${key}`, "1"), /use decision/);
+  assert.throws(() => updateSetting(defaultSettings(), "enabled", "false"), /Removed master switch/);
+});
+
+test("settings documentation canonical defaults stay valid, warning-free and in sync", async () => {
+  const settingsDoc = await readFile(new URL("../docs/settings.md", import.meta.url), "utf8");
+  const json = /Canonical settings shape \(defaults\):\s+```json\n([\s\S]*?)\n```/.exec(settingsDoc)?.[1];
+  assert.ok(json);
+  const warnings: string[] = [];
+  assert.deepEqual(parseSettings(JSON.parse(json), warnings), defaultSettings());
+  assert.deepEqual(warnings, []);
+});
+
+test("inherited-tools setting defaults off, validates and roundtrips", async (t) => {
+  assert.equal(parseSettings({}).tools.allowSubagentInheritedTools, false);
+  assert.throws(() => parseSettings({ tools: { allowSubagentInheritedTools: "true" } }));
+  const path = join(await directory(t), "settings.json");
+  const settings = updateSetting(defaultSettings(), "tools.allowSubagentInheritedTools", "true");
+  await saveSettings(settings, path);
+  assert.equal((await loadSettings(path)).settings.tools.allowSubagentInheritedTools, true);
 });

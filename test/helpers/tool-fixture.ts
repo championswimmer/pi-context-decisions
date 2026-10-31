@@ -1,6 +1,6 @@
 // Offline fixture for tool/MCP filtering tests: the sim host, a scripted decision client, and a Pi-shaped tool inventory.
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BeforeAgentStartEvent } from "@earendil-works/pi-coding-agent";
@@ -8,7 +8,7 @@ import { registerContextDecisions } from "../../src/extension/runtime.ts";
 import type { CommandContext } from "../../src/extension/contracts.ts";
 import { createDecisionClient } from "../../src/decision/api.ts";
 import type { DecisionRequest } from "../../src/decision/types.ts";
-import { defaultSettings, defaultToolSettings, saveSettings, type ContextDecisionsSettings, type ToolFilterSettings } from "../../src/settings.ts";
+import { defaultSettings, defaultToolSettings, saveSettings, type ContextDecisionsSettings, type ToolFilterSettings, type DecisionSettings } from "../../src/settings.ts";
 import { saveAllowlist, setSetting } from "./settings-ui.ts";
 import { SimSession, builtinSource, extensionSource, simHost, turnEnd, type SimToolInfo } from "./pi-sim.ts";
 
@@ -22,7 +22,7 @@ export const extTool = (name: string, exposure: SimToolInfo["exposure"] = "direc
   ({ name, description: `Does ${name}`, exposure, sourceInfo: extensionSource(name), ...extra });
 
 export interface ToolOptions {
-  tools?: Partial<ToolFilterSettings>; settings?: Partial<ContextDecisionsSettings>; skills?: boolean; unconfigured?: boolean;
+  decision?: Partial<DecisionSettings>; tools?: Partial<ToolFilterSettings>; settings?: Partial<ContextDecisionsSettings>; skills?: boolean; unconfigured?: boolean;
   /** Score by candidate name (tool name, or `mcp__x` namespace key in mcp mode). Default 0. */
   scores?: Record<string, number>; fail?: boolean; hang?: boolean;
   extra?: SimToolInfo[];
@@ -33,10 +33,11 @@ export interface ToolOptions {
 }
 export async function toolSetup(t: { after(fn: () => Promise<void>): void }, options: ToolOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), "tool-filter-")); t.after(() => rm(root, { recursive: true, force: true }));
-  const path = join(root, "settings.json");
+  const path = join(root, "settings.json"), agentDir = join(root, "agent");
+  await mkdir(agentDir); await writeFile(join(agentDir, "mcp.json"), "{}");
   const base = defaultSettings();
   const settings: ContextDecisionsSettings = { ...base, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, ...options.settings,
-    relevance: { ...base.relevance, enabled: options.skills === true, minCandidates: 0, ...options.settings?.relevance },
+    decision: { ...base.decision, ...options.settings?.decision, ...options.decision }, relevance: { ...base.relevance, enabled: options.skills === true, minCandidates: 0, ...options.settings?.relevance },
     tools: { ...defaultToolSettings(), enabled: true, ...options.tools } };
   await saveSettings(settings, path);
   const sim = simHost(options.session ?? new SimSession());
@@ -45,7 +46,7 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
   const requests: DecisionRequest[] = [];
   const messages: string[] = [];
   const scores = { ...options.scores };
-  registerContextDecisions(sim.pi, { settingsPath: path, env: {}, report(_ctx, message) { messages.push(message); }, ...(options.loadProjectAllowlist ? { loadProjectAllowlist: options.loadProjectAllowlist } : {}),
+  registerContextDecisions(sim.pi, { settingsPath: path, agentDir, env: {}, report(_ctx, message) { messages.push(message); }, ...(options.loadProjectAllowlist ? { loadProjectAllowlist: options.loadProjectAllowlist } : {}),
     createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide(request) {
       requests.push(request);
       behavior.inflight++; behavior.peak = Math.max(behavior.peak, behavior.inflight);
@@ -65,7 +66,7 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
   const event = (prompt: string, extra: Record<string, unknown> = {}) => ({ type: "before_agent_start", prompt, systemPrompt: "unchanged",
     systemPromptOptions: { cwd: root, skills: [...skillList], selectedTools: ["read", "bash"], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] }, ...extra } as unknown as BeforeAgentStartEvent);
   const h = {
-    sim, ctx, root, path, requests, messages, scores, behavior, settings, skillList,
+    sim, ctx, root, path, agentDir, requests, messages, scores, behavior, settings, skillList,
     event,
     async start(prompt: string, extra: Record<string, unknown> = {}) { const e = event(prompt, extra); const results = await sim.emit("before_agent_start", e, ctx); return { e, results }; },
     end: (options: Parameters<typeof turnEnd>[2] = {}) => turnEnd(sim, ctx, options),

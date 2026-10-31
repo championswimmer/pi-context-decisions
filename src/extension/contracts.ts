@@ -3,13 +3,13 @@ import type { RegistryLike, BackendSelection } from "../core/backends/factory.ts
 import type { DecisionClient } from "../decision/api.ts";
 import type { ContextDecisionsSettings, SettingsLoadResult } from "../settings.ts";
 import type { DecisionUsage } from "../decision/types.ts";
-import type { ScopedSkill } from "../apps/allowlist.ts";
+import type { AllowlistScope, ScopedSkill } from "../apps/allowlist.ts";
 import type { ProjectAllowlistLists, ProjectAllowlistLoad } from "../project-allowlist.ts";
 import type { ToolFilterMode } from "../settings.ts";
 
 /** `appendEntry` records the stable-base ledger; `getActiveTools` chooses Pi's skill-file reader for deltas. */
 export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand" | "appendEntry" | "getActiveTools">
-  & Partial<Pick<ExtensionAPI, "getCommands" | "getAllTools" | "setActiveTools">>;
+  & Partial<Pick<ExtensionAPI, "getCommands" | "getAllTools" | "setActiveTools" | "events">>;
 export interface ExtensionRegistry extends RegistryLike {
   getProviderAuthStatus?(provider: string): { configured: boolean };
 }
@@ -17,6 +17,8 @@ export interface CommandContext {
   hasUI: boolean;
   mode: ExtensionContext["mode"];
   cwd?: string;
+  /** Public Pi project-trust decision; absent hosts are treated as untrusted for MCP config reads. */
+  isProjectTrusted?: ExtensionContext["isProjectTrusted"];
   ui: Pick<ExtensionUIContext, "select" | "input" | "notify" | "setStatus"> & Partial<Pick<ExtensionUIContext, "custom">>;
   modelRegistry: ExtensionRegistry;
   signal?: AbortSignal;
@@ -62,13 +64,13 @@ export interface LastToolDecision {
   usage?: DecisionUsage;
 }
 export interface ToolReportRow {
-  name: string; kind: "internal" | "mcp" | "extension";
+  name: string; kind: "internal" | "mcp" | "extension"; scope: AllowlistScope;
   /** Canonical group key (`mcp__<server>` or `ext__<extension>`) and its label, when the tool belongs to a group. */
   group?: string; groupLabel?: string;
   /** MCP server label (only for `mcp` tools). */
   server?: string; exposure: string; state: "always" | "allowlisted" | "available" | "unavailable"; description: string;
 }
-export interface ToolReportGroup { key: string; type: "mcp" | "extension"; label: string; tools: number; toolNames: string[]; available: boolean; allowlisted: boolean; verified: boolean }
+export interface ToolReportGroup { key: string; scope: AllowlistScope | "mixed"; type: "mcp" | "extension"; label: string; tools: number; toolNames: string[]; available: boolean; allowlisted: boolean; verified: boolean }
 /** Names-only local view for `/decisions tools list|mcp list`, status and allowlist pickers. Makes no decision calls. */
 export interface ToolReport {
   supported: boolean;
@@ -84,12 +86,16 @@ export interface ToolReport {
 }
 export interface Controller {
   ensureLoaded(): Promise<void>;
+  subagentManagerPresent?(): boolean;
+  managerDiagnosticsStatus?(): string | undefined;
   getSettings(): ContextDecisionsSettings;
   getSettingsError(): string | undefined;
   getLastDecision(): LastDecision | undefined;
   getLastToolDecision(): LastToolDecision | undefined;
   /** Local inventory + availability on the current branch. `ctx` supplies the session branch and cwd. */
   describeTools(ctx: CommandContext): Promise<ToolReport>;
+  /** Existing registry snapshot, names only; history must not refresh the inventory or infer membership from tool names. */
+  historyToolGroups(): ReadonlyMap<string, string>;
   getInventory(): ScopedSkill[];
   loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad>;
   /** Names only: the skill list (iterable) or any subset of `{ skills, tools, mcpServers }`; omitted lists keep their value. */
@@ -107,6 +113,8 @@ export function selectionLabel(selection: BackendSelection | null): string {
 }
 export interface ExtensionDependencies {
   settingsPath: string;
+  /** Isolated agent directory for SDK hosts/tests; defaults to public getAgentDir() (including its env override). */
+  agentDir?: string;
   env?: Record<string, string | undefined>;
   load?: (path: string) => Promise<SettingsLoadResult>;
   save?: (settings: ContextDecisionsSettings, path: string) => Promise<void>;

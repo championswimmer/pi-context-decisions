@@ -2,6 +2,7 @@
 // `/decisions` has no setter subcommands (the dialog owns every setting), so tests that need a
 // settings change use this instead of typing a command. It goes through the same `controller.update`
 // as the terminal dialog, including in-flight cancellation and generation bumps.
+import { ADVANCED_FIELDS, SKILL_FIELDS } from "../../src/extension/settings-model.ts";
 import type { CommandContext } from "../../src/extension/contracts.ts";
 
 type Run = (args: string, ctx: CommandContext) => Promise<void>;
@@ -20,43 +21,35 @@ export function rpcContext(ctx: CommandContext, ui: Record<string, unknown>): Co
  * toggle, so pass the opposite of the current value. Invalid values are reported by the command, exactly as for a user.
  */
 export async function setSetting(run: Run, ctx: CommandContext, key: string, value = ""): Promise<void> {
-  let stage: "main" | "fields" | "edited" = "main";
-  const ui = {
+  if (key === "enabled") key = "relevance.enabled";
+  const tab = SKILL_FIELDS.some((field) => `${field.group}.${field.key}` === key) ? "Skills"
+    : ADVANCED_FIELDS.some((field) => `${field.group}.${field.key}` === key) ? "Advanced" : "Tools";
+  let entered = false, edited = false;
+  await run("", rpcContext(ctx, {
     async select(title: string, options: string[]) {
       if (/\(currently /.test(title)) return options.find((option) => option.startsWith(`${value} ·`)) ?? "Back";
-      if (title === "Decisions · settings") {
-        if (stage !== "main") return "Done";
-        stage = "fields";
-        if (key === "enabled") { stage = "edited"; return options.find((option) => option.startsWith("Context decisions:")); }
-        return options.find((option) => key.startsWith("relevance.") ? option === "Advanced…" : option.startsWith("Tools & MCP…"));
-      }
-      if (stage === "fields") { stage = "edited"; return options.find((option) => option.startsWith(`${key}:`)); }
+      if (title === "Decisions · settings") { if (entered) return "Done"; entered = true; return tab; }
+      if (!edited) { edited = true; return options.find((option) => option.startsWith(`${key}:`)); }
       return "Back";
     },
     async input() { return value; },
-  };
-  await run("", rpcContext(ctx, ui));
+  }));
 }
-/**
- * Choose a decision model through the RPC menus: settings → Provider / execution → provider → model (settings → Model for
- * `"none"`, which the current-provider picker always offers). `label` is the option's trailing selection label, e.g.
- * `Pi custom/nested/model` or `openrouter direct typesafe/jev-1.13`. Missing credentials or an unregistered classifier are
- * rejected and reported exactly as for a user.
- */
+/** Choose a shared backend via settings → Advanced → provider → model. */
 export async function setModel(run: Run, ctx: CommandContext, label: string): Promise<void> {
   const pi = /^Pi ([^/]+)\//.exec(label)?.[1];
   const providerPrefix = pi ? `${pi} · Pi internal classifier pipeline` : `${label.split(" ")[0]} · direct API`;
-  let stage = 0;
-  const ui = {
+  let entered = false, chosen = false;
+  await run("", rpcContext(ctx, {
     async select(title: string, options: string[]) {
-      if (title === "Decisions · settings") return stage++ === 0 ? options.find((option) => option.startsWith(label === "none" ? "Model:" : "Provider / execution:")) : "Done";
+      if (title === "Decisions · settings") { if (entered) return "Done"; entered = true; return "Advanced"; }
+      if (title === "Decisions · Advanced settings") { if (chosen) return "Back"; chosen = true; return options.find((option) => option.startsWith(label === "none" ? "Model:" : "Provider / execution:")); }
       if (/provider and execution path/.test(title)) return options.find((option) => option.startsWith(providerPrefix));
       if (/select model/.test(title)) return label === "none" ? "None (no decision calls)" : options.find((option) => option.endsWith(` · ${label}`));
       return undefined;
     },
     async input() { return undefined; },
-  };
-  await run("", rpcContext(ctx, ui));
+  }));
 }
 
 const KEY = { down: "\x1b[B", enter: "\r", esc: "\x1b", save: "\x13", tab: "\t", space: " " };

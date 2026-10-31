@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as xtermModule from "@xterm/headless";
 import { Container, Input, TuiMainScreen, type Component, type Terminal } from "@earendil-works/pi-tui";
 import { defaultSettings } from "../src/settings.ts";
-import { dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { ADVANCED_FIELDS, dialogHeightBudget } from "../src/extension/settings-model.ts";
 import { createSettingsDialogComponent, SETTINGS_OVERLAY_OPTIONS, type DialogResult, type InitialRoute, type SettingsDialogOps } from "../src/extension/settings-dialog.ts";
 
 type XTerminal = InstanceType<typeof xtermModule.Terminal>;
@@ -131,30 +131,30 @@ test("real renderer: keyboard input reaches the dialog while it owns focus, not 
   s.tui.renderNow(); await s.terminal.flush();
   assert.equal(s.editor.getValue(), "", "typing must not reach the editor while the dialog is focused");
   const viewport = s.terminal.snapshot().lines.join("\n");
-  assert.match(viewport, /❯ Model/);
+  assert.match(viewport, /❯ Always allowed · Global/);
   s.dialog.close("closed"); s.tui.renderNow();
   s.tui.getFocusedComponent()!.handleInput!("x"); assert.equal(s.editor.getValue(), "x");
 });
 
-test("real renderer 80x24: the Tool picker tab renders inside the overlay bounds", async () => {
+test("real renderer 80x24: the Tools tab renders inside the overlay bounds", async () => {
   const s = await scenario(24, 0, "tools");
   const { lines, viewportTop } = s.terminal.snapshot();
   const viewport = lines.slice(viewportTop, viewportTop + 24);
-  assert.ok(viewport.some((line) => /Decisions › Tool picker/.test(line)), viewport.join("\n"));
-  assert.ok(viewport.some((line) => /Skill picker\s+Tool picker/.test(line)), "tab strip is visible");
+  assert.ok(viewport.some((line) => /Decisions › Tools/.test(line)), viewport.join("\n"));
+  assert.ok(viewport.some((line) => /Skills\s+Tools/.test(line)), "tab strip is visible");
   assert.ok(viewport.some((line) => /Tool filtering\s+Off/.test(line)));
   s.dialog.dispose();
 });
 
-test("real renderer 80x24: Tab through the focused overlay switches Skill picker ⇄ Tool picker inside the same overlay bounds", async () => {
+test("real renderer 80x24: Tab through the focused overlay switches Skills ⇄ Tools inside the same overlay bounds", async () => {
   const s = await scenario(24, 0);
   const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + 24); };
-  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line) && !/\[/.test(line)));
+  assert.ok(view().some((line) => /Skills\s+Tools/.test(line) && !/\[/.test(line)));
   s.tui.getFocusedComponent()!.handleInput!("\t"); s.tui.renderNow(); await s.terminal.flush();
-  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line)) && view().some((line) => /Tool filtering\s+Off/.test(line)), view().join("\n"));
+  assert.ok(view().some((line) => /Skills\s+Tools/.test(line)) && view().some((line) => /Tool filtering\s+Off/.test(line)), view().join("\n"));
   assert.equal(s.editor.getValue(), "", "Tab must not reach the editor underneath"); assert.equal(s.tui.hasOverlay(), true);
   s.tui.getFocusedComponent()!.handleInput!("\x1b[Z"); s.tui.renderNow(); await s.terminal.flush();
-  assert.ok(view().some((line) => /Skill picker\s+Tool picker/.test(line) && !/\[/.test(line)));
+  assert.ok(view().some((line) => /Skills\s+Tools/.test(line) && !/\[/.test(line)));
   s.dialog.dispose();
 });
 
@@ -163,17 +163,17 @@ test("real renderer: the selected tab has a real cell background (not brackets) 
   const find = async (label: string) => {
     s.tui.renderNow(); await s.terminal.flush();
     const { lines, viewportTop } = s.terminal.snapshot();
-    const row = lines.findIndex((line, i) => i >= viewportTop && /Skill picker\s+Tool picker/.test(line));
+    const row = lines.findIndex((line, i) => i >= viewportTop && /Skills\s+Tools/.test(line));
     assert.ok(row >= 0, "tab strip row");
     assert.doesNotMatch(lines[row], /[\[\]]/);
     const col = lines[row].indexOf(label);
     return { row, col, mid: s.terminal.bgAt(row, col + 2), edgeLeft: s.terminal.bgAt(row, col - 1), edgeRight: s.terminal.bgAt(row, col + label.length) };
   };
-  let skill = await find("Skill picker"), tool = await find("Tool picker");
+  let skill = await find("Skills"), tool = await find("Tools");
   assert.equal(skill.mid, 24, "active tab label has the background"); assert.equal(skill.edgeLeft, 24, "padding is filled too"); assert.equal(skill.edgeRight, 24);
   assert.equal(tool.mid, undefined, "inactive tab has no background");
   s.tui.getFocusedComponent()!.handleInput!("\t");
-  skill = await find("Skill picker"); tool = await find("Tool picker");
+  skill = await find("Skills"); tool = await find("Tools");
   assert.equal(tool.mid, 24); assert.equal(tool.edgeLeft, 24); assert.equal(tool.edgeRight, 24); assert.equal(skill.mid, undefined);
   s.dialog.dispose();
 });
@@ -181,7 +181,9 @@ test("real renderer: the selected tab has a real cell background (not brackets) 
 test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP and extension groups, tri-state headers) stays inside the overlay bounds", async () => {
   const names = ["note_add", "note_list", "docs_s", "docs_t", "loose_tool"];
   const ops: SettingsDialogOps = { ...fakeOps(), async toolAllowlist(_list, scope) {
-    return { scope, noun: "tool", skills: names.map((name) => ({ name, description: `does ${name}`, scope, disableModelInvocation: false })), initial: ["note_add"], locationLabel: "x", async save() {},
+    return { scope, noun: "tool", skills: names.map((name) => ({ name, description: `does ${name}`, scope, disableModelInvocation: false })), initial: ["note_add"], locationLabel: "Pi agent dir: pi-context-decisions/settings.json",
+      scopeNote: "Built-in MCP scope: session-start config capture, honoring project trust; disk edits require /reload. Extensions: public provenance. Unresolved origins use Global.",
+      compactScopeNote: "MCP session scope; /reload config edits", async save() {},
       tree: { internal: [{ name: "read", description: "Read" }], groups: [
         { key: "mcp__docs", label: "docs", type: "mcp", description: "", tools: ["docs_s", "docs_t"] },
         { key: "ext__notes", label: "notes", type: "extension", description: "", tools: ["note_add", "note_list"] }], initialGroups: ["mcp__docs"] } };
@@ -192,6 +194,8 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
   for (let n = 0; n < 40 && !view().some((line) => /Built-in tools/.test(line)); n++) { await new Promise((resolve) => setTimeout(resolve, 2)); s.tui.renderNow(); await s.terminal.flush(); }
   let text = view().join("\n");
   assert.match(text, /Always allowed tools · Global/); assert.match(text, /\[x\] ▸ Built-in tools \(1\)/); assert.match(text, /\[x\] ▸ docs/); assert.match(text, /\[-\] ▸ notes/);
+  assert.match(text, /MCP session scope; \/reload config edits/);
+  assert.match(text, /Saved in Pi agent dir:/); assert.match(text, /pi-context-decisions\/settings\.json/);
   assert.ok(text.indexOf("Built-in tools") < text.indexOf("docs") && text.indexOf("docs") < text.indexOf("notes"));
   await send("\x1b[B"); for (let n = 0; n < 2; n++) await send("\x1b[B"); // list focus -> notes header
   await send("\r");
@@ -204,16 +208,21 @@ test("real renderer 80x24: the nested tool editor (built-ins, collapsible MCP an
 });
 
 for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview and scrollable details reuse the focused overlay while the transcript grows`, async () => {
-  const ops: SettingsDialogOps = { ...fakeOps(), async history() { return { batches: [{ turn: 4, answered: true,
-    items: { skills: Array.from({ length: 120 }, (_, n) => `skill-${n}`), base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }; } };
+  const ops: SettingsDialogOps = { ...fakeOps(), async history() { return { turns: [{ turn: 4, batches: [{ turn: 4, answered: true,
+    items: { skills: Array.from({ length: 119 }, (_, n) => `skill-${n}`), pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }, { turn: 7, answered: true,
+    marks: { skills: new Map([["skill-119", "score 1.6 / ≥0.75"]]) },
+    items: { skills: ["skill-119"], pinned: [], base: [], redelivered: [], tools: [], groups: [], noticeTools: [], noticeGroups: [] } }] }] }; } };
   const s = await scenario(rows, 0, "history", ops);
   const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + rows).join("\n"); };
   await new Promise((resolve) => setImmediate(resolve)); s.tui.renderNow(); await s.terminal.flush();
-  assert.match(view(), /Before turn 4/);
+  assert.match(view(), /Turn 4: \(120 skills, 0 tools\/MCPs added\)/);
+  assert.doesNotMatch(view(), /Turn 7/, "internal turns are not top-level rows");
   s.tui.getFocusedComponent()!.handleInput!("\r"); s.tui.renderNow(); await s.terminal.flush();
-  assert.match(view(), /Before turn 4/);
+  assert.match(view(), /Turn 4/);
   s.tui.getFocusedComponent()!.handleInput!("\x1b[F"); s.tui.renderNow(); await s.terminal.flush();
   assert.match(view(), /skill-119/);
+  assert.match(view(), /Internal turn 7/, "expansion preserves internal turn numbering");
+  assert.match(view(), /skill-119  score 1\.6 \/ ≥0\.75/);
   const bounds = s.handle.getBounds()!;
   assert.ok(bounds.height <= dialogHeightBudget(rows));
   for (let n = 30; n < 50; n++) { s.append(n); s.tui.renderNow(); await s.terminal.flush(); }
@@ -221,4 +230,41 @@ for (const rows of [12, 24]) test(`real renderer 80x${rows}: history overview an
   assert.equal(s.tui.getFocusedComponent(), s.dialog); assert.equal(s.editor.getValue(), "");
   s.dialog.close("closed"); s.tui.renderNow(); await s.terminal.flush();
   assert.doesNotMatch(view(), /Decisions|skill-119/); assert.equal(s.tui.getFocusedComponent(), s.editor);
+});
+
+test("real renderer 80x24: MCP-mode Advanced limits and editor wording fit the overlay", async () => {
+  const settings = defaultSettings(); settings.tools.mode = "mcp";
+  const ops = { ...fakeOps(), snapshot: () => ({ settings: structuredClone(settings), hasCwd: true }) };
+  const s = await scenario(24, 0, "advanced", ops);
+  const view = () => { const { lines, viewportTop } = s.terminal.snapshot(); return lines.slice(viewportTop, viewportTop + 24).join("\n"); };
+  const send = async (...keys: string[]) => {
+    for (const key of keys) s.tui.getFocusedComponent()!.handleInput!(key);
+    s.tui.renderNow(); await s.terminal.flush();
+  };
+  const minimum = 2 + ADVANCED_FIELDS.findIndex((field) => field.group === "tools" && field.key === "minCandidates");
+  await send(...Array(minimum).fill("\x1b[B"));
+  // The shared value column reserves room for concurrency; long list labels truncate at this width.
+  assert.match(view(), /MCP\/exts · Max added per…\s+8/);
+  assert.match(view(), /MCP\/exts · Minimum candi…\s+0/);
+  await send("\r");
+  assert.match(view(), /MCP\/exts · Minimum candidates/); assert.match(view(), /Below this many groups/);
+  await send("\x1b", "\x1b[A", "\r");
+  assert.match(view(), /MCP\/exts · Max added per round/); assert.match(view(), /whole group counts once/);
+  assert.ok(s.handle.getBounds()!.height <= dialogHeightBudget(24));
+  assert.equal(s.tui.getFocusedComponent(), s.dialog); s.dialog.dispose();
+});
+
+test("real renderer: Advanced is a third peer tab with a selected background, shared backend rows and no feature toggle", async () => {
+  const s = await scenario(24, 0);
+  for (let i = 0; i < 2; i++) s.tui.getFocusedComponent()!.handleInput!("\t");
+  s.tui.renderNow(); await s.terminal.flush();
+  const { lines, viewportTop } = s.terminal.snapshot();
+  const view = lines.slice(viewportTop, viewportTop + 24).join("\n");
+  assert.match(view, /Decisions › Advanced/); assert.match(view, /Provider \/ execution/); assert.match(view, /Relevance threshold/);
+  assert.doesNotMatch(view, /Skill filtering|Tool filtering/);
+  const row = lines.findIndex((line, i) => i >= viewportTop && /Skills\s+Tools\s+Advanced/.test(line));
+  assert.equal(s.terminal.bgAt(row, lines[row].indexOf("Advanced") + 2), 24);
+  assert.equal(s.tui.hasOverlay(), true); assert.equal(s.tui.getFocusedComponent(), s.dialog);
+  s.dialog.handleInput!("\x1b"); s.tui.renderNow(); await s.terminal.flush();
+  assert.deepEqual(s.results, ["closed"]); assert.equal(s.tui.hasOverlay(), false);
 });

@@ -197,3 +197,26 @@ test("decision payloads contain only names, bounded descriptions and server labe
     assert.ok(candidates.length > 0);
   }
 });
+
+test("public sourceInfo.scope classifies non-builtin tools and homogeneous groups; paths never infer scope", () => {
+  const inv = classifyTools([
+    ext("user", { sourceInfo: { scope: "user", path: "/project/.pi/extensions/user.ts" } }),
+    ext("project", { sourceInfo: { scope: "project", path: "/home/user/.pi/agent/extensions/project.ts" } }),
+    ext("temporary", { sourceInfo: { scope: "temporary", path: "<inline:temporary>" } }), { name: "missing" },
+    mcp("builtin_project_config_not_exposed", "q"), mcp("scoped", "q", "direct", { sourceInfo: { scope: "project" } }),
+    ext("mixed_user", { sourceInfo: { scope: "user", path: "/user/notes.ts" } }), ext("mixed_project", { sourceInfo: { scope: "project", path: "/project/notes.ts" } }),
+  ]);
+  assert.deepEqual(inv.tools.map((tool) => tool.scope), ["global", "project", "global", "global", "global", "project", "global", "project"]);
+  assert.deepEqual([...inv.groups.values()].map((group) => [group.key, group.scope]), [
+    ["ext__user", "global"], ["ext__project", "project"], ["ext__temporary", "global"], ["mcp__builtin_project_config_not_exposed", "global"], ["mcp__scoped", "project"], ["ext__notes", "mixed"],
+  ]);
+});
+
+
+test("only built-in MCP namespaces consume config file scope; unresolved built-in origins fall back to Global", () => {
+  const inv = classifyTools([
+    mcp("project", "q"), mcp("global", "q"), mcp("unknown", "q", "direct", { sourceInfo: { source: "builtin", path: "builtin:mcp", scope: "project" } }),
+    mcp("extension", "q", "direct", { sourceInfo: { source: "extension", path: "/ext/host.ts", scope: "user" } }),
+  ], new Map([["mcp__project", "project"], ["mcp__global", "global"], ["mcp__extension", "project"]]));
+  assert.deepEqual(inv.tools.map((tool) => tool.scope), ["project", "global", "global", "global"]);
+});

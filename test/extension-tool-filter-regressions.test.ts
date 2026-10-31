@@ -43,7 +43,7 @@ test("resource tools with a degraded registry keep their routing policy (a known
 });
 test("a throwing project allowlist read never loosens the gate: the last good cache or the global lists apply, and the caller never sees the error", async (t) => {
   let fail = false;
-  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_g"] }, extra: [A, B, extTool("ext_g")], scores: { ext_a: 0 },
+  const h = await toolSetup(t, { tools: { alwaysAllowedTools: ["ext_g"] }, extra: [A, { ...B, sourceInfo: { ...B.sourceInfo!, scope: "project" } }, extTool("ext_g")], scores: { ext_a: 0 },
     async loadProjectAllowlist() { if (fail) throw new Error("PRIVATE disk error"); return { names: [], tools: ["ext_b"], mcpServers: [], warnings: [] }; } });
   assert.equal(await h.gate("ext_b"), undefined, "first read succeeds and caches: ext_b is project-allowlisted");
   fail = true;
@@ -113,7 +113,7 @@ test("lossless ledger: 1001 withheld direct tools survive chunking, a reload and
   await reloaded.start("next");
   assert.equal(reloaded.active().length, CORE.length + 1001, "disabling restored every withheld tool");
   assert.equal(readToolLedger(h.sim.session).tools.size, 1001, "and recorded every tool as available (no 1000-name truncation)");
-  const open = await toolSetup(t, { tools: { failMode: "open" }, extra: tools, fail: true });
+  const open = await toolSetup(t, { decision: { failMode: "open" }, extra: tools, fail: true });
   await open.start("task");
   assert.equal(readToolLedger(open.sim.session).tools.size, 1001); assert.equal(open.active().length, CORE.length + 1001);
   const considered = await toolSetup(t, { tools: { cadence: "initial" }, extra: tools });
@@ -220,7 +220,7 @@ test("settings save during a boundary: the stale pass takes back only ITS additi
   const release = holdRound(h);
   const running = h.start("task");
   await until(() => h.requests.length === 1, "the decision call");
-  await h.set("relevance.threshold", "0.5");
+  await h.set("decision.threshold", "0.5");
   release(); await running;
   await h.agentEnd();
   const ledger = readToolLedger(h.sim.session);
@@ -273,7 +273,7 @@ test("gate: disabling filtering during lazy scoring lets the call through withou
 test("gate: an obsolete project-allowlist read can never populate the cache after a reset", async (t) => {
   let reads = 0; let hold!: () => void;
   const first = new Promise<void>((resolve) => { hold = resolve; });
-  const h = await toolSetup(t, { extra: [extTool("ext_x")], async loadProjectAllowlist() {
+  const h = await toolSetup(t, { extra: [extTool("ext_x", "direct", { sourceInfo: { source: "sdk", path: "", scope: "project" } })], async loadProjectAllowlist() {
     reads++;
     if (reads === 1) { await first; return { names: [], tools: ["ext_x"], mcpServers: [], warnings: [] }; }
     return { names: [], tools: [], mcpServers: [], warnings: [] };
@@ -286,4 +286,20 @@ test("gate: an obsolete project-allowlist read can never populate the cache afte
   assert.match((await call)!.reason, BLOCKED, "the obsolete read's allowlist did not grant the call");
   assert.equal(reads, 2, "it was re-read, not served from an obsolete cache");
   assert.match((await h.gate("ext_x"))!.reason, BLOCKED); assert.equal(reads, 2, "and only the fresh read was cached");
+});
+
+test("an unloaded global extension pin waits for observable scope and never grants a late project extension", async (t) => {
+  for (const mode of ["tools", "mcp"] as const) {
+    const h = await toolSetup(t, { tools: { mode, alwaysAllowedMcpServers: ["ext__notes", "resources"] }, extra: resourceTools() });
+    await h.start("first task");
+    assert.equal(readToolLedger(h.sim.session).groups.has("ext__notes"), false, "an absent extension is not a resource-only MCP server");
+    assert.equal(readToolLedger(h.sim.session).groups.has("mcp__resources"), true, "the MCP-only resource exception remains durable");
+    assert.deepEqual((await loadSettings(h.path)).settings.tools.alwaysAllowedMcpServers, ["ext__notes", "resources"], "the unloaded saved name remains unchanged");
+    h.sim.registerTool(extTool("project_note", "direct", { sourceInfo: { source: "extension", path: "/work/.pi/extensions/notes.ts", scope: "project" } }));
+    assert.equal((await h.gate("project_note"))?.block, true, `${mode}: the late project tool still needs its own pin or decision`);
+    assert.deepEqual(h.scored(), [mode === "mcp" ? "ext__notes" : "project_note"]);
+    await h.start("second task");
+    assert.equal(readToolLedger(h.sim.session).groups.has("ext__notes"), false);
+    assert.ok(!h.active().includes("project_note"));
+  }
 });

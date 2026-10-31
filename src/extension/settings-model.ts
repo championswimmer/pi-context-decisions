@@ -1,7 +1,8 @@
+import { SUBAGENT_HELP } from "./subagent-manager.ts";
 // Pure data and layout helpers for the floating /decisions dialog.
 // No Pi or pi-tui imports: everything here is unit-testable without a terminal.
 import { DecisionError } from "../decision/errors.ts";
-import { SettingsError, type ContextDecisionsSettings, type IconStyle, type RelevanceSettings, type ToolFilterSettings } from "../settings.ts";
+import { SettingsError, type ContextDecisionsSettings, type IconStyle, type RelevanceSettings, type DecisionSettings, type ToolFilterSettings } from "../settings.ts";
 import { selectionLabel } from "./contracts.ts";
 import { FOOTER_ICONS } from "./footer-status.ts";
 
@@ -26,16 +27,16 @@ export function dialogHeightBudget(rows: number | undefined): number {
 
 export type AdvancedKey = Exclude<keyof RelevanceSettings, "pinned">;
 export type ToolKey = Exclude<keyof ToolFilterSettings, "alwaysAllowedTools" | "alwaysAllowedMcpServers">;
-/** Which settings object a field edits: `relevance.*` (skills), `tools.*` (opt-in tool/MCP filtering) or the top-level shared settings (`general`, e.g. `iconStyle`). */
-export type SettingsGroup = "relevance" | "tools" | "general";
+/** Shared scoring (decision), skill policy (relevance), tool policy (tools) or the top-level shared display settings (`general`, e.g. `iconStyle`). */
+export type SettingsGroup = "relevance" | "tools" | "decision" | "general";
 export type GeneralKey = "iconStyle";
-/** The settings key `ContextDecisionsSettings`/`updateSetting` use for a field: `relevance.x`, `tools.x`, or the bare top-level key. */
+/** The settings key `ContextDecisionsSettings`/`updateSetting` use for a field: `relevance.x`, `tools.x`, `decision.x`, or the bare top-level key. */
 export const settingKey = (group: SettingsGroup, key: string): string => group === "general" ? key : `${group}.${key}`;
 export type AdvancedKind = "bool" | "options" | "int" | "decimal";
 /** `label` is what the user sees (defaults to `value`, which stays the persisted token). */
 export interface AdvancedOption { value: string; description: string; label?: string }
 export interface AdvancedField {
-  key: AdvancedKey | ToolKey | GeneralKey;
+  key: AdvancedKey | ToolKey | keyof DecisionSettings | GeneralKey;
   group: SettingsGroup;
   label: string;
   kind: AdvancedKind;
@@ -43,34 +44,33 @@ export interface AdvancedField {
   options?: readonly AdvancedOption[];
 }
 /**
- * Every relevance knob except `pinned`, which stays on the `pin`/`unpin` commands. The four picking
- * controls come first (threshold, shard size, max added per round, cadence); safety limits follow.
+ * Field metadata is shared by terminal and RPC menus. Feature policy stays separate; tuning belongs to decision.*.
  */
-export const ADVANCED_FIELDS: readonly AdvancedField[] = [
-  { key: "enabled", group: "relevance", label: "Skill filtering", kind: "bool", hint: "Turn relevance scoring of skill advertisements on or off. The master switch on the main screen also applies." },
-  { key: "threshold", group: "relevance", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A skill is added when its relevance score is at least this. 0.375 is the default; 1 keeps only perfect scores." },
-  { key: "chunkSize", group: "relevance", label: "Shard size", kind: "int", hint: "1–50 skills per decision request; every shard of the remaining candidates is evaluated." },
-  { key: "maxSkills", group: "relevance", label: "Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
+const RELEVANCE_FIELDS: readonly AdvancedField[] = [
+  { key: "enabled", group: "relevance", label: "Skill filtering", kind: "bool", hint: "Turn skill advertisement filtering on or off, independently of tool and MCP filtering." },
+  { key: "threshold", group: "decision", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. Skills, tools and groups qualify at or above this score. 0.375 is the default; 1 keeps only perfect scores." },
+  { key: "chunkSize", group: "decision", label: "Shard size", kind: "int", hint: "1–50 candidates per decision request; every shard of the remaining candidates is evaluated." },
+  { key: "maxSkills", group: "relevance", label: "Skills · Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
   { key: "cadence", group: "relevance", label: "Run picker", kind: "options", hint: "When the picker looks for more skills to add. Skills are only ever added, never removed.", options: [
     { value: "prompt", description: "On each submitted prompt, and for queued steering/follow-up messages (default)." },
     { value: "tool-round", description: "Also after each completed tool round: adds the next-best skills for the same task. No tool names, arguments or results are sent." },
   ] },
-  { key: "failMode", group: "relevance", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
-    { value: "closed", description: "Add no new skills when scoring fails (default, recommended)." },
-    { value: "open", description: "WARNING: every remaining skill is added when scoring fails." },
+  { key: "failMode", group: "decision", label: "On failure", kind: "options", hint: "Shared failure policy for skill and tool picking; configuration errors and aborts always fail closed.", options: [
+    { value: "closed", description: "Add no new skills, tools or groups when scoring fails (default, recommended)." },
+    { value: "open", description: "WARNING: every remaining skill, tool or group is added when scoring fails. Applies framework-wide." },
   ] },
-  { key: "timeoutMs", group: "relevance", label: "Timeout (ms)", kind: "int", hint: "1–300000 milliseconds for the whole scoring pass." },
-  { key: "concurrency", group: "relevance", label: "Concurrency", kind: "int", hint: "0–32. 0 sends every shard in parallel; 1–32 limits simultaneous shards." },
-  { key: "minCandidates", group: "relevance", label: "Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and every skill stays advertised." },
-  { key: "maxPromptChars", group: "relevance", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
-  { key: "maxDescriptionChars", group: "relevance", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each skill description sent." },
+  { key: "timeoutMs", group: "decision", label: "Timeout (ms)", kind: "int", hint: "1–300000 milliseconds for the whole scoring pass." },
+  { key: "concurrency", group: "decision", label: "Concurrency", kind: "int", hint: "0–32. 0 sends every shard in parallel; 1–32 limits simultaneous shards." },
+  { key: "minCandidates", group: "relevance", label: "Skills · Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and every skill stays advertised." },
+  { key: "maxPromptChars", group: "decision", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
+  { key: "maxDescriptionChars", group: "decision", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each candidate description sent." },
 ];
-export function advancedField(key: string): AdvancedField | undefined { return ADVANCED_FIELDS.find((field) => field.key === key); }
+export function advancedField(key: string): AdvancedField | undefined { return RELEVANCE_FIELDS.find((field) => field.key === key); }
 /**
- * Opt-in tool and MCP filtering (default off). It is separate from skill filtering: only the master switch, the decision model and the
- * shared scoring limits (timeout, shard size, concurrency, prompt size) are common.
+ * Opt-in tool and MCP filtering (default off), independent of skills; all scoring tuning is shared.
  */
-export const TOOL_FIELDS: readonly AdvancedField[] = [
+const ALL_TOOL_FIELDS: readonly AdvancedField[] = [
+  { key: "allowSubagentInheritedTools", group: "tools", label: "Subagents · Allow inherited tools", kind: "bool", hint: SUBAGENT_HELP },
   { key: "enabled", group: "tools", label: "Tool filtering", kind: "bool", hint: "Off by default and independent of skill filtering. When on, external tools, MCP servers or extensions are made available per prompt by the decision model; Pi's built-in tools are never filtered. Calls to unavailable tools are blocked. This is not a sandbox." },
   { key: "mode", group: "tools", label: "Mode", kind: "options", hint: "What is decided.", options: [
     { value: "tools", description: "Every external tool is decided on its own, whichever MCP server or extension it comes from (default)." },
@@ -81,20 +81,34 @@ export const TOOL_FIELDS: readonly AdvancedField[] = [
     { value: "prompt", description: "On each new user prompt, including queued steering/follow-up messages (default)." },
     { value: "tool-round", description: "Also after each completed tool round: adds the next-best candidates for the same task from cached scores. The decision model only ever receives your bounded user text plus tool/server names and descriptions; never arguments, results or assistant text." },
   ] },
-  { key: "threshold", group: "tools", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. A tool, server or extension is added when its relevance score is at least this. 0.375 is the default." },
-  { key: "maxAdded", group: "tools", label: "Max added per round", kind: "int", hint: "0–1000 new tools (or servers/extensions) added by one round, best first. Allowlisted and already-available ones do not count." },
-  { key: "minCandidates", group: "tools", label: "Minimum candidates", kind: "int", hint: "0–1000. Below this many candidates nothing is scored and all of them stay available." },
-  { key: "failMode", group: "tools", label: "On failure", kind: "options", hint: "What happens when scoring fails.", options: [
-    { value: "closed", description: "Add nothing when scoring fails (default, recommended)." },
-    { value: "open", description: "WARNING: every remaining tool or server is made available when scoring fails." },
-  ] },
-  { key: "maxDescriptionChars", group: "tools", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each tool or server description sent to the decision model." },
+  { key: "maxAdded", group: "tools", label: "Tools · Max added per round", kind: "int", hint: "0–1000 new tools (or whole servers/extensions in group mode) per round, best first. Separate from skill advertisements; allowlisted and already-available ones do not count." },
+  { key: "minCandidates", group: "tools", label: "Tools · Minimum candidates", kind: "int", hint: "0–1000. Tool gating starts at zero by default. Below this inventory size, no scoring and every tool stays available." },
 ];
+export const SKILL_FIELDS = RELEVANCE_FIELDS.filter((field) => field.key === "enabled" || field.key === "cadence");
+export const TOOL_FIELDS = ALL_TOOL_FIELDS.filter((field) => ["enabled", "mode", "cadence"].includes(field.key));
+export const ADVANCED_FIELDS = [
+  ...RELEVANCE_FIELDS.filter((field) => !SKILL_FIELDS.includes(field)),
+  ...ALL_TOOL_FIELDS.filter((field) => !TOOL_FIELDS.includes(field)),
+];
+/** Resolve display metadata from the current snapshot, never mutating field definitions or policy. */
+export function fieldForSettings(field: AdvancedField, settings: ContextDecisionsSettings): AdvancedField {
+  if (field.group !== "tools" || settings.tools.mode !== "mcp") return field;
+  if (field.key === "maxAdded") return { ...field, label: "MCP/exts · Max added per round", hint: "0–1000 new MCP servers or extensions per round, best first. Each whole group counts once; allowlisted and already-available groups do not count." };
+  if (field.key === "minCandidates") return { ...field, label: "MCP/exts · Minimum candidates", hint: "0–1000 MCP servers or extensions. Gating starts at zero by default. Below this many groups, no scoring and every tool stays available." };
+  return field;
+}
+export function fieldFor(group: SettingsGroup, key: string, settings: ContextDecisionsSettings): AdvancedField | undefined {
+  const field = [...SKILL_FIELDS, ...TOOL_FIELDS, ...ADVANCED_FIELDS, ...GENERAL_FIELDS].find((field) => field.group === group && field.key === key);
+  return field && fieldForSettings(field, settings);
+}
+export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown {
+  return ((group === "general" ? settings : settings[group]) as unknown as Record<string, unknown>)[key];
+}
 /** Illustrative preview taken from the footer's own glyph table, so the picker can never drift from what is printed. */
 const iconPreview = (style: IconStyle): string => { const icons = FOOTER_ICONS[style]; return `${icons.decisions} ${icons.skills} ${icons.tools}`; };
 /**
- * Shared, non-filtering settings. They live on neither picker tab exclusively: the same row is offered from both tab roots
- * (and the RPC menu).
+ * Shared, non-filtering display settings (top-level `iconStyle`). Offered on the Advanced tab (and the RPC Advanced menu), next to the
+ * other settings shared by both pipelines; deliberately not part of `ADVANCED_FIELDS`, which stays the decision/policy tuning list.
  */
 export const GENERAL_FIELDS: readonly AdvancedField[] = [
   { key: "iconStyle", group: "general", label: "Footer icons", kind: "options", hint: "Icon set in the compact status footer (extension, skills, tools). Unicode works in regular terminal fonts, Emoji needs colour emoji support, Nerd Font needs a Nerd Font as the terminal font.", options: [
@@ -106,10 +120,6 @@ export const GENERAL_FIELDS: readonly AdvancedField[] = [
 export const ICON_STYLE_LABELS: Readonly<Record<IconStyle, string>> = { unicode: "ASCII / Unicode", emoji: "Emoji", nerd: "Nerd Font" };
 /** Short plain-text name of the current footer icon set (no glyphs: it is reused in menus where the font is unknown). */
 export function iconStyleText(settings: ContextDecisionsSettings): string { return ICON_STYLE_LABELS[settings.iconStyle] ?? "ASCII / Unicode"; }
-export function fieldFor(group: SettingsGroup, key: string): AdvancedField | undefined { return (group === "tools" ? TOOL_FIELDS : group === "general" ? GENERAL_FIELDS : ADVANCED_FIELDS).find((field) => field.key === key); }
-export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown {
-  return ((group === "general" ? settings : settings[group]) as unknown as Record<string, unknown>)[key];
-}
 export function toolsSummary(settings: ContextDecisionsSettings): string { return settings.tools.enabled ? `On · ${settings.tools.mode} · ${settings.tools.cadence}` : "Off"; }
 
 export function advancedValueText(field: AdvancedField, settings: ContextDecisionsSettings): string {
@@ -121,8 +131,8 @@ export function advancedValueText(field: AdvancedField, settings: ContextDecisio
 
 export interface RowDescription { id: string; label: string; value: string; description: string }
 export function advancedRows(settings: ContextDecisionsSettings): RowDescription[] {
-  return ADVANCED_FIELDS.map((field) => ({
-    id: field.key, label: field.label, value: advancedValueText(field, settings), description: field.hint,
+  return ADVANCED_FIELDS.map((field) => fieldForSettings(field, settings)).map((field) => ({
+    id: `${field.group}.${field.key}`, label: field.label, value: advancedValueText(field, settings), description: field.hint,
   }));
 }
 

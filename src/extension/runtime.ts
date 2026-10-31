@@ -1,3 +1,5 @@
+import { subagentManagerPresent } from "./subagent-manager.ts";
+import { MIN_SUBAGENT_MANAGER_DIAGNOSTICS_VERSION, MANAGER_DIAGNOSTICS_HELP, createManagerDiagnostics } from "./manager-diagnostics.ts";
 import type { BeforeAgentStartEvent, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
 import { taskWithoutExpandedSkill } from "../apps/skill-filter.ts";
@@ -52,7 +54,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let toolsStatusShown = false;
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const toolFilter = createToolFilter({
-    pi, ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
+    pi, agentDir: deps.agentDir, report: (ctx, message) => controller.report(ctx, message, "warning"), ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
     beginOperation: () => controller.beginOperation(),
     resolveClient: (ctx, current, responses) => resolveClient(ctx, current, responses, "tools"),
     loadProjectAllowlist: (cwd) => controller.loadProjectAllowlist(cwd), sumUsage,
@@ -62,17 +64,53 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const result = await (deps.load ?? loadSettings)(deps.settingsPath);
     settings = result.settings; settingsError = result.error; warnings = result.warnings; loaded = true;
   };
+  // Only a live versioned host capability can redirect headless reports. Persisted ownership
+  // survives top-level resume/fork and must never suppress stderr.
+  const managerDiagnostics = createManagerDiagnostics(pi);
+  let managerNoticeShown = false;
+  const warnManagerCapability = (ctx: ExtensionContext) => {
+    if (managerNoticeShown || !ctx.hasUI || ctx.mode !== "tui" || !controller.subagentManagerPresent?.() || managerDiagnostics.parentAvailable()) return;
+    managerNoticeShown = true;
+    ctx.ui.notify(MANAGER_DIAGNOSTICS_HELP, "warning");
+  };
+  // Bound duplicate memory per extension instance (not module-global); explicit reports bypass it.
+  const reportedHeadless = new Set<string>();
+  const report = (ctx: Parameters<Controller["report"]>[0], message: string, level: "info" | "warning" | "error" = "info", explicit = false) => {
+    if (deps.report) deps.report(ctx, message, level);
+    else if (ctx.hasUI) ctx.ui.notify(message, level);
+    else {
+      if (!explicit) {
+        const key = JSON.stringify([level, message]);
+        if (reportedHeadless.has(key)) return;
+        if (reportedHeadless.size >= 64) reportedHeadless.delete(reportedHeadless.values().next().value!);
+        reportedHeadless.add(key);
+        if (managerDiagnostics.send(level, message)) return;
+      }
+      console.error(`[context-decisions] ${message}`); // stderr, never the JSON/RPC stdout stream
+    }
+  };
   const controller: Controller = {
     async ensureLoaded() {
       if (loaded) return;
       loading ??= load().finally(() => { loading = undefined; });
       await loading;
     },
+    subagentManagerPresent: () => {
+      // Parent manager registers /agents with public sourceInfo. Command provenance avoids
+      // getAllTools entirely while tool filtering is off, including dialogs and read-only status.
+      try { if (subagentManagerPresent(pi.getCommands?.() ?? [])) return true; } catch { /* try tools only if on */ }
+      if (!settings.tools.enabled) return false;
+      try { return subagentManagerPresent(pi.getAllTools?.() ?? []); } catch { return false; }
+    },
+    managerDiagnosticsStatus: () => !controller.subagentManagerPresent?.() ? undefined
+      : managerDiagnostics.parentAvailable() ? `Subagent diagnostics: parent routing available (protocol 1, manager >= ${MIN_SUBAGENT_MANAGER_DIAGNOSTICS_VERSION})`
+      : `Subagent diagnostics unavailable: ${MANAGER_DIAGNOSTICS_HELP}`,
     getSettings: () => structuredClone(settings),
     getSettingsError: () => settingsError,
     getLastDecision: () => last ? structuredClone(last) : undefined,
     getLastToolDecision: () => toolFilter.last(),
     describeTools: (ctx) => toolFilter.describe(ctx),
+    historyToolGroups: () => toolFilter.historyToolGroups(),
     getInventory() {
       if (inventorySnapshot) return structuredClone(inventorySnapshot);
       return toScopedSkills((pi.getCommands?.() ?? []).filter((command) => command.source === "skill" && command.name.startsWith("skill:")).map((command) => ({ name: command.name.slice(6), description: command.description ?? "", sourceInfo: { scope: command.sourceInfo?.scope } })));
@@ -109,11 +147,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       const abort = new AbortController(); pending.add(abort);
       return { signal: abort.signal, close() { pending.delete(abort); } };
     },
-    report(ctx, message, level = "info") {
-      if (deps.report) deps.report(ctx, message, level);
-      else if (ctx.hasUI) ctx.ui.notify(message, level);
-      else console.error(`[context-decisions] ${message}`); // stderr, not the JSON/RPC protocol stream
-    },
+    report,
     setStatus(ctx) {
       if (!ctx.hasUI) return;
       const total = [...skillRefs.values()].filter((skill) => !skill.disableModelInvocation).length;
@@ -123,19 +157,23 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (toolsText !== undefined || toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", toolsText); toolsStatusShown = toolsText !== undefined; }
     },
   };
-  const commands = registerCommands(pi, controller, deps.env);
+  const commands = registerCommands(pi, { ...controller, report: (ctx, message, level) => report(ctx, message, level, true) }, deps.env);
   pi.on("session_start", async (_event, ctx) => {
     commands.closeDialogs(); // a dialog from a previous session must never outlive its context
+    managerDiagnostics.reset();
+    managerNoticeShown = false;
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
-    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset();
+    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset(true);
     await projectWriteQueue;
     await writeQueue;
     await loading;
     loaded = false;
     await controller.ensureLoaded();
+    await toolFilter.startSession(ctx);
     if (settingsError) controller.report(ctx, `Settings error: ${settingsError}; skill advertisements fail closed until repaired`, "error");
     for (const warning of warnings) controller.report(ctx, warning, "warning");
+    warnManagerCapability(ctx);
     controller.setStatus(ctx);
   });
   pi.on("session_tree", () => {
@@ -147,8 +185,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
     // The dialog is deliberately NOT in `pending`: settings saves abort decisions, not the dialog.
     commands.closeDialogs();
+    managerDiagnostics.reset();
     resetDecisionLoader();
-    abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset();
+    abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
     if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
   });
   const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
@@ -163,7 +202,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   function resolveClient(ctx: ExtensionContext, current: ContextDecisionsSettings, responses: DecisionResponse[], feature: "skills" | "tools" = "skills"): { client: RelevanceClient | null; error?: string } {
     if (settingsError) return { client: null, error: settingsError };
     // Never construct/request a client when explicitly disabled or unconfigured.
-    if (!current.enabled || !(feature === "skills" ? current.relevance.enabled : current.tools.enabled) || !current.backend) return { client: null };
+    if (!(feature === "skills" ? current.relevance.enabled : current.tools.enabled) || !current.backend) return { client: null };
     try {
       if (current.backend.backend === "pi" && !ctx.modelRegistry.findOfType("classifier", current.backend.provider, current.backend.id)) throw new DecisionError("config", "Selected Pi classifier is not registered");
       const decision = controller.createClient(current.backend, ctx);
@@ -182,7 +221,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     return [...new Set([...current.relevance.pinned, ...allowlistedNames(skills, { global: current.globalAllowlist, project: project.names })])];
   };
   const cacheKey = (task: string, current: ContextDecisionsSettings) =>
-    JSON.stringify([task, current.backend, current.relevance.maxPromptChars, current.relevance.maxDescriptionChars]);
+    JSON.stringify([task, current.backend, current.decision.maxPromptChars, current.decision.maxDescriptionChars]);
   const record = (round: SkillAdditionResult<Skill> | undefined, fields: Omit<LastDecision, "latencyMs" | "usage"> & { latencyMs?: number }, responses: DecisionResponse[], started: number) => {
     const usage = sumUsage(responses);
     last = { ...fields, latencyMs: fields.latencyMs ?? round?.latencyMs ?? Date.now() - started, ...(usage ? { usage } : {}) };
@@ -197,8 +236,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
    * together (two handlers are needed for two hidden messages). The skill handler then awaits that same promise.
    */
   let skillPass: Promise<{ message: SkillsDelta } | undefined> | undefined;
-  const toolsActive = () => settings.enabled && settings.tools.enabled;
+  const toolsActive = () => settings.tools.enabled;
   pi.on("before_agent_start", async (event, ctx) => {
+    warnManagerCapability(ctx);
     skillPass = undefined;
     await controller.ensureLoaded();
     if (toolsActive() || settingsError) {
@@ -258,15 +298,15 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       };
       if (superseded()) { bail(); return; }
       const ledger = ledgerFor(ctx);
-      const growBase = (names: Iterable<string>) => {
+      const growBase = (names: Iterable<string>, pinnedNames = false) => {
         if (!reader) return;
         const fresh = [...new Set(names)].filter((name) => inventoryNames.has(name) && !ledger.base.has(name));
         if (!fresh.length) return;
-        pi.appendEntry(SKILLS_BASE_ENTRY, { v: 1, names: fresh });
+        pi.appendEntry(SKILLS_BASE_ENTRY, pinnedNames ? { v: 1, names: fresh, pinned: true } : { v: 1, names: fresh });
         for (const name of fresh) ledger.base.add(name);
       };
       const applyBase = () => setSystemSkills(ledger.base);
-      growBase(pinned); // allowlist removals never shrink the base: advertisements are only ever added
+      growBase(pinned, true); // allowlist removals never shrink the base: advertisements are only ever added
       const lostSkills = reader ? ledger.lost.flatMap((name) => skillRefs.get(name) ?? []) : [];
       const { client, error: configError } = resolveClient(ctx, current, responses);
       let reason: LastDecision["reason"] = "skipped";
@@ -274,7 +314,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       let round: SkillAdditionResult<Skill> | undefined;
       const pinnedSet = new Set(pinned);
       if (configError) { reason = "fail-closed"; errorCode = "config"; }
-      else if (!current.enabled || !current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
+      else if (!current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
         // Today's semantics, made additive: disabled/unconfigured/below-minimum keep EVERYTHING advertised, and
         // the branch remembers that, so enabling filtering later can never drop a skill the model already saw.
         growBase(invocable.map((skill) => skill.name));
@@ -283,7 +323,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         // Pi's own braille working row shows "Deciding Context" for as long as the round is in flight.
         beginDecisionLoader(ctx);
         try {
-          round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
+          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
         } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;
@@ -294,7 +334,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       // Re-check cancellation right before committing: cached scores or restoration must not slip past an abort.
       const cancelled = signal.aborted;
       const added = cancelled ? [] : round?.added ?? [];
-      const delta = reader && !cancelled ? buildSkillsDelta(added, lostSkills, reader) : undefined;
+      const delta = reader && !cancelled ? buildSkillsDelta(added, lostSkills, reader, round?.picks) : undefined;
       const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
       record(round, {
         reason, candidates: round?.candidates ?? invocable.length, kept: added.length,
@@ -345,14 +385,14 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
           const remaining = skills.filter((skill) => !skill.disableModelInvocation && !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
           beginDecisionLoader(ctx);
           try {
-            round = await scoreAdditions(task, remaining, client, { ...current.relevance, maxQuestions: 50, signal }, { store: scoreCache, key });
+            round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal }, { store: scoreCache, key });
           } finally { endDecisionLoader(); }
           if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
         }
       }
       if (currentGeneration !== generation || signal.aborted) return; // stale or cancelled (even with cached scores): commit nothing
       const added = round?.added ?? [];
-      const delta = buildSkillsDelta(added, lostSkills, reader);
+      const delta = buildSkillsDelta(added, lostSkills, reader, round?.picks);
       if (round) {
         const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
         record(round, {

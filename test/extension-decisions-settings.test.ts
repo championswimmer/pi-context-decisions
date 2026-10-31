@@ -43,26 +43,23 @@ async function fixture(t: { after(fn: () => Promise<void>): void }, options: { u
   /** Settings changes through the RPC menus (the dialog's save path); booleans toggle. */
   const set = (key: string, value?: string) => setSetting(run, ctx, key, value);
   const model = (label: string) => setModel(run, ctx, label);
-  const menu = (...choices: (string | undefined | ((options: string[]) => string | undefined))[]) => { picks.push(...choices, "Done"); return command(""); };
+  const menu = (...choices: (string | undefined | ((options: string[]) => string | undefined))[]) => { picks.push(...choices, "Back", "Done"); return command(""); };
   return { path, messages, dialogs, picks, inputs, lookups, commands, ctx, command, set, model, menu, inference: () => inference };
 }
 
 const row = (prefix: string) => (options: string[]) => options.find((label) => label.startsWith(prefix));
 test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits under Advanced…", async (t) => {
   const h = await fixture(t, { ui: true });
-  await h.menu(row("Context decisions:"), "Advanced…", "Back");
+  await h.menu("Skills", row("relevance.enabled:"), "Back", "Advanced", "Back");
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
-  assert.equal(h.commands.has("context-decisions"), false);
-  assert.match(h.dialogs[0].title, /settings/);
-  assert.ok(h.dialogs[0].options.some((label) => label.startsWith("Provider / execution:")));
-  assert.ok(h.dialogs[0].options.some((label) => label.startsWith("Model:")));
-  assert.ok(h.dialogs[0].options.includes("Advanced…") && h.dialogs[0].options.includes("Status"));
-  assert.equal(h.dialogs[0].options.filter((label) => label.startsWith("relevance.")).length, 0, "main menu carries no relevance knobs");
+  assert.deepEqual(h.dialogs[0].options, ["Skills", "Tools", "Advanced", "Done"]);
   const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!;
-  assert.ok(advanced.options.includes("relevance.chunkSize: 50"));
-  assert.ok(advanced.options.includes("relevance.concurrency: 0 (all shards parallel)"));
-  assert.ok(advanced.options.every((label) => !label.startsWith("relevance.pinned")));
-  assert.equal((await loadSettings(h.path)).settings.enabled, false);
+  assert.ok(advanced.options.some((label) => label.startsWith("Provider / execution:")));
+  assert.ok(advanced.options.some((label) => label.startsWith("Model:")));
+  assert.ok(advanced.options.includes("decision.chunkSize: 50"));
+  assert.ok(advanced.options.includes("decision.concurrency: 0 (all shards parallel)"));
+  assert.ok(!advanced.options.some((label) => label.startsWith("relevance.enabled") || label.startsWith("relevance.cadence")));
+  assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
   assert.equal(h.inputs.length, 0); assert.equal(h.inference(), 0);
 });
 test("the setter subcommands are gone: each is rejected with the usage line, changes nothing and opens nothing", async (t) => {
@@ -75,32 +72,32 @@ test("the setter subcommands are gone: each is rejected with the usage line, cha
     assert.equal(JSON.stringify((await loadSettings(h.path)).settings), before, args);
   }
   assert.equal(h.dialogs.length, 0); assert.equal(h.inference(), 0);
-  await h.command("tools list extra"); assert.match(h.messages.at(-1)!, /Use \/decisions tools list.*Tool picker tab/);
+  await h.command("tools list extra"); assert.match(h.messages.at(-1)!, /Use \/decisions tools list.*Tools tab/);
   assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "history", "test", "tools", "mcp", "pin", "unpin"]);
   assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("al"), null);
 });
 test("headless /decisions prints the status instead of a menu", async (t) => {
   const h = await fixture(t);
-  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/); assert.equal(h.dialogs.length, 0);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: not configured/); assert.equal(h.dialogs.length, 0);
 });
 test("RPC Advanced edits validate and persist; cancelling leaves settings alone", async (t) => {
   const h = await fixture(t, { ui: true });
   h.inputs.push("25", undefined);
-  await h.menu("Advanced…", row("relevance.chunkSize:"), row("relevance.chunkSize:"), "Back");
+  await h.menu("Advanced", row("decision.chunkSize:"), row("decision.chunkSize:"), "Back");
   assert.match(h.dialogs[0].title, /settings/); assert.match(h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.title, /Advanced/);
-  assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 25);
+  assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 25);
 });
 
 test("RPC enable/disable, batch size and all-parallel settings persist with bounds", async (t) => {
   const h = await fixture(t);
-  await h.set("enabled"); await h.set("relevance.chunkSize", "50"); await h.set("relevance.concurrency", "0");
-  await h.set("relevance.threshold", "0.625");
+  await h.set("enabled"); await h.set("decision.chunkSize", "50"); await h.set("decision.concurrency", "0");
+  await h.set("decision.threshold", "0.625");
   let settings = (await loadSettings(h.path)).settings;
-  assert.equal(settings.enabled, false); assert.equal(settings.relevance.chunkSize, 50); assert.equal(settings.relevance.concurrency, 0);
-  assert.equal(settings.relevance.threshold, 0.625);
-  await h.set("relevance.chunkSize", "51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
-  await h.set("relevance.concurrency", "33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
-  await h.set("enabled"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.enabled, true);
+  assert.equal(settings.relevance.enabled, false); assert.equal(settings.decision.chunkSize, 50); assert.equal(settings.decision.concurrency, 0);
+  assert.equal(settings.decision.threshold, 0.625);
+  await h.set("decision.chunkSize", "51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
+  await h.set("decision.concurrency", "33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
+  await h.set("enabled"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.relevance.enabled, true);
   await h.command("status"); assert.match(h.messages.at(-1)!, /all shards parallel/); assert.equal(h.inference(), 0);
 });
 
@@ -113,14 +110,14 @@ for (const [provider, model, variable] of [
   await h.set("enabled");
   await h.model(`${provider} direct ${model}`);
   const settings = (await loadSettings(h.path)).settings;
-  assert.equal(settings.backend, null); assert.equal(settings.enabled, false);
+  assert.equal(settings.backend, null); assert.equal(settings.relevance.enabled, false);
   assert.match(h.messages.at(-1)!, new RegExp(variable)); assert.match(h.messages.at(-1)!, new RegExp(`/login ${provider}`));
   assert.equal(h.inference(), 0);
 });
 
 test("missing-key provider labels include all three direct providers and exact setup guidance", async (t) => {
   const h = await fixture(t, { ui: true });
-  await h.menu(row("Provider / execution:"), undefined);
+  await h.menu("Advanced", row("Provider / execution:"), undefined);
   const providers = h.dialogs.find((dialog) => /provider and execution path/.test(dialog.title))!;
   for (const provider of ["openai", "openrouter", "typesafe"]) assert.match(providers.options.find((label) => label.startsWith(`${provider} · direct API`))!, /missing key/);
   assert.ok(providers.options.some((label) => /Pi internal classifier pipeline/.test(label)));
@@ -129,11 +126,11 @@ test("missing-key provider labels include all three direct providers and exact s
 
 test("UI unavailable provider is visibly labelled and rejected before model/persistence", async (t) => {
   const h = await fixture(t, { ui: true });
-  await h.menu(row("Provider / execution:"), (choices) => choices.find((label) => label.startsWith("openrouter · direct API")));
-  assert.match(h.dialogs[1].options.find((label) => label.startsWith("openrouter"))!, /missing key/);
+  await h.menu("Advanced", row("Provider / execution:"), (choices) => choices.find((label) => label.startsWith("openrouter · direct API")));
+  assert.match(h.dialogs[2].options.find((label) => label.startsWith("openrouter"))!, /missing key/);
   assert.match(h.messages.at(-1)!, /OPENROUTER_API_KEY.*\/login openrouter/);
-  assert.equal(h.dialogs.length, 3, "settings, providers, settings again: no model picker for an unusable provider"); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  await h.menu(row("Model:"), (choices) => choices.find((label) => label.includes("OpenAI direct")));
+  assert.equal(h.dialogs.length, 5, "settings, providers, settings again: no model picker for an unusable provider"); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  await h.menu("Advanced", row("Model:"), (choices) => choices.find((label) => label.includes("OpenAI direct")));
   assert.match(h.messages.at(-1)!, /OPENAI_API_KEY/);
   assert.equal((await loadSettings(h.path)).settings.backend, null); assert.equal(h.inference(), 0);
 });
@@ -142,7 +139,7 @@ test("provider UI separates four core workflows, filters models and does not re-
   const h = await fixture(t, { ui: true, registry: { async getProviderAuth(provider) { return { auth: { apiKey: `FIXTURE-${provider}` }, source: "API key" }; } } });
   await h.set("enabled");
   h.dialogs.length = 0;
-  await h.menu(row("Provider / execution:"), (choices) => choices.find((label) => label.startsWith("openrouter · direct API")), (choices) => choices.find((label) => label.includes("openrouter direct typesafe/jev-1.13")));
+  await h.menu("Advanced", row("Provider / execution:"), (choices) => choices.find((label) => label.startsWith("openrouter · direct API")), (choices) => choices.find((label) => label.includes("openrouter direct typesafe/jev-1.13")));
   const providers = h.dialogs.find((dialog) => /provider and execution path/.test(dialog.title))!;
   assert.ok(providers.options.some((label) => label.includes("Pi internal classifier pipeline")));
   assert.ok(providers.options.some((label) => label.startsWith("typesafe · direct API")));
@@ -151,7 +148,7 @@ test("provider UI separates four core workflows, filters models and does not re-
   assert.equal(models.options.filter((label) => label !== "None (no decision calls)").length, OPENROUTER_DECISION_MODELS.length);
   assert.ok(models.options.every((label) => label === "None (no decision calls)" || label.includes("OpenRouter direct")));
   const settings = (await loadSettings(h.path)).settings;
-  assert.deepEqual(settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" }); assert.equal(settings.enabled, false);
+  assert.deepEqual(settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" }); assert.equal(settings.relevance.enabled, false);
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/); assert.equal(h.inference(), 0);
 });
 
@@ -193,20 +190,21 @@ test("request-time Pi key is honoured when the cached OAuth inventory is empty o
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
 });
 
-test("RPC Advanced edits the four picking controls; cadence is a select, not free text, and legacy keys are refused", async (t) => {
+test("RPC Advanced edits shared tuning while Skills owns cadence; cadence is a select, not free text, and legacy keys are refused", async (t) => {
   const h = await fixture(t, { ui: true });
   h.inputs.push("0.625");
-  await h.menu("Advanced…", row("relevance.threshold:"), row("relevance.cadence:"), row("tool-round"), "Back");
+  await h.menu("Advanced", row("decision.threshold:"), "Back", "Skills", row("relevance.cadence:"), row("tool-round"), "Back");
   const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.options;
-  assert.deepEqual(advanced.slice(0, 5).map((label) => label.split(":")[0]), ["relevance.enabled", "relevance.threshold", "relevance.chunkSize", "relevance.maxSkills", "relevance.cadence"]);
-  assert.ok(advanced.includes("relevance.threshold: 0.375")); assert.ok(advanced.includes("relevance.cadence: prompt"));
+  assert.deepEqual(advanced.slice(2, 5).map((label) => label.split(":")[0]), ["decision.threshold", "decision.chunkSize", "relevance.maxSkills"]);
+  assert.ok(advanced.includes("decision.threshold: 0.375")); assert.ok(!advanced.some((label) => label.startsWith("relevance.cadence")));
   const settings = (await loadSettings(h.path)).settings;
-  assert.equal(settings.relevance.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
+  assert.equal(settings.decision.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
   assert.ok(h.dialogs.some((dialog) => /Run picker/.test(dialog.title) && dialog.options.some((option) => option.startsWith("prompt")) && dialog.options.some((option) => option.startsWith("tool-round"))));
   // Legacy keys exist only as load-time migration inputs; the shared validator refuses them as settings.
   for (const legacy of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.throws(() => updateSetting(defaultSettings(), `relevance.${legacy}`, "1"), /Removed setting.*threshold/, legacy);
   await h.set("relevance.cadence", "every-token"); assert.equal((await loadSettings(h.path)).settings.relevance.cadence, "tool-round", "no option matches: nothing changes");
-  await h.set("relevance.maxSkills", "3"); await h.set("relevance.chunkSize", "10");
-  assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.relevance.chunkSize, 10);
-  await h.command("status"); assert.match(h.messages.at(-1)!, /threshold 0.625 \(0–1\), picker tool-round.*max 3 added per round/s);
+  await h.set("relevance.maxSkills", "3"); await h.set("decision.chunkSize", "10");
+  assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 10);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Skills: on · picker tool-round · max 3 added per round/);
+  assert.match(h.messages.at(-1)!, /Shared tuning \(Advanced\): threshold 0.625 \(0–1\)/);
 });

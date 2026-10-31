@@ -33,12 +33,13 @@ test("Pi host packages are peers with * ranges, never runtime dependencies", () 
   }
 });
 
-test("published file list ships sources and excludes tests, demos and scripts", () => {
-  assert.deepEqual(pkg.files, ["src/", "README.md", "CHANGELOG.md", "LICENSE"]);
+test("published file list ships sources and documentation and excludes tests, demos and scripts", () => {
+  assert.deepEqual(pkg.files, ["src/", "docs/*.md", "README.md", "CHANGELOG.md", "LICENSE"]);
   const out = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { encoding: "utf8", cwd: new URL("..", import.meta.url) }));
   const paths: string[] = out[0].files.map((file: { path: string }) => file.path);
-  for (const required of ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "src/extension.ts", "src/index.ts", "src/host/pi-credentials.ts"]) assert.ok(paths.includes(required), required);
+  for (const required of ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "docs/README.md", "docs/settings.md", "docs/providers.md", "docs/skill-picking.md", "docs/tool-filtering.md", "docs/api.md", "docs/development.md", "docs/publishing.md", "src/extension.ts", "src/index.ts", "src/host/pi-credentials.ts"]) assert.ok(paths.includes(required), required);
   for (const path of paths) assert.ok(!/^(test|scripts|examples|node_modules|\.github)\//.test(path) && !/\.(env|tgz)/.test(path) && path !== "AGENTS.md", path);
+  assert.ok(!paths.some((path) => path.startsWith("docs/benchmarks/")));
   for (const target of [pkg.pi.extensions[0], ...Object.values(pkg.exports) as string[]]) assert.ok(paths.includes(target.replace(/^\.\//, "")), target);
 });
 
@@ -111,8 +112,8 @@ test("tag filters route only semver release tags", () => {
   for (const tag of ["0.1.1", "v1.0", "v1.0.0.1", "vNext", "release/v1.0.0", "v1.0.0+build"]) assert.ok(!matches(tag), tag);
 });
 
-test("README and release skill document dist-tags, Allow npm publish and the two-day deadline", () => {
-  for (const doc of [read("README.md"), read(".agents/skills/release/SKILL.md")]) {
+test("publishing documentation and release skill document dist-tags, Allow npm publish and the two-day deadline", () => {
+  for (const doc of [read("docs/publishing.md"), read(".agents/skills/release/SKILL.md")]) {
     assert.match(doc, /Allow npm publish|"npm publish"/);
     assert.match(doc, /2 days|two days/i);
     assert.match(doc, /\bnext\b/);

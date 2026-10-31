@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { DecisionError } from "../src/decision/errors.ts";
 import { defaultSettings, SettingsError } from "../src/settings.ts";
 import {
-  ADVANCED_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, layoutMenu, sanitizeTerminalText,
+  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, fieldFor, layoutMenu, sanitizeTerminalText,
 } from "../src/extension/settings-model.ts";
 
 test("settings-model is pure: it imports no Pi or pi-tui module", () => {
@@ -16,8 +16,8 @@ test("settings-model is pure: it imports no Pi or pi-tui module", () => {
 
 test("Advanced covers every relevance setting except legacy pins, and each field is typed", () => {
   const expected = Object.keys(defaultSettings().relevance).filter((key) => key !== "pinned").sort();
-  assert.deepEqual(ADVANCED_FIELDS.map((field) => field.key).sort(), expected);
-  assert.equal(new Set(ADVANCED_FIELDS.map((field) => field.key)).size, ADVANCED_FIELDS.length);
+  assert.deepEqual([...ADVANCED_FIELDS.filter((field) => field.group === "relevance"), ...SKILL_FIELDS].map((field) => field.key).sort(), expected);
+  assert.equal(new Set(ADVANCED_FIELDS.map((field) => `${field.group}.${field.key}`)).size, ADVANCED_FIELDS.length);
   for (const field of ADVANCED_FIELDS) {
     assert.ok(field.hint.length > 10, `${field.key} needs a hint`);
     if (field.kind === "options") assert.ok((field.options?.length ?? 0) >= 2, `${field.key} needs options`);
@@ -25,32 +25,52 @@ test("Advanced covers every relevance setting except legacy pins, and each field
   assert.equal(advancedRows(defaultSettings()).length, ADVANCED_FIELDS.length);
 });
 
-test("Advanced puts the four picking controls first, in order, and drops every choice-era row", () => {
-  assert.deepEqual(ADVANCED_FIELDS.slice(0, 5).map((field) => field.key), ["enabled", "threshold", "chunkSize", "maxSkills", "cadence"]);
-  assert.deepEqual(ADVANCED_FIELDS.slice(5).map((field) => field.key), ["failMode", "timeoutMs", "concurrency", "minCandidates", "maxPromptChars", "maxDescriptionChars"]);
-  const labels = ADVANCED_FIELDS.map((field) => field.label);
-  assert.deepEqual(labels.slice(1, 5), ["Relevance threshold", "Shard size", "Max added per round", "Run picker"]);
-  for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.ok(!ADVANCED_FIELDS.some((field) => field.key === removed), removed);
-  assert.ok(!ADVANCED_FIELDS.some((field) => field.kind === ("choice" as string)), "the option-list kind is not called choice");
-  const threshold = ADVANCED_FIELDS.find((field) => field.key === "threshold")!;
-  assert.equal(threshold.kind, "decimal"); assert.match(threshold.hint, /0–1/);
-  const cadence = ADVANCED_FIELDS.find((field) => field.key === "cadence")!;
-  assert.deepEqual(cadence.options!.map((option) => option.value), ["prompt", "tool-round"]);
-  assert.match(cadence.options![1].description, /No tool names, arguments or results are sent/);
-  assert.match(ADVANCED_FIELDS.find((field) => field.key === "maxSkills")!.hint, /already-added skills do not count/i);
+test("tool limit metadata follows the mode without changing keys, values, skill rows or static fields", () => {
+  for (const enabled of [false, true]) {
+    const settings = defaultSettings(); settings.tools.enabled = enabled;
+    const original = structuredClone(settings);
+    const toolRows = advancedRows(settings);
+    settings.tools.mode = "mcp";
+    const groupRows = advancedRows(settings);
+    assert.deepEqual(groupRows.map(({ id, value }) => ({ id, value })), toolRows.map(({ id, value }) => ({ id, value })));
+    assert.deepEqual(groupRows.filter((row) => !row.id.startsWith("tools.")), toolRows.filter((row) => !row.id.startsWith("tools.")));
+    const max = groupRows.find((row) => row.id === "tools.maxAdded")!;
+    const min = groupRows.find((row) => row.id === "tools.minCandidates")!;
+    assert.equal(max.label, "MCP/exts · Max added per round");
+    assert.equal(min.label, "MCP/exts · Minimum candidates");
+    assert.match(max.description, /MCP servers or extensions per round/);
+    assert.match(max.description, /whole group counts once/);
+    assert.match(max.description, /allowlisted and already-available groups do not count/);
+    assert.match(min.description, /Below this many groups, no scoring and every tool stays available/);
+    for (const row of [max, min]) {
+      const field = fieldFor("tools", row.id.split(".")[1], settings)!;
+      assert.deepEqual([field.label, field.hint], [row.label, row.description], "editor metadata matches the row");
+    }
+    settings.tools.mode = "tools";
+    assert.deepEqual(advancedRows(settings), toolRows, "switching back restores the tool wording");
+    assert.deepEqual(settings, original, "metadata resolution never changes settings");
+    assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "tools").map((field) => field.label), ["Subagents · Allow inherited tools", "Tools · Max added per round", "Tools · Minimum candidates"]);
+  }
+});
+
+test("feature fields stay on their tabs; all tuning is Advanced", () => {
+  assert.deepEqual(SKILL_FIELDS.map((field) => field.key), ["enabled", "cadence"]);
+  assert.deepEqual(TOOL_FIELDS.map((field) => field.key), ["enabled", "mode", "cadence"]);
+  assert.ok(!ADVANCED_FIELDS.some((field) => field.key === "enabled" || field.key === "cadence"));
+  assert.deepEqual(ADVANCED_FIELDS.slice(0, 3).map((field) => field.key), ["threshold", "chunkSize", "maxSkills"]);
 });
 
 test("failMode open option carries a visible warning and closed is listed first", () => {
   const field = ADVANCED_FIELDS.find((item) => item.key === "failMode")!;
   assert.equal(field.options![0].value, "closed");
-  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every remaining skill is added/i);
+  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every remaining skill, tool or group is added/i);
 });
 
 test("value text: concurrency 0 explains all-parallel, booleans read On/Off", () => {
   const settings = defaultSettings();
-  const field = (key: string) => ADVANCED_FIELDS.find((item) => item.key === key)!;
+  const field = (key: string) => [...ADVANCED_FIELDS, ...SKILL_FIELDS].find((item) => item.key === key)!;
   assert.equal(advancedValueText(field("concurrency"), settings), "0 (all shards parallel)");
-  settings.relevance.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
+  settings.decision.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
   assert.equal(advancedValueText(field("enabled"), settings), "On");
   settings.relevance.enabled = false; assert.equal(advancedValueText(field("enabled"), settings), "Off");
   assert.equal(advancedValueText(field("threshold"), settings), "0.375");
@@ -101,4 +121,14 @@ test("sanitizeTerminalText removes escapes, bidi controls and bounds length; err
   assert.equal(describeError(new SettingsError("Bad value")), "Bad value");
   assert.equal(describeError(new DecisionError("http", "SECRET provider body", { status: 429 })), "Decision operation failed (http, HTTP 429)");
   assert.equal(describeError(new Error("SECRET_KEY")), "Context-decisions operation failed");
+});
+
+test("shared decision tuning appears once, exclusively in Advanced; feature caps retain distinct defaults", () => {
+  const settings = defaultSettings();
+  assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key).sort(), Object.keys(settings.decision).sort());
+  assert.equal(new Set(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key)).size, Object.keys(settings.decision).length);
+  assert.ok([...SKILL_FIELDS, ...TOOL_FIELDS].every((field) => field.group !== "decision"));
+  assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group !== "decision").map((field) => `${field.group}.${field.key}`),
+    ["relevance.maxSkills", "relevance.minCandidates", "tools.allowSubagentInheritedTools", "tools.maxAdded", "tools.minCandidates"]);
+  assert.deepEqual([settings.relevance.maxSkills, settings.tools.maxAdded, settings.relevance.minCandidates, settings.tools.minCandidates], [12, 8, 8, 0]);
 });

@@ -47,8 +47,7 @@ test("compact setup, disabled, ready and unsupported-host states", () => {
   assert.equal(toolFooter(settings, { supported: true }), "⚙ setup", "independent opt-in");
   settings.tools.enabled = false;
   assert.equal(toolFooter(settings, { supported: true }), undefined);
-  settings.enabled = false;
-  assert.equal(skillFooter(settings, undefined, skillRound, 40), "◇ off");
+  assert.equal(skillFooter(settings, undefined, skillRound, 40), "◇ ≡ off");
   assert.equal(toolFooter(settings, { supported: false }), undefined);
 });
 test("failure states remain explicit, safe and bounded", () => {

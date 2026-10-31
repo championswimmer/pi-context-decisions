@@ -1,19 +1,20 @@
 {
-  "enabled": true,
   "backend": {
     "backend": "typesafe",
     "model": "jev-latest"
   },
   "relevance": {
     "enabled": true,
-    "threshold": 0.5,
-    "chunkSize": 10,
     "maxSkills": 6,
     "cadence": "prompt",
     "minCandidates": 0,
-    "concurrency": 2,
-    "timeoutMs": 15000,
-    "failMode": "closed",
     "pinned": []
+  },
+  "decision": {
+    "threshold": 0.5,
+    "failMode": "closed",
+    "timeoutMs": 15000,
+    "chunkSize": 10,
+    "concurrency": 2
   }
 }

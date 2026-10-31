@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
+import { buildToolNotice, toolRecords } from "../src/extension/tool-ledger.ts";
 import { simHost } from "./helpers/pi-sim.ts";
 import { rpcContext } from "./helpers/settings-ui.ts";
 import type { Component } from "@earendil-works/pi-tui";
@@ -104,7 +106,7 @@ test("terminal /decisions opens ONE floating overlay with the shared options and
   const dialog = await h.dialog();
   assert.equal(h.calls.custom, 1);
   assert.deepEqual(h.customOptions[0] && { ...(h.customOptions[0] as object), onHandle: undefined }, { overlay: true, overlayOptions: SETTINGS_OVERLAY_OPTIONS, onHandle: undefined });
-  assert.match(h.text(dialog), /Context decisions/);
+  assert.match(h.text(dialog), /Skill filtering/);
   dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.calls.select + h.calls.input, 0); assert.deepEqual(h.messages, []);
 });
@@ -114,37 +116,41 @@ test("RPC mode keeps the select menus with Advanced… and never calls custom", 
   assert.equal(h.calls.custom, 0); assert.equal(h.calls.select, 1);
 });
 
-test("RPC settings menu has a Footer icons entry: same three choices, persists iconStyle and refreshes the footer status; Back changes nothing", async (t) => {
+test("RPC Advanced menu has a Footer icons entry (not on Skills or Tools): same three choices, persists iconStyle and refreshes the footer status; Back changes nothing", async (t) => {
   const h = await harness(t, { mode: "rpc" });
-  const status: [string, unknown][] = []; const titles: string[] = []; let menu: string[] = [];
-  let step = 0; let choice: (options: string[]) => string | undefined = () => undefined;
+  const status: [string, unknown][] = []; const titles: string[] = []; let advanced: string[] = []; let top: string[] = []; let other: string[] = [];
+  let visits = 0; let advancedVisits = 0; let choice: (options: string[]) => string | undefined = () => undefined;
   const ctx = rpcContext(h.ctx, {
     setStatus: (key: string, text: unknown) => status.push([key, text]),
     async select(title: string, options: string[]) {
       titles.push(title);
-      if (title === "Decisions · settings") { if (step === 0) menu = options; return step++ === 0 ? options.find((option) => option.startsWith("Footer icons:")) : "Done"; }
+      if (title === "Decisions · settings") { top = options; return visits++ === 0 ? "Skills" : visits === 2 ? "Tools" : visits === 3 ? "Advanced" : "Done"; }
+      if (title === "Decisions · Skills settings" || title === "Decisions · Tools settings") { other.push(...options); return "Back"; }
+      if (title === "Decisions · Advanced settings") { if (advancedVisits === 0) advanced = options; return advancedVisits++ === 0 ? options.find((option) => option.startsWith("Footer icons:")) : "Back"; }
       return choice(options);
     },
   });
   choice = (options) => options.find((option) => option.startsWith("emoji ·"));
   await h.commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
-  assert.ok(menu.includes("Footer icons: ASCII / Unicode"), "the RPC menu shows the current set by plain name");
+  assert.deepEqual(top, ["Skills", "Tools", "Advanced", "Done"]);
+  assert.ok(!other.some((option) => option.startsWith("Footer icons")), "not on Skills or Tools");
+  assert.ok(advanced.includes("Footer icons: ASCII / Unicode"), "the Advanced menu shows the current set by plain name");
   assert.ok(titles.includes("Footer icons (currently unicode)"));
   assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji");
   assert.ok(status.some(([key]) => key === "context-decisions"), "status refreshed right after the save");
-  step = 0; titles.length = 0; status.length = 0; menu = [];
+  visits = 2; advancedVisits = 0; titles.length = 0; status.length = 0; advanced = [];
   let offered: string[] = [];
   choice = (options) => { offered = options; return "Back"; };
-  await h.commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
-  assert.ok(menu.includes("Footer icons: Emoji")); assert.ok(titles.includes("Footer icons (currently emoji)"));
+  const again = rpcContext(h.ctx, { setStatus: (key: string, text: unknown) => status.push([key, text]), select: (title: string, options: string[]) => ctx.ui.select(title, options) });
+  await h.commands.get("decisions")!.handler("", again as ExtensionCommandContext);
+  assert.ok(advanced.includes("Footer icons: Emoji")); assert.ok(titles.includes("Footer icons (currently emoji)"));
   assert.deepEqual(offered.slice(0, 3).map((option) => option.split(" · ")[0]), ["unicode", "emoji", "nerd"]);
   assert.match(offered[2], /Requires a Nerd Font/); assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji"); assert.deepEqual(status, []);
 });
 
 test("a second /decisions while the first dialog is open does not open another; it focuses the first", async (t) => {
   const h = await harness(t); const first = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down);
-  dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Advanced/);
+  dialog.handleInput!("\x1b[Z"); await h.until(dialog, /Decisions › Advanced/);
   await h.command("");
   assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1); assert.doesNotMatch(h.text(dialog), /Decisions › Advanced/, "re-running /decisions focuses the existing dialog on its main screen");
   dialog.handleInput!(KEY.esc); await first;
@@ -154,22 +160,22 @@ test("saves inside the dialog persist, do not close it, and later settle without
   const h = await harness(t, { configured: true }); let resolved = false;
   const run = h.command("").then(() => { resolved = true; }); const dialog = await h.dialog();
   dialog.handleInput!(KEY.enter); // toggle enabled
-  await h.until(dialog, /Context decisions\s+Off/);
-  assert.equal((await loadSettings(h.path)).settings.enabled, false); assert.equal(resolved, false, "saving must not close the dialog");
+  await h.until(dialog, /Skill filtering\s+Off/);
+  assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false); assert.equal(resolved, false, "saving must not close the dialog");
   dialog.handleInput!(KEY.esc); await run; assert.equal(resolved, true);
 });
 
 test("choosing a model through the dialog persists it atomically and never enables filtering", async (t) => {
   const h = await harness(t, { env: { TYPESAFE_API_KEY: "FIXTURE" } });
-  await saveSettings({ ...defaultSettings(), enabled: false }, h.path);
+  await saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, enabled: false } }, h.path);
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Provider / execution
+  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /typesafe · direct API\s+configured/);
   dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Model/);
   await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.enter);
   await h.until(dialog, /Decision model: typesafe direct jev-latest/);
   const saved = (await loadSettings(h.path)).settings;
-  assert.deepEqual(saved.backend, { backend: "typesafe", model: "jev-latest" }); assert.equal(saved.enabled, false);
+  assert.deepEqual(saved.backend, { backend: "typesafe", model: "jev-latest" }); assert.equal(saved.relevance.enabled, false);
   assert.equal(h.requests.length, 0, "choosing a model makes no inference call");
   dialog.handleInput!(KEY.esc); await run;
 });
@@ -177,7 +183,7 @@ test("choosing a model through the dialog persists it atomically and never enabl
 test("missing keys are labelled, guide to env or /login, and are never persisted; OpenAI OAuth cannot substitute", async (t) => {
   const h = await harness(t, { openaiOAuth: true, env: {} });
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Provider / execution
+  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
   await h.until(dialog, /openai · direct API\s+missing key/);
   assert.match(h.text(dialog), /typesafe · direct API\s+missing key/); assert.match(h.text(dialog), /openrouter · direct API\s+missing key/);
   // Move to the openai row and activate it.
@@ -193,15 +199,15 @@ test("missing keys are labelled, guide to env or /login, and are never persisted
 test("dialog work never reads ctx.signal (the agent-run signal), even through status, models and ranking", async (t) => {
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   const run = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  for (let i = 0; i < 2; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/);
   assert.equal(h.requests.length, 1);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
-  dialog.handleInput!("\x1b[A"); dialog.handleInput!(KEY.enter); // Model route (the cursor stayed on Global)
+  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Shared model
   await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
-  for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status… (cursor was on Global; Advanced, Footer icons, Status)
+  dialog.handleInput!("\t"); for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
   await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.reads.signal, 0, "the dialog must own its signal");
 });
@@ -211,7 +217,7 @@ test("session_shutdown while open resolves the handler, aborts ranking and never
   let resolved = false;
   const run = h.command("").then(() => { resolved = true; });
   const dialog = await h.dialog();
-  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  for (let i = 0; i < 2; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await waitFor(() => h.decisionSignals[0], "pending ranking request");
@@ -234,7 +240,7 @@ test("an open dialog does not block or swallow later hook activity", async (t) =
   const h = await harness(t, { configured: true }); const run = h.command(""); const dialog = await h.dialog();
   const event = { type: "before_agent_start", prompt: "task", systemPrompt: "s", systemPromptOptions: { cwd: h.root, skills: Array.from({ length: 3 }, (_, n) => ({ name: `s${n}`, description: "d", filePath: "/p", baseDir: "/b", sourceInfo: { path: "/p", source: "x", scope: "user", origin: "top-level" }, disableModelInvocation: false })), selectedTools: [], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: [], promptGuidelines: [], contextFiles: [] } };
   await h.emit("before_agent_start", event);
-  assert.match(h.text(dialog), /Context decisions/); dialog.handleInput!(KEY.esc); await run;
+  assert.match(h.text(dialog), /Skill filtering/); dialog.handleInput!(KEY.esc); await run;
 });
 
 test("a custom() failure is reported as a safe error and does not wedge later opens", async (t) => {
@@ -245,8 +251,8 @@ test("a custom() failure is reported as a safe error and does not wedge later op
 
 test("headless commands keep their text output without a dialog", async (t) => {
   const h = await harness(t, { mode: "print", custom: false });
-  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/);
-  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: enabled; not configured/, "no arguments: the status, never a dialog");
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: not configured/);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: not configured/, "no arguments: the status, never a dialog");
   await h.command("pin alpha"); assert.match(h.messages.at(-1)!, /Pinned skills updated/);
   await h.command("tools list"); assert.match(h.messages.at(-1)!, /Tools \(/);
   assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);
@@ -258,12 +264,12 @@ test("/decisions history reuses the settings overlay, shows committed additions 
   h.ctx.sessionManager = session;
   session.appendCustomMessageEntry("context-decisions-skills", "PRIVATE description", false, { v: 1, added: ["alpha"], redelivered: [] });
   const first = h.command(""); const dialog = await h.dialog();
-  await h.command("history"); await h.until(dialog, /Before turn 1/);
+  await h.command("history"); await h.until(dialog, /Turn 1/);
   assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1);
   dialog.handleInput!(KEY.enter); await h.until(dialog, /Skills advertised/);
   assert.match(h.text(dialog), /alpha/); assert.doesNotMatch(h.text(dialog), /PRIVATE/);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions › History/);
-  dialog.handleInput!(KEY.esc); await h.until(dialog, /Context decisions/);
+  dialog.handleInput!(KEY.esc); await h.until(dialog, /Skill filtering/);
   dialog.handleInput!(KEY.esc); await first;
   assert.equal(h.reads.signal, 0); assert.equal(h.requests.length, 0);
   assert.equal(h.calls.select + h.calls.input, 0);
@@ -274,12 +280,29 @@ for (const mode of ["rpc", "print"] as const) test(`/decisions history in ${mode
   const h = await harness(t, { mode });
   const session = SessionManager.inMemory(h.root); h.ctx.sessionManager = session;
   session.appendCustomEntry("context-decisions-tools", { v: 1, considered: ["not-picked"] });
-  const before = session.getBranch().length;
   await h.command("history"); assert.match(h.messages.at(-1)!, /No committed additions/);
+  session.appendMessage({ role: "user", content: "PRIVATE user", timestamp: 0 });
   session.appendCustomMessageEntry("context-decisions-skills", "PRIVATE", false, { v: 1, added: ["alpha\x1b\r\n\u202e"], redelivered: [] });
+  session.appendMessage(fauxAssistantMessage([fauxText("PRIVATE assistant")]));
+  for (const data of toolRecords({ groups: ["mcp__exa", "ext__notes"], picks: new Map([
+    ["mcp__exa", { score: 1.6, threshold: 0.375 }], ["ext__notes", { score: 1.4, threshold: 0.375 }],
+  ]) })) session.appendCustomEntry("context-decisions-tools", data);
+  const notice = buildToolNotice([], ["mcp__exa", "ext__notes"], true)!;
+  session.appendCustomMessageEntry(notice.customType, notice.content, notice.display, notice.details);
+  session.appendMessage(fauxAssistantMessage([fauxText("PRIVATE assistant")]));
+  session.appendMessage({ role: "user", content: "PRIVATE followup", timestamp: 0 });
+  session.appendCustomMessageEntry("context-decisions-skills", "PRIVATE", false, { v: 1, added: ["beta"], redelivered: [] });
+  const before = session.getBranch().length;
   await h.command("history");
-  assert.match(h.messages.at(-1)!, /alpha/); assert.doesNotMatch(h.messages.at(-1)!, /PRIVATE|not-picked|\x1b|\r|\u202e/);
-  assert.equal(session.getBranch().length, before + 1, "reading never appends history records");
+  const report = h.messages.at(-1)!;
+  assert.match(report, /Turn 1: \(1 skills, 2 tools\/MCPs added\)/);
+  assert.match(report, /Internal turn 2/);
+  assert.match(report, /Turn 3: \(1 skills, 0 tools\/MCPs added\)/);
+  assert.match(report, /alpha/);
+  assert.match(report, /\+ mcp__exa  score 1\.6 \/ ≥0\.75 · notice/);
+  assert.match(report, /\+ ext__notes  score 1\.4 \/ ≥0\.75 · notice/);
+  assert.doesNotMatch(report, /PRIVATE|Tool availability|among the MCP servers|not-picked|\x1b|\r|\u202e/);
+  assert.equal(session.getBranch().length, before, "reading never appends history records");
   assert.equal(h.requests.length, 0); assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);
   assert.deepEqual(h.commands.get("decisions")!.getArgumentCompletions!("hist"), [{ value: "history", label: "history" }]);
   await h.command("history clear"); assert.match(h.messages.at(-1)!, /Use \/decisions/);

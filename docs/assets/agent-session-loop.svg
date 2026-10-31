@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1000" viewBox="0 0 1200 1000" role="img" aria-labelledby="title desc">
+<title id="title">Your usual agent loop, with a context picker</title>
+<desc id="desc">You send a task. Before the first model step, the enabled context picker selects relevant skills and tools. The coding model reads the context and either answers or calls a tool. Tool filtering, when enabled, checks the call before execution. Results return to the model. Before another model step, new user text can trigger selection for the updated task, or tool-round mode can add more for the same task. This is the normal tool loop; the picker never creates an extra model step.</desc>
+<defs>
+  <linearGradient id="header" x2="1" y2="1"><stop stop-color="#142b4a"/><stop offset="1" stop-color="#263657"/></linearGradient>
+  <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M 1 1 L 10 6 L 1 11" fill="none" stroke="#647994" stroke-width="2" stroke-linejoin="round"/></marker>
+  <style>
+    text { font-family: Lato, 'DejaVu Sans', sans-serif; fill: #22344e; }
+    .heading { font-size: 30px; font-weight: 800; }
+    .body { font-size: 25px; }
+    .label { font-size: 19px; font-weight: 800; letter-spacing: 1px; }
+    .flow { fill: none; stroke: #647994; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+  </style>
+</defs>
+<rect width="1200" height="1000" rx="24" fill="#f5f7fc"/>
+<rect x="24" y="24" width="1152" height="124" rx="22" fill="url(#header)"/>
+<text x="56" y="55" class="label" style="fill:#91e3d0;">01 / THE AGENT LOOP</text>
+<text x="56" y="94" style="font-size:40px;fill:#ffffff;font-weight:800;">Your usual agent loop, with a context picker</text>
+<text x="56" y="128" style="font-size:24px;fill:#d4e0f1;">The coding model does the work. The decider chooses what it can use.</text>
+
+<rect x="268" y="180" width="648" height="76" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<text x="592" y="228" class="heading" style="fill:#2457a7;" text-anchor="middle">You send a task</text>
+<path class="flow" d="M 592 256 V 296"/>
+
+<rect x="268" y="296" width="648" height="112" rx="18" fill="#f0ebff" stroke="#d2c5f4" stroke-width="1.5"/>
+<rect x="269" y="314" width="4" height="76" rx="2" fill="#6d46b5"/>
+<text x="296" y="323" class="label" style="fill:#6d46b5;">BEFORE THE FIRST MODEL STEP</text>
+<text x="296" y="358" class="heading" style="fill:#6d46b5;">Pick relevant skills and tools</text>
+<text x="296" y="391" class="body">The picker selects context, not actions.</text>
+<path class="flow" d="M 592 408 V 452"/>
+
+<rect x="268" y="452" width="648" height="104" rx="18" fill="#eaf2ff" stroke="#b9cff3" stroke-width="1.5"/>
+<rect x="269" y="470" width="4" height="68" rx="2" fill="#2457a7"/>
+<text x="296" y="492" class="heading" style="fill:#2457a7;">Model reads context</text>
+<text x="296" y="528" class="body">Answer now, or ask to use a tool.</text>
+<path class="flow" d="M 916 504 H 988"/>
+<rect x="988" y="452" width="156" height="104" rx="18" fill="#e5f6ef" stroke="#a9d9c5" stroke-width="1.5"/>
+<text x="1066" y="494" style="font-size:28px;fill:#1d7358;font-weight:800;" text-anchor="middle">Answer</text>
+<text x="1066" y="528" class="body" style="fill:#1d7358;" text-anchor="middle">Done</text>
+<path class="flow" d="M 592 556 V 612"/>
+<text x="610" y="593" style="font-size:23px;fill:#52647d;">tool call</text>
+
+<rect x="268" y="612" width="648" height="112" rx="18" fill="#fff4df" stroke="#e8ca8d" stroke-width="1.5"/>
+<rect x="269" y="630" width="4" height="76" rx="2" fill="#97621a"/>
+<text x="296" y="655" class="heading" style="fill:#97621a;">Run a tool and get its result</text>
+<text x="296" y="692" class="body">If enabled, tool filtering checks the call.</text>
+<path class="flow" d="M 592 724 V 764"/>
+
+<rect x="268" y="764" width="648" height="152" rx="18" fill="#f0ebff" stroke="#d2c5f4" stroke-width="1.5"/>
+<rect x="269" y="782" width="4" height="116" rx="2" fill="#6d46b5"/>
+<text x="296" y="792" class="label" style="fill:#6d46b5;">BEFORE THE NEXT MODEL STEP</text>
+<text x="296" y="828" class="heading" style="fill:#6d46b5;">Add more if selection is due</text>
+<text x="296" y="863" class="body">New user text: pick for the updated task.</text>
+<text x="296" y="896" class="body">Tool-round mode: add more for the same task.</text>
+<path class="flow" d="M 268 840 H 192 V 504 H 268"/>
+<text x="54" y="663" style="font-size:25px;fill:#52647d;font-weight:800;">Repeat</text>
+<text x="54" y="697" style="font-size:23px;fill:#52647d;">with tool</text>
+<text x="54" y="728" style="font-size:23px;fill:#52647d;">results</text>
+
+<text x="56" y="967" style="font-size:23px;fill:#52647d;">Blue: normal loop · Purple: context selection · Amber: tool-call check</text>
+</svg>

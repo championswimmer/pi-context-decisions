@@ -22,9 +22,9 @@ async function until(component: Component, pattern: RegExp, width = 120): Promis
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }
-/** Skill picker tab rows in dialog order: toggle, provider, model, global, project, Advanced, Status, Close. */
+/** Skills tab rows in dialog order: toggle, provider, model, global, project, Advanced, Status, Close. */
 function openAllowlistRow(component: Component, row: "global" | "project") {
-  for (let i = 0; i < (row === "global" ? 3 : 4); i++) component.handleInput!(keys.down);
+  for (let i = 0; i < (row === "global" ? 2 : 3); i++) component.handleInput!(keys.down);
   component.handleInput!(keys.enter);
 }
 async function saved(component: Component): Promise<void> {
@@ -105,12 +105,12 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "tui";
   h.driver(async (component) => {
     const main = component.render(100).join("\n");
-    assert.match(main, /Always allowed · Global/); assert.match(main, /Always allowed · Project/); assert.match(main, /Advanced…/);
+    assert.match(main, /Always allowed · Global/); assert.match(main, /Always allowed · Project/); assert.match(main, /Advanced/);
     assert.doesNotMatch(main, /relatedThreshold|chunkSize|Batch size/, "relevance knobs live under Advanced");
     openAllowlistRow(component, "global");
     assert.match(await until(component, /\[ \] alpha/), /Global/); assert.doesNotMatch(component.render(120).join("\n"), /\[ \] project-only/);
     component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
-    component.handleInput!(keys.esc); component.handleInput!(keys.esc); await until(component, /Context decisions/);
+    component.handleInput!(keys.esc); component.handleInput!(keys.esc); await until(component, /Skill filtering/);
   });
   await h.command(""); assert.equal(h.overlays.length, 1); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
   h.driver(async (component) => {
@@ -124,22 +124,26 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
 });
 test("RPC cannot open the allowlist editors: the menu says so, opens no overlay and no allow subcommand exists", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "rpc";
-  h.choices.push((options) => options.find((option) => option.startsWith("Allow list (Global)")), () => "Done");
+  h.choices.push(() => "Skills", (options) => options.find((option) => option.startsWith("Allow list (Global)")), () => "Back", () => "Done");
   await h.command(""); assert.match(h.messages.at(-1)!, /allow list editors need the terminal UI.*globalAllowlist.*alwaysAllowed/s); assert.equal(h.overlays.length, 0);
   assert.equal((await h.commands.get("decisions")!.getArgumentCompletions!("allow")), null);
 });
 test("explicit topic ranking uses configured decision client even when auto filtering is off; metadata only", async (t) => {
   const h = await harness(t, true); h.ctx.hasUI = true; h.ctx.mode = "tui";
-  await saveSettings({ ...defaultSettings(), enabled: false, backend: { backend: "typesafe", model: "jev-latest" } }, h.path); await h.emitReload();
+  await saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, enabled: false }, decision: { ...defaultSettings().decision, chunkSize: 1, concurrency: 1, maxPromptChars: 6, maxDescriptionChars: 8 }, backend: { backend: "typesafe", model: "jev-latest" } }, h.path); await h.emitReload();
   h.driver(async (component) => {
     openAllowlistRow(component, "global"); await until(component, /Search:/);
     for (const char of "Browser work") component.handleInput!(char); assert.equal(h.requests.length, 0);
-    component.handleInput!("\x12"); await tick(); await tick();
-    assert.match(component.render(120).join("\n"), /1.80\/2/);
+    component.handleInput!("\x12"); await until(component, /0.90 relevance/);
+    assert.match(component.render(120).join("\n"), /0.90 relevance/);
   });
-  await h.command(""); assert.equal(h.requests.length, 1);
+  await h.command(""); assert.equal(h.requests.length, 1, "only alpha is in global scope"); assert.deepEqual(h.messages, [], "the command must not swallow a driver assertion");
+  for (const request of h.requests) {
+    assert.equal(Object.keys(request.questions).length, 1);
+    assert.ok(Object.values(request.state.skills as Record<string, { description: string }>).every((entry) => entry.description.length === 8));
+  }
   const data = JSON.stringify(h.requests); assert.doesNotMatch(data, /\/private\/|filePath|sourceInfo|project-only/); assert.match(data, /topics in the search query/);
-  assert.equal(h.requests[0].state.task, "Browser work"); assert.equal((await loadSettings(h.path)).settings.enabled, false);
+  assert.equal(h.requests[0].state.task, "Browse"); assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
 });
 test("missing credential guidance remains inline and local fuzzy works without creating a client", async (t) => {
   const h = await harness(t, true); h.setKey(undefined); h.ctx.hasUI = true; h.ctx.mode = "tui";
