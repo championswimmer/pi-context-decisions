@@ -83,13 +83,13 @@ test("startup defaults perform no auth or inference and do not mutate advertisem
   await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx);
   const e = event(); const original = e.systemPromptOptions.skills;
   await h.emit("before_agent_start", e, c.ctx);
-  assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.match(c.statuses[0]!, /select model/);
+  assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.equal(c.statuses[0], "◇ setup");
   assert.deepEqual(deltaMessages(h.session), [], "unconfigured advertises everything through the base: no delta");
   assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "the branch remembers that every skill was advertised");
   await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions: not configured/);
 });
 test("RPC native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
-  const h = await setup(t); const c = context(); await setModel(h.command, c.ctx, "Pi custom/nested/model");
+  const h = await setup(t); const c = context({}, true); await setModel(h.command, c.ctx, "Pi custom/nested/model");
   assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "pi", provider: "custom", id: "nested/model" });
   const e = event(); const original = e.systemPromptOptions.skills; const before = { ...e.systemPromptOptions };
   let observed: unknown;
@@ -100,6 +100,7 @@ test("RPC native selection persists, filters through real core, only skills muta
   assert.deepEqual(e.systemPromptOptions.skills, []);
   assert.deepEqual(advertised(h, original, e.systemPromptOptions.skills), ["skill-0"]);
   assert.equal(deltaMessages(h.session).length, 1);
+  assert.equal(c.statuses.at(-1), "◇ ≡ 1/8", "footer shows advertised/full inventory, not round latency or newly scored count");
   assert.equal(e.systemPrompt, "unchanged");
   for (const key of Object.keys(before).filter((key) => key !== "skills") as (keyof typeof before)[]) assert.equal(e.systemPromptOptions[key], before[key]);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered, \+1 of 8 candidates, 1 advertised/); assert.match(h.messages.at(-1)!.text, /inputTokens/);
@@ -196,9 +197,9 @@ test("provider failure hides advertisements by default, explicitly configured op
   const h = await setup(t, { createClient() { return createDecisionClient({ id: "pi", model: "fixture", async decide() { throw new Error("SECRET-FIXTURE private prompt"); } }); } }, true);
   const c = context({}, true); const closed = event(); const closedInventory = closed.systemPromptOptions.skills;
   await h.emit("before_agent_start", closed, c.ctx); assert.deepEqual(advertised(h, closedInventory, closed.systemPromptOptions.skills), []);
-  assert.match(c.statuses.at(-1)!, /fail-closed.*network/); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE|private prompt/);
+  assert.equal(c.statuses.at(-1), "◇ ≡ 0/8 !network"); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE|private prompt/);
   await setSetting(h.command, c.ctx, "decision.failMode", "open"); const open = event(); const original = open.systemPromptOptions.skills; await h.emit("before_agent_start", open, c.ctx);
-  assert.deepEqual(advertised(h, original, open.systemPromptOptions.skills), original.map((skill) => skill.name), "fail-open adds every remaining skill, once"); assert.match(c.statuses.at(-1)!, /fail-open/);
+  assert.deepEqual(advertised(h, original, open.systemPromptOptions.skills), original.map((skill) => skill.name), "fail-open adds every remaining skill, once"); assert.equal(c.statuses.at(-1), "◇ ≡ 8/8 !open");
   assert.equal(deltaMessages(h.session).length, 1);
 });
 test("malformed decisions and missing current native registry entries fail closed", async (t) => {
@@ -264,7 +265,7 @@ test("caller abort returns aborted failure, never reports successful selection",
 test("session reload reads repaired disk settings and clears prior diagnostic state", async (t) => {
   const h = await setup(t, {}, true); const c = context({}, true); await h.emit("before_agent_start", event(), c.ctx);
   await saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, enabled: false } }, h.path);
-  await h.emit("session_start", { type: "session_start", reason: "reload" }, c.ctx); assert.equal(c.statuses.at(-1), "off");
+  await h.emit("session_start", { type: "session_start", reason: "reload" }, c.ctx); assert.equal(c.statuses.at(-1), "◇ ≡ off");
   await h.command("status", c.ctx); assert.doesNotMatch(h.messages.at(-1)!.text, /Last:/);
 });
 test("synthetic test command is explicit, gated by selection and uses fixed bool state", async (t) => {

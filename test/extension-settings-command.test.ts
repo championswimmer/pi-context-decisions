@@ -7,6 +7,7 @@ import { SessionManager, type ExtensionCommandContext } from "@earendil-works/pi
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { buildToolNotice, toolRecords } from "../src/extension/tool-ledger.ts";
 import { simHost } from "./helpers/pi-sim.ts";
+import { rpcContext } from "./helpers/settings-ui.ts";
 import type { Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
@@ -113,6 +114,38 @@ test("terminal /decisions opens ONE floating overlay with the shared options and
 test("RPC mode keeps the select menus with Advanced… and never calls custom", async (t) => {
   const h = await harness(t, { mode: "rpc" }); await h.command("");
   assert.equal(h.calls.custom, 0); assert.equal(h.calls.select, 1);
+});
+
+test("RPC Advanced menu has a Footer icons entry (not on Skills or Tools): same three choices, persists iconStyle and refreshes the footer status; Back changes nothing", async (t) => {
+  const h = await harness(t, { mode: "rpc" });
+  const status: [string, unknown][] = []; const titles: string[] = []; let advanced: string[] = []; let top: string[] = []; let other: string[] = [];
+  let visits = 0; let advancedVisits = 0; let choice: (options: string[]) => string | undefined = () => undefined;
+  const ctx = rpcContext(h.ctx, {
+    setStatus: (key: string, text: unknown) => status.push([key, text]),
+    async select(title: string, options: string[]) {
+      titles.push(title);
+      if (title === "Decisions · settings") { top = options; return visits++ === 0 ? "Skills" : visits === 2 ? "Tools" : visits === 3 ? "Advanced" : "Done"; }
+      if (title === "Decisions · Skills settings" || title === "Decisions · Tools settings") { other.push(...options); return "Back"; }
+      if (title === "Decisions · Advanced settings") { if (advancedVisits === 0) advanced = options; return advancedVisits++ === 0 ? options.find((option) => option.startsWith("Footer icons:")) : "Back"; }
+      return choice(options);
+    },
+  });
+  choice = (options) => options.find((option) => option.startsWith("emoji ·"));
+  await h.commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
+  assert.deepEqual(top, ["Skills", "Tools", "Advanced", "Done"]);
+  assert.ok(!other.some((option) => option.startsWith("Footer icons")), "not on Skills or Tools");
+  assert.ok(advanced.includes("Footer icons: ASCII / Unicode"), "the Advanced menu shows the current set by plain name");
+  assert.ok(titles.includes("Footer icons (currently unicode)"));
+  assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji");
+  assert.ok(status.some(([key]) => key === "context-decisions"), "status refreshed right after the save");
+  visits = 2; advancedVisits = 0; titles.length = 0; status.length = 0; advanced = [];
+  let offered: string[] = [];
+  choice = (options) => { offered = options; return "Back"; };
+  const again = rpcContext(h.ctx, { setStatus: (key: string, text: unknown) => status.push([key, text]), select: (title: string, options: string[]) => ctx.ui.select(title, options) });
+  await h.commands.get("decisions")!.handler("", again as ExtensionCommandContext);
+  assert.ok(advanced.includes("Footer icons: Emoji")); assert.ok(titles.includes("Footer icons (currently emoji)"));
+  assert.deepEqual(offered.slice(0, 3).map((option) => option.split(" · ")[0]), ["unicode", "emoji", "nerd"]);
+  assert.match(offered[2], /Requires a Nerd Font/); assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji"); assert.deepEqual(status, []);
 });
 
 test("a second /decisions while the first dialog is open does not open another; it focuses the first", async (t) => {

@@ -14,7 +14,7 @@ import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
-import { ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, describeError, fieldForSettings, fieldValue, sanitizeTerminalText, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
+import { ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, describeError, fieldFor, fieldForSettings, fieldValue, iconStyleText, sanitizeTerminalText, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
 import { readDecisionsHistory, historyReportLines } from "./decisions-history.ts";
@@ -326,9 +326,10 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
     const labels = fields.map((field) => `${field.group}.${field.key}: ${field.key === "concurrency" && fieldValue(settings, field.group, field.key) === 0 ? "0 (all shards parallel)" : String(fieldValue(settings, field.group, field.key))}${field.group === "tools" && field.kind === "int" ? ` · ${field.label}` : ""}${field.key === "allowSubagentInheritedTools" && !settings.tools.allowSubagentInheritedTools && !controller.subagentManagerPresent?.() ? ` · unavailable: ${SUBAGENT_HELP}` : ""}`);
     const provider = `Provider / execution: ${settings.backend?.backend ?? "not configured"}`;
     const model = `Model: ${selectionLabel(settings.backend)}`;
+    const icons = `Footer icons: ${iconStyleText(settings)}`;
     const extras = tab === "Advanced" ? [provider, model] : tab === "Skills" ? ["Allow list (Global)", "Allow list (Project)", "Status"]
       : ["Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers & extensions · Global", "Always allowed MCP servers & extensions · Project"];
-    const pick = await ctx.ui.select(title, [...(tab === "Advanced" ? extras : []), ...labels, ...(tab !== "Advanced" ? extras : []), "Back"], { signal: ctx.signal });
+    const pick = await ctx.ui.select(title, [...(tab === "Advanced" ? extras : []), ...labels, ...(tab === "Advanced" ? [icons] : []), ...(tab !== "Advanced" ? extras : []), "Back"], { signal: ctx.signal });
     if (!pick || pick === "Back") return;
     try {
       if (pick === provider) { await chooseProvider(controller, ctx, env); continue; }
@@ -337,6 +338,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
         await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
         continue;
       }
+      if (tab === "Advanced" && pick === icons) { await iconStyleMenu(controller, ctx); continue; }
       if (pick === "Status") { await status(controller, ctx, env); continue; }
       if (extras.includes(pick)) throw new SettingsError(EDITOR_UNAVAILABLE);
       const index = labels.indexOf(pick);
@@ -363,6 +365,18 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
       controller.setStatus(ctx);
     } catch (error) { controller.report(ctx, safeError(error), "error"); }
   }
+}
+/** RPC counterpart of the Advanced tab's shared "Footer icons" options row: same labels and descriptions, saved as the top-level `iconStyle`. */
+async function iconStyleMenu(controller: Controller, ctx: CommandContext) {
+  const settings = controller.getSettings();
+  const field = fieldFor("general", "iconStyle", settings)!;
+  const options = field.options ?? [];
+  const choices = options.map((option) => `${option.value} · ${option.label ?? option.value} · ${option.description}`);
+  const picked = await ctx.ui.select(`${field.label} (currently ${String(fieldValue(settings, "general", "iconStyle"))})`, [...choices, "Back"], { signal: ctx.signal });
+  const at = picked === undefined ? -1 : choices.indexOf(picked);
+  if (at < 0) return;
+  await controller.update((current) => updateSetting(current, "iconStyle", options[at].value));
+  controller.setStatus(ctx);
 }
 async function settingsMenu(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
   for (;;) {

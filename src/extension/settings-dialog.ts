@@ -13,8 +13,8 @@ import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-
 import type { CommandContext } from "./contracts.ts";
 import { HISTORY_NOTE, historyTurnLines, historyTurnSummary, historyTurnTitle, type DecisionsHistory, type HistoryTurn } from "./decisions-history.ts";
 import {
-  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldForSettings, fieldValue, layoutMenu, modelLabel,
-  sanitizeTerminalText, type SettingsGroup,
+  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldForSettings, fieldValue, iconStyleText, layoutMenu, modelLabel,
+  sanitizeTerminalText, settingKey, type SettingsGroup,
 } from "./settings-model.ts";
 
 /** Percent sizes are resolved by Pi on every render; the options object itself is read once. */
@@ -254,6 +254,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
 
   const ok = (frame: Frame, text: string) => { frame.banner = { text, tone: "success" }; };
+  /** Shared (non-filtering) display setting: lives on the Advanced tab with the other settings both pipelines share, never on Skills or Tools. */
+  const footerIconsItem = (): Item => ({
+    label: fieldFor("general", "iconStyle", snap.settings)?.label ?? "Footer icons", value: iconStyleText(snap.settings),
+    description: "Icon set for the compact status footer: ASCII / Unicode, Emoji or Nerd Font (needs a Nerd Font in your terminal).",
+    run: () => push({ kind: "options", group: "general", key: "iconStyle" }),
+  });
   const itemsFor = (frame: Frame): Item[] => {
     const route = frame.route;
     const settings = snap.settings;
@@ -305,6 +311,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       { label: "Provider / execution", value: backendLabel(settings.backend), description: "Shared decision backend for skills, tools and allowlist ranking.", run: () => push({ kind: "provider" }) },
       { label: "Model", value: modelLabel(settings.backend), description: "Shared decision model. Choosing one never enables filtering.", run: () => push({ kind: "model", filter: backendFilter(settings.backend) }) },
       ...fields(ADVANCED_FIELDS),
+      footerIconsItem(),
     ];
     if (route.kind === "provider") {
       if (!frame.providers) return [{ label: frame.loading ? "Checking credentials…" : "No providers available", disabled: frame.loading ? "Checking credentials without any inference calls…" : "No providers available.", run: () => {} }];
@@ -338,9 +345,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       const group = route.group ?? "relevance";
       const field = fieldFor(group, route.key, settings);
       return (field?.options ?? []).map((option) => ({
-        label: option.value, value: String(fieldValue(settings, group, route.key)) === option.value ? "current" : "",
+        label: option.label ?? option.value, value: String(fieldValue(settings, group, route.key)) === option.value ? "current" : "",
         tone: route.key === "failMode" && option.value === "open" ? "warn" as const : undefined, description: option.description,
-        run: () => mutate(frame, () => ops.updateSetting(`${group}.${route.key}`, option.value), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
+        run: () => mutate(frame, () => ops.updateSetting(settingKey(group, route.key), option.value), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
       }));
     }
     return [];

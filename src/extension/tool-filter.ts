@@ -21,6 +21,7 @@ import type { ContextDecisionsSettings, ToolFilterMode } from "../settings.ts";
 import type { CommandContext, ExtensionHost, LastToolDecision, ToolReport } from "./contracts.ts";
 import { queuedUserTask } from "./queued-task.ts";
 import { beginDecisionLoader, endDecisionLoader } from "./decision-loader.ts";
+import { toolFooter } from "./footer-status.ts";
 import { TOOLS_LEDGER_ENTRY, buildToolNotice, readToolLedger, toolRecords, type ToolLedgerData, type ToolLedgerState, type ToolNotice } from "./tool-ledger.ts";
 
 export interface ToolFilterDeps {
@@ -646,13 +647,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     historyToolGroups: () => new Map((snapshot?.tools ?? []).flatMap((tool) => tool.group ? [[tool.name, tool.group] as const] : [])),
     last: () => last ? structuredClone(last) : undefined,
     status() {
-      const settings = deps.getSettings();
-      if (!settings.tools.enabled) return undefined;
-      if (!supported()) return "tools: host lacks tool APIs";
-      if (deps.getSettingsError()) return "tools: settings error";
-      if (!settings.backend) return "tools: select model · /decisions";
-      if (!counts) return `tools: ${settings.tools.mode} · ${settings.tools.cadence}`;
-      return `tools: ${counts.available}/${counts.external} ${counts.mode === "mcp" ? "groups" : "tools"} available${last ? (last.cached ? " · cached" : last.errorCode ? ` · ${last.errorCode}` : ` · ${last.latencyMs}ms`) : ""}`;
+      return toolFooter(deps.getSettings(), { supported: supported(), settingsError: deps.getSettingsError(), counts, last });
     },
     async describe(ctx) {
       const settings = deps.getSettings();

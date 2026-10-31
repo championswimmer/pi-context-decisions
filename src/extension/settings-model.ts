@@ -2,8 +2,9 @@ import { SUBAGENT_HELP } from "./subagent-manager.ts";
 // Pure data and layout helpers for the floating /decisions dialog.
 // No Pi or pi-tui imports: everything here is unit-testable without a terminal.
 import { DecisionError } from "../decision/errors.ts";
-import { SettingsError, type ContextDecisionsSettings, type RelevanceSettings, type DecisionSettings, type ToolFilterSettings } from "../settings.ts";
+import { SettingsError, type ContextDecisionsSettings, type IconStyle, type RelevanceSettings, type DecisionSettings, type ToolFilterSettings } from "../settings.ts";
 import { selectionLabel } from "./contracts.ts";
+import { FOOTER_ICONS } from "./footer-status.ts";
 
 /** Strip control and format characters (ANSI introducers, bidi overrides) and bound the length. */
 export function sanitizeTerminalText(value: unknown, limit = 400): string {
@@ -26,12 +27,16 @@ export function dialogHeightBudget(rows: number | undefined): number {
 
 export type AdvancedKey = Exclude<keyof RelevanceSettings, "pinned">;
 export type ToolKey = Exclude<keyof ToolFilterSettings, "alwaysAllowedTools" | "alwaysAllowedMcpServers">;
-/** Shared scoring (decision), skill policy (relevance) or tool policy (tools). */
-export type SettingsGroup = "relevance" | "tools" | "decision";
+/** Shared scoring (decision), skill policy (relevance), tool policy (tools) or the top-level shared display settings (`general`, e.g. `iconStyle`). */
+export type SettingsGroup = "relevance" | "tools" | "decision" | "general";
+export type GeneralKey = "iconStyle";
+/** The settings key `ContextDecisionsSettings`/`updateSetting` use for a field: `relevance.x`, `tools.x`, `decision.x`, or the bare top-level key. */
+export const settingKey = (group: SettingsGroup, key: string): string => group === "general" ? key : `${group}.${key}`;
 export type AdvancedKind = "bool" | "options" | "int" | "decimal";
-export interface AdvancedOption { value: string; description: string }
+/** `label` is what the user sees (defaults to `value`, which stays the persisted token). */
+export interface AdvancedOption { value: string; description: string; label?: string }
 export interface AdvancedField {
-  key: AdvancedKey | ToolKey | keyof DecisionSettings;
+  key: AdvancedKey | ToolKey | keyof DecisionSettings | GeneralKey;
   group: SettingsGroup;
   label: string;
   kind: AdvancedKind;
@@ -93,10 +98,28 @@ export function fieldForSettings(field: AdvancedField, settings: ContextDecision
   return field;
 }
 export function fieldFor(group: SettingsGroup, key: string, settings: ContextDecisionsSettings): AdvancedField | undefined {
-  const field = [...SKILL_FIELDS, ...TOOL_FIELDS, ...ADVANCED_FIELDS].find((field) => field.group === group && field.key === key);
+  const field = [...SKILL_FIELDS, ...TOOL_FIELDS, ...ADVANCED_FIELDS, ...GENERAL_FIELDS].find((field) => field.group === group && field.key === key);
   return field && fieldForSettings(field, settings);
 }
-export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown { return (settings[group] as unknown as Record<string, unknown>)[key]; }
+export function fieldValue(settings: ContextDecisionsSettings, group: SettingsGroup, key: string): unknown {
+  return ((group === "general" ? settings : settings[group]) as unknown as Record<string, unknown>)[key];
+}
+/** Illustrative preview taken from the footer's own glyph table, so the picker can never drift from what is printed. */
+const iconPreview = (style: IconStyle): string => { const icons = FOOTER_ICONS[style]; return `${icons.decisions} ${icons.skills} ${icons.tools}`; };
+/**
+ * Shared, non-filtering display settings (top-level `iconStyle`). Offered on the Advanced tab (and the RPC Advanced menu), next to the
+ * other settings shared by both pipelines; deliberately not part of `ADVANCED_FIELDS`, which stays the decision/policy tuning list.
+ */
+export const GENERAL_FIELDS: readonly AdvancedField[] = [
+  { key: "iconStyle", group: "general", label: "Footer icons", kind: "options", hint: "Icon set in the compact status footer (extension, skills, tools). Unicode works in regular terminal fonts, Emoji needs colour emoji support, Nerd Font needs a Nerd Font as the terminal font.", options: [
+    { value: "unicode", label: `ASCII / Unicode  ${iconPreview("unicode")}`, description: "Plain Unicode symbols; no patched font needed (default). A few fonts may lack some glyphs." },
+    { value: "emoji", label: `Emoji  ${iconPreview("emoji")}`, description: "Colour emoji. Needs a terminal and font with emoji support; glyph width can vary between terminals." },
+    { value: "nerd", label: `Nerd Font  ${iconPreview("nerd")}`, description: "Requires a Nerd Font (nerdfonts.com) as the terminal font; without one these glyphs show as empty boxes. Pick another set if so." },
+  ] },
+];
+export const ICON_STYLE_LABELS: Readonly<Record<IconStyle, string>> = { unicode: "ASCII / Unicode", emoji: "Emoji", nerd: "Nerd Font" };
+/** Short plain-text name of the current footer icon set (no glyphs: it is reused in menus where the font is unknown). */
+export function iconStyleText(settings: ContextDecisionsSettings): string { return ICON_STYLE_LABELS[settings.iconStyle] ?? "ASCII / Unicode"; }
 export function toolsSummary(settings: ContextDecisionsSettings): string { return settings.tools.enabled ? `On · ${settings.tools.mode} · ${settings.tools.cadence}` : "Off"; }
 
 export function advancedValueText(field: AdvancedField, settings: ContextDecisionsSettings): string {

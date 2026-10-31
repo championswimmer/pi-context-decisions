@@ -14,10 +14,11 @@ import type { ContextDecisionsSettings } from "../settings.ts";
 import { defaultSettings, loadSettings, parseSettings, saveSettings } from "../settings.ts";
 import { registerCommands } from "./commands.ts";
 import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type LedgerState, type SkillsDelta } from "./skill-ledger.ts";
-import { selectionLabel, type Controller, type ExtensionDependencies, type ExtensionHost, type LastDecision } from "./contracts.ts";
+import type { Controller, ExtensionDependencies, ExtensionHost, LastDecision } from "./contracts.ts";
 import { queuedUserTask } from "./queued-task.ts";
 import { createToolFilter } from "./tool-filter.ts";
 import { beginDecisionLoader, endDecisionLoader, resetDecisionLoader } from "./decision-loader.ts";
+import { skillFooter } from "./footer-status.ts";
 
 function sumUsage(responses: DecisionResponse[]): DecisionUsage | undefined {
   if (!responses.length) return undefined;
@@ -149,10 +150,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     report,
     setStatus(ctx) {
       if (!ctx.hasUI) return;
-      const state = settingsError ? "settings error · open /decisions to repair" : !settings.relevance.enabled ? "off" : !settings.backend ? "select model · /decisions" : last
-        ? `${last.reason} · +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : ` · ${last.advertised} advertised`}${last.cached ? " · cached" : ` · ${last.latencyMs}ms`}${last.errorCode ? ` · ${last.errorCode}` : ""}`
-        : selectionLabel(settings.backend);
-      ctx.ui.setStatus("context-decisions", state);
+      const total = [...skillRefs.values()].filter((skill) => !skill.disableModelInvocation).length;
+      ctx.ui.setStatus("context-decisions", skillFooter(settings, settingsError, last, total));
       // Tool filtering is opt-in: while it is off (the default) nothing extra is ever written to the status bar.
       const toolsText = toolFilter.status();
       if (toolsText !== undefined || toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", toolsText); toolsStatusShown = toolsText !== undefined; }

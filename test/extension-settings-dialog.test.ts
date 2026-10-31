@@ -5,6 +5,7 @@ import type { ScopedSkill } from "../src/apps/allowlist.ts";
 import type { RelevanceItem } from "../src/apps/relevance.ts";
 import { defaultSettings, SettingsError, updateSetting, type ContextDecisionsSettings } from "../src/settings.ts";
 import { ADVANCED_FIELDS, dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { FOOTER_ICONS } from "../src/extension/footer-status.ts";
 import {
   createSettingsDialogComponent, createSettingsDialogManager, type DialogResult, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps,
 } from "../src/extension/settings-dialog.ts";
@@ -493,7 +494,7 @@ test("rendered frame fits width and height at every size for every route, with h
       for (let step = 0; step < 40; step++) {
         h.press(KEY.down);
         const lines = check(`down${step}`);
-        if (["main", "advanced", "provider", "model", "options"].includes(name) && budget >= 3 && width >= 8 && step % 5 === 0) {
+        if (["main", "advanced", "provider", "model", "options", "icons"].includes(name) && budget >= 3 && width >= 8 && step % 5 === 0) {
           assert.ok(lines.some((line) => line.includes("❯")), `${name} ${width}x${rows} step ${step}: selected row not visible`);
         }
       }
@@ -727,4 +728,50 @@ for (const present of [false, true]) test(`Advanced inherited-tools row: manager
   assert.equal(f.settings.tools.allowSubagentInheritedTools, present);
   if (!present) { assert.match(h.text(), /Requires enabled pi-subagent-manager/); assert.ok(!f.calls.some((c) => c.startsWith("updateSetting:tools.allowSubagent"))); }
   h.component.dispose();
+});
+
+const ICON_LABELS = ["ASCII / Unicode", "Emoji", "Nerd Font"];
+/** Advanced rows: provider, model, every ADVANCED_FIELDS knob, then the shared Footer icons row. */
+const iconsRow = 2 + ADVANCED_FIELDS.length;
+test("Footer icons is one shared row on the Advanced tab only (not an Advanced knob, not on Skills or Tools) and opens an options route", async () => {
+  const skills = mount(fakeOps()); await skills.until(/Always allowed · Project\s+3/);
+  assert.doesNotMatch(skills.text(100), /Footer icons/); skills.component.dispose();
+  const tools = mount(fakeOps(), { initialRoute: "tools" });
+  for (let i = 0; i < 12; i++) tools.press(KEY.down);
+  assert.doesNotMatch(tools.text(100), /Footer icons/); tools.component.dispose();
+  assert.ok(!ADVANCED_FIELDS.some((field) => field.key === "iconStyle"), "display setting, not decision/policy tuning");
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  assert.match(h.text(100), /Footer icons\s+ASCII \/ Unicode/);
+  toRow(h, iconsRow); h.press(KEY.enter);
+  const text = h.text(100); assert.match(text, /Decisions › Advanced › Footer icons/);
+  for (const label of ICON_LABELS) assert.match(text, new RegExp(label.replace("/", "\\/")));
+  assert.match(text, /ASCII \/ Unicode.*current/);
+  h.press(KEY.esc); assert.match(h.text(100), /Decisions › Advanced/); assert.doesNotMatch(h.text(100), /Decisions › Advanced › Footer icons/, "Esc returns to Advanced");
+  h.component.dispose();
+});
+
+test("Footer icons options show the footer's own glyphs and the Nerd Font requirement; choosing saves iconStyle through updateSetting and refreshes the snapshot", async () => {
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  toRow(h, iconsRow); h.press(KEY.enter);
+  const flat = (width = 100) => h.text(width).replace(/\s*│\s*\n│\s*/g, " ");
+  for (const style of ["unicode", "emoji", "nerd"] as const) for (const glyph of Object.values(FOOTER_ICONS[style])) assert.ok(h.text(120).includes(glyph), `${style} preview shows the footer's own glyph ${JSON.stringify(glyph)}`);
+  assert.match(flat(120), /no patched font needed/); assert.doesNotMatch(flat(120), /any terminal font/);
+  h.press(KEY.down, KEY.down); assert.match(flat(), /Requires a Nerd Font/);
+  h.press(KEY.up); assert.match(flat(), /emoji support/);
+  h.press(KEY.enter); await tick();
+  assert.equal(f.settings.iconStyle, "emoji"); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:iconStyle=emoji"]);
+  assert.match(h.text(100), /Decisions › Advanced/); assert.match(h.text(100), /Footer icons\s+Emoji/); assert.match(h.text(100), /Saved/);
+  h.component.dispose();
+});
+
+test("a Footer icons save is not optimistic, runs once, and a failure stays inline with the old value", async () => {
+  const { f, gates } = gatedSaves(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  toRow(h, iconsRow); h.press(KEY.enter, KEY.down, KEY.down, KEY.enter, KEY.enter);
+  assert.equal(gates.length, 1); assert.equal(gates[0].key, "iconStyle"); assert.equal(gates[0].text, "nerd");
+  assert.match(h.text(), /saving…/); assert.doesNotMatch(h.text(), /Nerd Font.*current/);
+  gates[0].release(); await tick(); assert.equal(f.settings.iconStyle, "nerd"); assert.match(h.text(), /Footer icons\s+Nerd Font/);
+  const g = fakeOps({ async updateSetting() { throw new Error("PRIVATE_BODY"); } }); const k = mount(g, { initialRoute: "advanced", rows: 60 });
+  toRow(k, iconsRow); k.press(KEY.enter, KEY.down, KEY.enter); await tick();
+  assert.match(k.text(), /Decisions › Advanced › Footer icons/); assert.match(k.text(), /Context-decisions operation failed/); assert.doesNotMatch(k.text(), /PRIVATE_BODY/);
+  assert.match(k.text(), /ASCII \/ Unicode.*current/); h.component.dispose(); k.component.dispose();
 });

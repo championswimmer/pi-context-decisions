@@ -130,6 +130,15 @@ See [skill picking](docs/skill-picking.md) and [tool-filtering limitations](docs
 
 Editable SVGs: [agent loop](docs/assets/agent-session-loop.svg) · [picker](docs/assets/context-decider.svg) · [tool checks](docs/assets/tool-availability-gates.svg). [Offline PNG regeneration and implementation notes](docs/assets/README.md).
 
+### Compact footer
+
+```text
+◇ ≡ 12/40 ⚙ 18/120
+🎯 📚 12/40 🔧 18/120
+```
+
+Skills show advertised/total; tools show available/external total (`g` for groups). Choose **Footer icons** under `/decisions` → **Advanced**: ASCII/Unicode, Emoji, or Nerd Font. [Icon requirements and footer states](docs/settings.md#compact-footer).
+
 ## Know before enabling
 
 - **Metadata leaves Pi.** The selected decision provider receives bounded user-task text and skill names/descriptions. Tool filtering also sends tool/group metadata. It does not send skill bodies, tool arguments/results or conversation transcripts.

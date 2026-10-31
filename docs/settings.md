@@ -63,6 +63,7 @@ Canonical settings shape (defaults):
 
 ```json
 {
+  "iconStyle": "unicode",
   "backend": null,
   "globalAllowlist": [],
   "decision": {
@@ -94,6 +95,18 @@ Canonical settings shape (defaults):
 ```
 
 Invalid persisted settings are reported explicitly and advertisements fail closed until repaired in the dialog or with a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
+
+### Compact footer
+
+Choose **Footer icons** under `/decisions` → **Advanced**: **ASCII / Unicode** (default, no patched font), **Emoji**, or **Nerd Font** (requires a Nerd Font terminal font). The saved `iconStyle` is `unicode`, `emoji`, or `nerd`; older settings files default to Unicode.
+
+```text
+◇ ≡ 12/40 ⚙ 18/120      ASCII / Unicode
+🎯 📚 12/40 🔧 18/120    Emoji
+◇ ≡ 12/40 ⚙ 3/15g       Group mode (Unicode)
+```
+
+The leading diamond, target or filter identifies Context Decisions; skills use a list/books/book icon and tools use a gear/wrench. Nerd Font uses the classic Font Awesome filter (`U+F0B0`), book (`U+F02D`) and wrench (`U+F0AD`) glyphs rather than the less portable scroll. Every count is separated from its icon by a space. Skills show **advertised / total invocable skills**, not loaded skill bodies or new additions this round. Tools show **available / total external tools** (built-ins excluded); `g` means MCP-server and extension **groups** instead. Tool counts stay hidden while tool filtering is off. `ready` means no round recorded yet, `setup` means select a model, and `off` means disabled. Short flags such as `!timeout`, `!config`, `!host` (missing host APIs), or `!open` (explicit fail-open fallback) preserve failure visibility. Timings, cache information and detailed reasons remain in `/decisions status`.
 
 ### Decisions history
 

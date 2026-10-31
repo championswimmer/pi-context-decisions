@@ -50,7 +50,11 @@ export interface ToolFilterSettings {
   /** Global-source MCP names/namespace keys and canonical extension keys; retains its original setting name. */
   alwaysAllowedMcpServers: string[];
 }
+/** Footer glyphs: Unicode needs no patched font; Nerd Font is explicitly opt-in. */
+export type IconStyle = "unicode" | "emoji" | "nerd";
+export const ICON_STYLES: readonly IconStyle[] = ["unicode", "emoji", "nerd"];
 export interface ContextDecisionsSettings {
+  iconStyle: IconStyle;
   backend: BackendSelection | null;
   globalAllowlist: string[];
   decision: DecisionSettings;
@@ -65,7 +69,7 @@ export function defaultToolSettings(): ToolFilterSettings {
   return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
 }
 export function defaultSettings(): ContextDecisionsSettings {
-  return { backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(),
+  return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(),
     relevance: { enabled: true, maxSkills: 12, cadence: "prompt", minCandidates: 8, pinned: [] } };
 }
 export class SettingsError extends Error {
@@ -173,8 +177,12 @@ function sharedValues(input: Record<string, unknown>, group: string, allowed = S
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);
   if (!object(value)) throw new SettingsError("Settings must be a JSON object");
-  keys(value, ["enabled", "backend", "globalAllowlist", "decision", "relevance", "tools"], warnings);
+  keys(value, ["enabled", "iconStyle", "backend", "globalAllowlist", "decision", "relevance", "tools"], warnings);
   const result = defaultSettings();
+  if (value.iconStyle !== undefined) {
+    if (typeof value.iconStyle !== "string" || !(ICON_STYLES as readonly string[]).includes(value.iconStyle)) throw new SettingsError("Invalid iconStyle");
+    result.iconStyle = value.iconStyle as IconStyle;
+  }
   if (value.backend !== undefined) result.backend = validateBackendSelection(value.backend);
   if (value.globalAllowlist !== undefined) {
     if (!Array.isArray(value.globalAllowlist)) throw new SettingsError("Global allowlist must be an array of skill names");
@@ -267,10 +275,11 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
   let target: Record<string, unknown>;
   let field: string;
   if (key === "enabled") throw new SettingsError("Removed master switch; use relevance.enabled or tools.enabled");
-  if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; field = key.slice(9); }
+  if (key === "iconStyle") { target = next as unknown as Record<string, unknown>; field = key; }
+  else if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; field = key.slice(9); }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
-  else throw new SettingsError("Use a decision, relevance or tools setting; choose a backend in the /decisions dialog");
+  else throw new SettingsError("Use iconStyle, a decision, relevance or tools setting; choose a backend in the /decisions dialog");
   if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
     throw new SettingsError("Removed setting: skill picking is score-only. Use decision.threshold <0–1>");
   }
