@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { simHost } from "./helpers/pi-sim.ts";
+import { rpcContext } from "./helpers/settings-ui.ts";
 import type { Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
@@ -113,6 +114,33 @@ test("RPC mode keeps the select menus with Advanced… and never calls custom", 
   assert.equal(h.calls.custom, 0); assert.equal(h.calls.select, 1);
 });
 
+test("RPC settings menu has a Footer icons entry: same three choices, persists iconStyle and refreshes the footer status; Back changes nothing", async (t) => {
+  const h = await harness(t, { mode: "rpc" });
+  const status: [string, unknown][] = []; const titles: string[] = []; let menu: string[] = [];
+  let step = 0; let choice: (options: string[]) => string | undefined = () => undefined;
+  const ctx = rpcContext(h.ctx, {
+    setStatus: (key: string, text: unknown) => status.push([key, text]),
+    async select(title: string, options: string[]) {
+      titles.push(title);
+      if (title === "Decisions · settings") { if (step === 0) menu = options; return step++ === 0 ? options.find((option) => option.startsWith("Footer icons:")) : "Done"; }
+      return choice(options);
+    },
+  });
+  choice = (options) => options.find((option) => option.startsWith("emoji ·"));
+  await h.commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
+  assert.ok(menu.includes("Footer icons: ASCII / Unicode"), "the RPC menu shows the current set by plain name");
+  assert.ok(titles.includes("Footer icons (currently unicode)"));
+  assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji");
+  assert.ok(status.some(([key]) => key === "context-decisions"), "status refreshed right after the save");
+  step = 0; titles.length = 0; status.length = 0; menu = [];
+  let offered: string[] = [];
+  choice = (options) => { offered = options; return "Back"; };
+  await h.commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
+  assert.ok(menu.includes("Footer icons: Emoji")); assert.ok(titles.includes("Footer icons (currently emoji)"));
+  assert.deepEqual(offered.slice(0, 3).map((option) => option.split(" · ")[0]), ["unicode", "emoji", "nerd"]);
+  assert.match(offered[2], /Requires a Nerd Font/); assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji"); assert.deepEqual(status, []);
+});
+
 test("a second /decisions while the first dialog is open does not open another; it focuses the first", async (t) => {
   const h = await harness(t); const first = h.command(""); const dialog = await h.dialog();
   for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down);
@@ -173,7 +201,7 @@ test("dialog work never reads ctx.signal (the agent-run signal), even through st
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
   dialog.handleInput!("\x1b[A"); dialog.handleInput!(KEY.enter); // Model route (the cursor stayed on Global)
   await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
-  for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
+  for (let i = 0; i < 5; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status… (cursor was on Global; Advanced, Footer icons, Status)
   await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.reads.signal, 0, "the dialog must own its signal");
 });

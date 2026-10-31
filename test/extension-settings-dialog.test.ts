@@ -5,6 +5,7 @@ import type { ScopedSkill } from "../src/apps/allowlist.ts";
 import type { RelevanceItem } from "../src/apps/relevance.ts";
 import { defaultSettings, SettingsError, updateSetting, type ContextDecisionsSettings } from "../src/settings.ts";
 import { dialogHeightBudget } from "../src/extension/settings-model.ts";
+import { FOOTER_ICONS } from "../src/extension/footer-status.ts";
 import {
   createSettingsDialogComponent, createSettingsDialogManager, type DialogResult, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps,
 } from "../src/extension/settings-dialog.ts";
@@ -84,12 +85,12 @@ function mount(fixture: OpsFixture, options: { rows?: number; initialRoute?: Ini
   };
   return { component, results, press, text, until, tui, get renders() { return renders; }, closedHooks };
 }
-/** Skill picker rows: 0 toggle, 1 provider, 2 model, 3 global, 4 project, 5 advanced, 6 status, 7 close. */
+/** Skill picker rows: 0 toggle, 1 provider, 2 model, 3 global, 4 project, 5 advanced, 6 footer icons, 7 status, 8 close. */
 const toRow = (h: ReturnType<typeof mount>, row: number) => { h.press(...Array(row).fill(KEY.down)); };
 
-test("Skill picker tab shows exactly the eight concise rows; relevance knobs and the nested Tools & MCP entry are not on it", async () => {
+test("Skill picker tab shows exactly the nine concise rows; relevance knobs and the nested Tools & MCP entry are not on it", async () => {
   const f = fakeOps(); const h = mount(f); await h.until(/Always allowed · Project\s+3/);
-  const labels = ["Context decisions", "Provider / execution", "Model", "Always allowed · Global", "Always allowed · Project", "Advanced…", "Status…", "Close"];
+  const labels = ["Context decisions", "Provider / execution", "Model", "Always allowed · Global", "Always allowed · Project", "Advanced…", "Footer icons", "Status…", "Close"];
   const text = h.text(100); let at = -1;
   for (const label of labels) { const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next; }
   assert.doesNotMatch(text, /threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode|Tools & MCP/i);
@@ -97,12 +98,12 @@ test("Skill picker tab shows exactly the eight concise rows; relevance knobs and
   assert.equal(h.results.length, 0); h.component.dispose();
 });
 
-test("the description yields to the list: all eight rows plus the tab strip incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
-  const f = fakeOps(); const h = mount(f, { rows: 16 });
+test("the description yields to the list: all nine rows plus the tab strip incl. Close fit an 18-row terminal; tiny heights keep the selected row", () => {
+  const f = fakeOps(); const h = mount(f, { rows: 18 });
   const text = h.text(100); assert.match(text, /Status…/); assert.match(text, /Close/);
-  assert.ok(h.component.render(100).length <= dialogHeightBudget(16));
+  assert.ok(h.component.render(100).length <= dialogHeightBudget(18));
   assert.doesNotMatch(text, /Immediately enables or disables/, "with every row visible and no spare line, the description yields completely");
-  assert.match(mount(fakeOps(), { rows: 18 }).text(100), /Immediately enables or disables/, "a one-line description fits when a line is spare");
+  assert.match(mount(fakeOps(), { rows: 20 }).text(100), /Immediately enables or disables/, "a one-line description fits when a line is spare");
   const small = mount(fakeOps(), { rows: 8 }); small.press(...Array(8).fill(KEY.down));
   assert.match(small.text(100), /❯ Close/); assert.ok(small.component.render(100).length <= dialogHeightBudget(8));
   h.component.dispose(); small.component.dispose();
@@ -341,11 +342,11 @@ test("focus reaches the edit Input only in the edit route", async () => {
 });
 
 test("status route loads lines, scrolls and refreshes; errors render inline", async () => {
-  const f = fakeOps(); const h = mount(f); toRow(h, 6); h.press(KEY.enter);
+  const f = fakeOps(); const h = mount(f); toRow(h, 7); h.press(KEY.enter);
   await h.until(/Credentials: environment/); h.press(KEY.enter); await tick(); assert.equal(f.calls.filter((call) => call === "statusLines").length, 2);
   h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › Status/); h.component.dispose();
   const g = fakeOps({ statusLines: async () => { throw new SettingsError("Repair settings first"); } });
-  const k = mount(g, { initialRoute: "main" }); toRow(k, 6); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
+  const k = mount(g, { initialRoute: "main" }); toRow(k, 7); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
 });
 
 test("allowlist route embeds the editor within the dialog budget; Esc from search pops to main and cancels ranking", async () => {
@@ -438,7 +439,8 @@ test("rendered frame fits width and height at every size for every route, with h
   const routes: [string, (h: ReturnType<typeof mount>) => void][] = [
     ["main", () => {}], ["tools", (h) => h.component.navigate("tools")], ["advanced", (h) => h.component.navigate("advanced")], ["provider", (h) => h.component.navigate("provider")],
     ["model", (h) => h.component.navigate("model")], ["allowlist", (h) => h.component.navigate({ allowlist: "global" })],
-    ["status", (h) => { toRow(h, 6); h.press(KEY.enter); }],
+    ["status", (h) => { toRow(h, 7); h.press(KEY.enter); }],
+    ["icons", (h) => { toRow(h, 6); h.press(KEY.enter); }],
     ["edit", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.enter); }],
     ["options", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter); }],
   ];
@@ -463,7 +465,7 @@ test("rendered frame fits width and height at every size for every route, with h
       for (let step = 0; step < 40; step++) {
         h.press(KEY.down);
         const lines = check(`down${step}`);
-        if (["main", "advanced", "provider", "model", "options"].includes(name) && budget >= 3 && width >= 8 && step % 5 === 0) {
+        if (["main", "advanced", "provider", "model", "options", "icons"].includes(name) && budget >= 3 && width >= 8 && step % 5 === 0) {
           assert.ok(lines.some((line) => line.includes("❯")), `${name} ${width}x${rows} step ${step}: selected row not visible`);
         }
       }
@@ -659,4 +661,48 @@ test("history overview and details stay sanitized and width/height-bounded at na
     }
     h.component.dispose();
   }
+});
+
+const ICON_LABELS = ["ASCII / Unicode", "Emoji", "Nerd Font"];
+test("Footer icons is one shared row on BOTH tab roots (not an Advanced knob) and opens the same options route from either", async () => {
+  const f = fakeOps(); const h = mount(f); await h.until(/Always allowed · Project\s+3/);
+  assert.match(h.text(100), /Footer icons\s+ASCII \/ Unicode/);
+  assert.doesNotMatch(mount(fakeOps(), { initialRoute: "advanced" }).text(100), /Footer icons/, "not a relevance knob");
+  toRow(h, 6); h.press(KEY.enter);
+  const fromSkills = h.text(100); assert.match(fromSkills, /Decisions › Footer icons/);
+  for (const label of ICON_LABELS) assert.match(fromSkills, new RegExp(label.replace("/", "\\/")));
+  assert.match(fromSkills, /ASCII \/ Unicode.*current/);
+  h.press(KEY.esc); assert.match(h.text(100), /Decisions › Skill picker/, "Esc returns to the tab it was opened from");
+  h.press(KEY.tab); await h.until(/Decisions › Tool picker/);
+  assert.match(h.text(100), /Footer icons\s+ASCII \/ Unicode/);
+  h.press(...Array(12).fill(KEY.down), KEY.enter);
+  assert.match(h.text(100), /Decisions › Footer icons/); h.press(KEY.esc);
+  assert.match(h.text(100), /Decisions › Tool picker/, "tool tab is the return route");
+  h.component.dispose();
+});
+
+test("Footer icons options show icon examples and the Nerd Font requirement; choosing saves iconStyle through updateSetting and refreshes the snapshot", async () => {
+  const f = fakeOps(); const h = mount(f, { rows: 40 }); await h.until(/Always allowed · Project\s+3/);
+  toRow(h, 6); h.press(KEY.enter);
+  const flat = (width = 100) => h.text(width).replace(/\s*│\s*\n│\s*/g, " ");
+  for (const style of ["unicode", "emoji", "nerd"] as const) for (const glyph of Object.values(FOOTER_ICONS[style])) assert.ok(h.text(120).includes(glyph), `${style} preview shows the footer's own glyph ${JSON.stringify(glyph)}`);
+  assert.match(flat(120), /no patched font needed/); assert.doesNotMatch(flat(120), /any terminal font/);
+  h.press(KEY.down, KEY.down); assert.match(flat(), /Requires a Nerd Font/);
+  h.press(KEY.up); assert.match(flat(), /emoji support/);
+  h.press(KEY.enter); await tick();
+  assert.equal(f.settings.iconStyle, "emoji"); assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:iconStyle=emoji"]);
+  assert.match(h.text(100), /Decisions › Skill picker/); assert.match(h.text(100), /Footer icons\s+Emoji/); assert.match(h.text(100), /Saved/);
+  toRow(h, 0); h.component.dispose();
+});
+
+test("a Footer icons save is not optimistic, runs once, and a failure stays inline with the old value", async () => {
+  const { f, gates } = gatedSaves(); const h = mount(f); await h.until(/Always allowed · Project\s+3/);
+  toRow(h, 6); h.press(KEY.enter, KEY.down, KEY.down, KEY.enter, KEY.enter);
+  assert.equal(gates.length, 1); assert.equal(gates[0].key, "iconStyle"); assert.equal(gates[0].text, "nerd");
+  assert.match(h.text(), /saving…/); assert.doesNotMatch(h.text(), /Nerd Font.*current/);
+  gates[0].release(); await tick(); assert.equal(f.settings.iconStyle, "nerd"); assert.match(h.text(), /Footer icons\s+Nerd Font/);
+  const g = fakeOps({ async updateSetting() { throw new Error("PRIVATE_BODY"); } }); const k = mount(g);
+  toRow(k, 6); k.press(KEY.enter, KEY.down, KEY.enter); await tick();
+  assert.match(k.text(), /Decisions › Footer icons/); assert.match(k.text(), /Context-decisions operation failed/); assert.doesNotMatch(k.text(), /PRIVATE_BODY/);
+  assert.match(k.text(), /ASCII \/ Unicode.*current/); h.component.dispose(); k.component.dispose();
 });

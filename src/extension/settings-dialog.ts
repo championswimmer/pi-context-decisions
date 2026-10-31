@@ -12,8 +12,8 @@ import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-
 import type { CommandContext } from "./contracts.ts";
 import { HISTORY_NOTE, historyBatchLines, historyBatchSummary, historyBatchTitle, type DecisionsHistory, type HistoryBatch } from "./decisions-history.ts";
 import {
-  ADVANCED_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, layoutMenu, modelLabel,
-  sanitizeTerminalText, type SettingsGroup,
+  ADVANCED_FIELDS, TOOL_FIELDS, advancedValueText, backendLabel, describeError, dialogHeightBudget, fieldFor, fieldValue, iconStyleText, layoutMenu, modelLabel,
+  sanitizeTerminalText, settingKey, type SettingsGroup,
 } from "./settings-model.ts";
 
 /** Percent sizes are resolved by Pi on every render; the options object itself is read once. */
@@ -250,6 +250,12 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   };
 
   const ok = (frame: Frame, text: string) => { frame.banner = { text, tone: "success" }; };
+  /** Shared (non-filtering) settings row, offered from BOTH tab roots so it belongs to neither picker. */
+  const footerIconsItem = (): Item => ({
+    label: fieldFor("general", "iconStyle")?.label ?? "Footer icons", value: iconStyleText(snap.settings),
+    description: "Icon set for the compact status footer: ASCII / Unicode, Emoji or Nerd Font (needs a Nerd Font in your terminal).",
+    run: () => push({ kind: "options", group: "general", key: "iconStyle" }),
+  });
   const itemsFor = (frame: Frame): Item[] => {
     const route = frame.route;
     const settings = snap.settings;
@@ -274,6 +280,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         ...(snap.hasCwd ? {} : { disabled: "No working directory is available for a project list." }),
         run: () => push({ kind: "allowlist", scope: "project" }) },
       { label: "Advanced…", description: "Relevance threshold, shard size, max added per round, picker cadence and safety limits.", run: () => push({ kind: "advanced" }) },
+      footerIconsItem(),
       { label: "Status…", description: "Credentials, last decision and allowlist counts. Makes no inference calls.", run: () => push({ kind: "status" }) },
       { label: "Close", run: () => close("closed") },
     ];
@@ -299,6 +306,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         })),
         ...lists.map((row): Item => ({ label: row.label, value: row.value, description: row.description, ...(row.scope === "project" ? noCwd : {}), ...(row.scope === "project" && project.warning ? { tone: "warn" as const } : {}),
           run: () => push({ kind: "allowlist", scope: row.scope, list: row.list }) })),
+        footerIconsItem(),
       ];
     }
     if (route.kind === "advanced") return ADVANCED_FIELDS.map((field) => ({
@@ -342,9 +350,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       const group = route.group ?? "relevance";
       const field = fieldFor(group, route.key);
       return (field?.options ?? []).map((option) => ({
-        label: option.value, value: String(fieldValue(settings, group, route.key)) === option.value ? "current" : "",
+        label: option.label ?? option.value, value: String(fieldValue(settings, group, route.key)) === option.value ? "current" : "",
         tone: route.key === "failMode" && option.value === "open" ? "warn" as const : undefined, description: option.description,
-        run: () => mutate(frame, () => ops.updateSetting(`${group}.${route.key}`, option.value), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
+        run: () => mutate(frame, () => ops.updateSetting(settingKey(group, route.key), option.value), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
       }));
     }
     return [];
@@ -358,7 +366,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "tools": return "Decisions › Tool picker";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "edit": case "options": return `Decisions › ${route.group === "tools" ? "Tool picker" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
+      case "edit": case "options": if (route.group === "general") return `Decisions › ${sanitizeTerminalText(fieldFor("general", route.key)?.label ?? route.key, 80)}`;
+        return `Decisions › ${route.group === "tools" ? "Tool picker" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "history": return "Decisions › History";
       case "history-batch": return `Decisions › History › ${historyBatchTitle(route.batch)}`;

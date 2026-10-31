@@ -54,8 +54,12 @@ export interface ToolFilterSettings {
   /** Always-available groups: MCP servers (names or `mcp__` namespace keys) and extensions (`ext__` keys). The setting keeps its original name. */
   alwaysAllowedMcpServers: string[];
 }
+/** Footer glyphs: Unicode needs no patched font; Nerd Font is explicitly opt-in. */
+export type IconStyle = "unicode" | "emoji" | "nerd";
+export const ICON_STYLES: readonly IconStyle[] = ["unicode", "emoji", "nerd"];
 export interface ContextDecisionsSettings {
   enabled: boolean;
+  iconStyle: IconStyle;
   backend: BackendSelection | null;
   globalAllowlist: string[];
   relevance: RelevanceSettings;
@@ -66,7 +70,7 @@ export function defaultToolSettings(): ToolFilterSettings {
     failMode: "closed", maxDescriptionChars: 400, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
 }
 export function defaultSettings(): ContextDecisionsSettings {
-  return { enabled: true, backend: null, globalAllowlist: [], tools: defaultToolSettings(), relevance: {
+  return { enabled: true, iconStyle: "unicode", backend: null, globalAllowlist: [], tools: defaultToolSettings(), relevance: {
     enabled: true, threshold: DEFAULT_RELEVANCE_THRESHOLD, maxSkills: 12, cadence: "prompt", minCandidates: 8,
     failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000, maxDescriptionChars: 400,
     chunkSize: 50, concurrency: 0, pinned: [],
@@ -186,11 +190,15 @@ function parseToolSettings(value: unknown, warnings?: string[]): ToolFilterSetti
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);
   if (!object(value)) throw new SettingsError("Settings must be a JSON object");
-  keys(value, ["enabled", "backend", "globalAllowlist", "relevance", "tools"], warnings);
+  keys(value, ["enabled", "iconStyle", "backend", "globalAllowlist", "relevance", "tools"], warnings);
   const result = defaultSettings();
   if (value.enabled !== undefined) {
     if (typeof value.enabled !== "boolean") throw new SettingsError("enabled must be a boolean");
     result.enabled = value.enabled;
+  }
+  if (value.iconStyle !== undefined) {
+    if (typeof value.iconStyle !== "string" || !(ICON_STYLES as readonly string[]).includes(value.iconStyle)) throw new SettingsError("Invalid iconStyle");
+    result.iconStyle = value.iconStyle as IconStyle;
   }
   if (value.backend !== undefined) result.backend = validateBackendSelection(value.backend);
   if (value.globalAllowlist !== undefined) {
@@ -268,10 +276,10 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
   const next = structuredClone(settings);
   let target: Record<string, unknown>;
   let field: string;
-  if (key === "enabled") { target = next as unknown as Record<string, unknown>; field = key; }
+  if (key === "enabled" || key === "iconStyle") { target = next as unknown as Record<string, unknown>; field = key; }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
-  else throw new SettingsError("Use enabled, a relevance or tools setting; choose a backend in the /decisions dialog");
+  else throw new SettingsError("Use enabled, iconStyle, a relevance or tools setting; choose a backend in the /decisions dialog");
   if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
     throw new SettingsError("Removed setting: skill picking is score-only. Use relevance threshold <0–1>");
   }

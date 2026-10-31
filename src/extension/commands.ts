@@ -13,7 +13,7 @@ import type { AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext, Controller, ExtensionHost } from "./contracts.ts";
 import { selectionLabel } from "./contracts.ts";
 import { createSettingsDialogManager, type DialogLife, type InitialRoute, type ModelRow, type ProviderRow, type SettingsDialogOps } from "./settings-dialog.ts";
-import { ADVANCED_FIELDS, TOOL_FIELDS, describeError, fieldValue, sanitizeTerminalText, toolsSummary, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
+import { ADVANCED_FIELDS, TOOL_FIELDS, describeError, fieldFor, fieldValue, iconStyleText, sanitizeTerminalText, toolsSummary, type AdvancedField, type SettingsGroup } from "./settings-model.ts";
 import type { AllowlistKind } from "./settings-dialog.ts";
 import type { ToolReport } from "./contracts.ts";
 import { readDecisionsHistory, historyReportLines } from "./decisions-history.ts";
@@ -339,6 +339,18 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, group: Se
   }
 }
 const advancedMenu = (controller: Controller, ctx: CommandContext) => fieldsMenu(controller, ctx, "relevance");
+/** RPC counterpart of the dialog's shared "Footer icons" options row: same labels and descriptions, saved as the top-level `iconStyle`. */
+async function iconStyleMenu(controller: Controller, ctx: CommandContext) {
+  const field = fieldFor("general", "iconStyle")!;
+  const options = field.options ?? [];
+  const current = String(fieldValue(controller.getSettings(), "general", "iconStyle"));
+  const choices = options.map((option) => `${option.value} · ${option.label ?? option.value} · ${option.description}`);
+  const picked = await ctx.ui.select(`${field.label} (currently ${current})`, [...choices, "Back"], { signal: ctx.signal });
+  const at = picked === undefined ? -1 : choices.indexOf(picked);
+  if (at < 0) return;
+  await controller.update((settings) => updateSetting(settings, "iconStyle", options[at].value));
+  controller.setStatus(ctx);
+}
 async function settingsMenu(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {
   if (!ctx.hasUI) { controller.report(ctx, JSON.stringify(controller.getSettings(), null, 2)); return; }
   for (;;) {
@@ -350,7 +362,8 @@ async function settingsMenu(controller: Controller, ctx: CommandContext, env?: R
     const globalAllow = `Allow list (Global) · ${settings.globalAllowlist.length}`;
     const projectAllow = `Allow list (Project) · ${project?.names.length ?? 0}`;
     const tools = `Tools & MCP…: ${toolsSummary(settings)}`;
-    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, "Advanced…", tools, "Status", "Done"], { signal: ctx.signal });
+    const icons = `Footer icons: ${iconStyleText(settings)}`;
+    const pick = await ctx.ui.select("Decisions · settings", [toggle, provider, model, globalAllow, projectAllow, "Advanced…", tools, icons, "Status", "Done"], { signal: ctx.signal });
     if (!pick || pick === "Done") return;
     try {
       if (pick === toggle) {
@@ -363,6 +376,7 @@ async function settingsMenu(controller: Controller, ctx: CommandContext, env?: R
       } else if (pick === globalAllow || pick === projectAllow) throw new SettingsError(EDITOR_UNAVAILABLE);
       else if (pick === "Advanced…") await advancedMenu(controller, ctx);
       else if (pick === tools) await fieldsMenu(controller, ctx, "tools");
+      else if (pick === icons) await iconStyleMenu(controller, ctx);
       else if (pick === "Status") await status(controller, ctx, env);
     } catch (error) { controller.report(ctx, safeError(error), "error"); }
   }

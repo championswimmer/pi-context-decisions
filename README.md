@@ -116,6 +116,18 @@ Settings live in `<Pi agent dir>/pi-context-decisions/settings.json`, atomically
 
 Invalid persisted settings are reported explicitly and advertisements fail closed until repaired in the dialog or with a file edit + `/reload`. Unknown read fields are ignored with a warning; writes reject unknown fields and credentials. Failed writes do not change the active configuration.
 
+### Compact footer
+
+Choose **Footer icons** from either `/decisions` tab: **ASCII / Unicode** (default, no patched font), **Emoji**, or **Nerd Font** (requires a Nerd Font terminal font). The saved `iconStyle` is `unicode`, `emoji`, or `nerd`; older settings files default to Unicode.
+
+```text
+◇ ≡ 12/40 ⚙ 18/120      ASCII / Unicode
+🎯 📚 12/40 🔧 18/120    Emoji
+◇ ≡ 12/40 ⚙ 3/15g       Group mode (Unicode)
+```
+
+The leading diamond, target or filter identifies Context Decisions; skills use a list/books/book icon and tools use a gear/wrench. Nerd Font uses the classic Font Awesome filter (`U+F0B0`), book (`U+F02D`) and wrench (`U+F0AD`) glyphs rather than the less portable scroll. Every count is separated from its icon by a space. Skills show **advertised / total invocable skills**, not loaded skill bodies or new additions this round. Tools show **available / total external tools** (built-ins excluded); `g` means MCP-server and extension **groups** instead. Tool counts stay hidden while tool filtering is off. `ready` means no round recorded yet, `setup` means select a model, and `off` means disabled. Short flags such as `!timeout`, `!config`, `!host` (missing host APIs), or `!open` (explicit fail-open fallback) preserve failure visibility. Timings, cache information and detailed reasons remain in `/decisions status`.
+
 ### Decisions history
 
 **`/decisions history`** opens a read-only history route in the same floating dialog (never a second overlay). Newest non-empty batches come first: **↑/↓/PgUp/PgDn** selects a batch, **Enter** shows its names, **↑/↓/PgUp/PgDn/Home/End** scrolls details, **Esc** returns, and **Ctrl+R** on the list refreshes the committed branch snapshot. Empty turns, unsuccessful picks and uncommitted drafts are omitted. RPC gets a notification report; print/JSON writes the same report to stderr, not the protocol stream. Reports are sanitized and capped at 240 lines / 24,000 characters plus a truncation notice; the terminal viewer can browse every stored batch and name.
