@@ -27,6 +27,17 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v1.4.0...v2.0.0
 
+### [v2.5.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.5.0) — Minor release (2026-10-31)
+
+<!-- Release notes generated using configuration in .github/release.yml at v2.5.0 -->
+
+#### What's Changed
+##### Merged pull requests
+* feat: compact footer with configurable icon styles by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/8
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v2.4.0...v2.5.0
+
 ### [v2.4.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.4.0) — Minor release (2026-10-22)
 
 <!-- Release notes generated using configuration in .github/release.yml at v2.4.0 -->
