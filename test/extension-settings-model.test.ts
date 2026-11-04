@@ -54,7 +54,7 @@ test("tool limit metadata follows the mode without changing keys, values, skill 
 });
 
 test("feature fields stay on their tabs; all tuning is Advanced", () => {
-  assert.deepEqual(SKILL_FIELDS.map((field) => field.key), ["enabled", "cadence"]);
+  assert.deepEqual(SKILL_FIELDS.map((field) => field.key), ["enabled"]);
   assert.deepEqual(TOOL_FIELDS.map((field) => field.key), ["enabled", "mode", "cadence"]);
   assert.ok(!ADVANCED_FIELDS.some((field) => field.key === "enabled" || field.key === "cadence"));
   assert.deepEqual(ADVANCED_FIELDS.slice(0, 3).map((field) => field.key), ["threshold", "chunkSize", "maxSkills"]);

@@ -105,13 +105,13 @@ For example: “Review this code” might add a review skill. Later, “Prepare 
 
 ### When does it pick again?
 
-Choose the timing (called *cadence*) separately for skills and tools:
+Skills are picked on submitted prompts. Tool filtering has its own *cadence*:
 
-| Setting | In plain English |
+| Tools setting | In plain English |
 | --- | --- |
 | **Each prompt** (`prompt`, default) | Pick for each new user task, including queued updates, using the task and bounded visible text of the immediately preceding run's final assistant reply when available. |
 | **After tool rounds too** (`tool-round`) | Also add more after completed tool results, before the next model step. Re-score remaining candidates using the task plus bounded recent assistant text and tool calls (including arguments); never tool results or private reasoning. |
-| **First prompt only** (`initial`, tools only) | Keep using the first task. Later tools are checked against it; candidates already considered are not picked again. A failed first pick can retry. |
+| **First prompt only** (`initial`) | Keep using the first task. Later tools are checked against it; candidates already considered are not picked again. A failed first pick can retry. |
 
 New tools can also be checked when they appear or are first called. With no decision model selected, or too few candidates, everything stays available without scoring. A failed decision adds nothing by default; earlier choices stay.
 
@@ -119,10 +119,10 @@ New tools can also be checked when they appear or are first called. With no deci
 <summary>Pi hook names and timing details (optional)</summary>
 
 - **Before a run:** `before_agent_start` runs before Pi saves the submitted user message. Skill and tool selection overlap here.
-- **Between steps:** `turn_end` adds context only after a completed turn when `context.canContinue` is true. The assistant and tool results are already saved; Pi saves additions before inserting queued user text. The loop then returns to the next model request, not to `before_agent_start`. This extension never sets `continue`.
-- **What the coding model sees:** always-allowed/base skills in the system skills section; new skills (with file locations) in hidden **user-role** custom messages; active tool declarations; and a separate names-only notice for indirect tools. Bookkeeping records are not model context. Skills need an active `read` or `bash` tool to be advertised.
+- **Between steps:** tool filtering can add context at `turn_end` only after a completed turn when `context.canContinue` is true. The assistant and tool results are already saved; Pi saves additions before inserting queued user text. The loop then returns to the next model request, not to `before_agent_start`. This extension never sets `continue`.
+- **What the coding model sees:** selected skills (with file locations) in Pi's native system skills section; active tool declarations; and a separate names-only notice for indirect tools. Tool bookkeeping records are not model context. Skills need an active `read` or `bash` tool to be advertised. Pi sends system updates in place only for supported provider/model combinations; otherwise a changed leading prompt can invalidate cache. Cache hits are not guaranteed.
 - **At execution:** `tool_call` checks direct and nested calls. Eligible unscored tools can trigger one shared decision round. MCP resource calls are routed by their local `server` argument; unscoped resource listing is blocked while filtering is on. No call arguments reach the decision model.
-- **Limits:** late-connecting direct tools can appear in the first request, but calls are still checked. Enabling mid-session preserves registered tools. Compaction can temporarily hide skill additions until they are re-delivered without scoring; tool notices are not re-delivered.
+- **Limits:** late-connecting direct tools can appear in the first request, but calls are still checked. Enabling mid-session preserves registered tools. Pi owns system-section persistence and compaction; tool notices are not re-delivered.
 
 See [skill picking](docs/skill-picking.md) and [tool-filtering limitations](docs/tool-filtering.md#limits-stated-plainly) for the full contracts.
 

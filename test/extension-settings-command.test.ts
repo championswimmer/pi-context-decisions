@@ -211,7 +211,7 @@ test("printed status has short, separated sections and the dialog uses the same 
   assert.doesNotMatch(report, /\{"|Top models|token window/);
 
   const run = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down);
+  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down);
   dialog.handleInput!(KEY.enter);
   await h.until(dialog, /Credentials:/);
   // Collect the scrollable view: status stays readable even in a narrow dialog.
@@ -232,7 +232,7 @@ test("printed status has short, separated sections and the dialog uses the same 
 test("dialog work never reads ctx.signal (the agent-run signal), even through status, models and ranking", async (t) => {
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   const run = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 2; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  for (let i = 0; i < 1; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/);
@@ -240,7 +240,7 @@ test("dialog work never reads ctx.signal (the agent-run signal), even through st
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
   dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Shared model
   await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
-  dialog.handleInput!("\t"); for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
+  dialog.handleInput!("\t"); for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
   await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.reads.signal, 0, "the dialog must own its signal");
 });
@@ -250,7 +250,7 @@ test("session_shutdown while open resolves the handler, aborts ranking and never
   let resolved = false;
   const run = h.command("").then(() => { resolved = true; });
   const dialog = await h.dialog();
-  for (let i = 0; i < 2; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  for (let i = 0; i < 1; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await waitFor(() => h.decisionSignals[0], "pending ranking request");

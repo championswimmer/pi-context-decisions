@@ -36,7 +36,7 @@ test("nonrouter Pi selections remain independent; direct versions and fields val
 test("partial config receives defaults, unknown read fields warn but cannot be saved", () => {
   const warnings: string[] = [];
   const parsed = parseSettings({ enabled: false, relevance: { cadence: "tool-round", mystery: 1 }, extra: 1 }, warnings);
-  assert.equal(parsed.relevance.enabled, false); assert.equal(parsed.relevance.cadence, "tool-round"); assert.equal(parsed.decision.threshold, 0.375); assert.equal(warnings.length, 3);
+  assert.equal(parsed.relevance.enabled, false); assert.equal(Object.hasOwn(parsed.relevance, "cadence"), false); assert.equal(parsed.decision.threshold, 0.375); assert.equal(warnings.length, 3);
   assert.throws(() => parseSettings({ ...defaultSettings(), mystery: 1 }), SettingsError);
 });
 test("invalid settings cannot enable unbounded disclosure or invalid fail-open", () => {
@@ -88,9 +88,9 @@ test("oversized valid-shaped settings cannot be written as an unreadable file", 
   const settings = defaultSettings(); settings.relevance.pinned = Array.from({ length: 1000 }, (_, i) => `${"a".repeat(60)}${String(i).padStart(4, "0")}`);
   await assert.rejects(saveSettings(settings, path), /exceeds 64 KiB/);
 });
-test("defaults: normalized threshold 0.375, prompt cadence, score-only shape with no legacy keys", () => {
+test("defaults: normalized threshold 0.375, score-only shape with no legacy keys", () => {
   const { relevance, decision } = defaultSettings();
-  assert.equal(decision.threshold, 0.375); assert.equal(relevance.cadence, "prompt"); assert.equal(relevance.maxSkills, 12); assert.equal(decision.chunkSize, 50);
+  assert.equal(decision.threshold, 0.375); assert.equal(Object.hasOwn(relevance, "cadence"), false); assert.equal(relevance.maxSkills, 12); assert.equal(decision.chunkSize, 50);
   for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.equal(Object.hasOwn(relevance, removed), false, removed);
 });
 test("decimal thresholds persist, old settings receive defaults, and bad bounds/types are rejected", async (t) => {
@@ -107,10 +107,23 @@ test("decimal thresholds persist, old settings receive defaults, and bad bounds/
   assert.equal(updateSetting(settings, "decision.threshold", ".5").decision.threshold, 0.5);
   assert.equal(updateSetting(settings, "decision.threshold", "1").decision.threshold, 1);
 });
-test("cadence is a validated enum and every picker control updates through the shared path", () => {
+test("retired skill cadence is validated on load, omitted on save, and cannot be set", async (t) => {
+  const path = join(await directory(t), "settings.json");
+  for (const cadence of ["prompt", "tool-round"]) {
+    const legacy = { relevance: { cadence }, tools: { cadence: "tool-round" } };
+    await writeFile(path, JSON.stringify(legacy));
+    const loaded = await loadSettings(path);
+    assert.equal(loaded.error, undefined);
+    assert.equal(Object.hasOwn(loaded.settings.relevance, "cadence"), false);
+    assert.equal(loaded.settings.tools.cadence, "tool-round");
+    await saveSettings(loaded.settings, path);
+    assert.equal(Object.hasOwn(JSON.parse(await readFile(path, "utf8")).relevance, "cadence"), false);
+  }
+  assert.throws(() => parseSettings({ relevance: { cadence: "every-token" } }), SettingsError);
+  assert.throws(() => updateSetting(defaultSettings(), "relevance.cadence", "prompt"), SettingsError);
+});
+test("picker controls update through the shared path", () => {
   const settings = defaultSettings();
-  assert.equal(updateSetting(settings, "relevance.cadence", "tool-round").relevance.cadence, "tool-round");
-  assert.throws(() => updateSetting(settings, "relevance.cadence", "every-token"), SettingsError);
   assert.equal(updateSetting(settings, "decision.chunkSize", "10").decision.chunkSize, 10);
   assert.equal(updateSetting(settings, "relevance.maxSkills", "3").relevance.maxSkills, 3);
   assert.equal(updateSetting(settings, "relevance.maxSkills", "0").relevance.maxSkills, 0);
@@ -183,7 +196,7 @@ test("the shipped example config parses without warnings and uses only the new s
   const text = await readFile(new URL("../examples/skill-picker-demo/config/pi-context-decisions.example.json", import.meta.url), "utf8");
   const warnings: string[] = [];
   const parsed = parseSettings(JSON.parse(text), warnings);
-  assert.deepEqual(warnings, []); assert.equal(parsed.decision.threshold, 0.5); assert.equal(parsed.relevance.cadence, "prompt");
+  assert.deepEqual(warnings, []); assert.equal(parsed.decision.threshold, 0.5); assert.equal(Object.hasOwn(parsed.relevance, "cadence"), false);
   for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.doesNotMatch(text, new RegExp(`"${removed}"`));
 });
 

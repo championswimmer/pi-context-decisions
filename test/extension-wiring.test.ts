@@ -4,8 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BeforeAgentStartEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { advertised, deltaMessages, simHost } from "./helpers/pi-sim.ts";
-import { readLedger } from "../src/extension/skill-ledger.ts";
+import { advertised, simHost } from "./helpers/pi-sim.ts";
 import contextDecisions from "../src/extension.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionDependencies, ExtensionRegistry } from "../src/extension/contracts.ts";
@@ -84,8 +83,7 @@ test("startup defaults perform no auth or inference and do not mutate advertisem
   const e = event(); const original = e.systemPromptOptions.skills;
   await h.emit("before_agent_start", e, c.ctx);
   assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.equal(c.statuses[0], "◇ setup");
-  assert.deepEqual(deltaMessages(h.session), [], "unconfigured advertises everything through the base: no delta");
-  assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "the branch remembers that every skill was advertised");
+  assert.ok(h.session.getBranch().some((entry) => entry.type === "message" && entry.message?.role === "system" && String(entry.message.sections?.skills).includes("<name>skill-0</name>")), "Pi commits the advertised inventory in the skills section");
   await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions\n  Model: not configured/);
 });
 test("RPC native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
@@ -96,10 +94,10 @@ test("RPC native selection persists, filters through real core, only skills muta
   h.pi.on("before_agent_start", (evt) => { observed = evt.systemPromptOptions.skills; });
   await h.emit("before_agent_start", e, c.ctx);
   assert.equal(c.calls(), 1); assert.equal(observed, e.systemPromptOptions.skills);
-  // The system prompt carries only the stable base (no pins); the selection arrives as an append-only delta.
-  assert.deepEqual(e.systemPromptOptions.skills, []);
+  assert.deepEqual(e.systemPromptOptions.skills.map((skill) => skill.name), ["skill-0"]);
   assert.deepEqual(advertised(h, original, e.systemPromptOptions.skills), ["skill-0"]);
-  assert.equal(deltaMessages(h.session).length, 1);
+  assert.ok(h.session.getBranch().some((entry) => entry.type === "message" && entry.message?.role === "system" && String(entry.message.sections?.skills).includes("<name>skill-0</name>")), "selected skills are committed through Pi's system section");
+  assert.ok(!h.session.getBranch().some((entry) => entry.type === "custom_message" && entry.customType === "context-decisions-skills"));
   assert.equal(c.statuses.at(-1), "◇ ≡ 1/8", "footer shows advertised/full inventory, not round latency or newly scored count");
   assert.equal(e.systemPrompt, "unchanged");
   for (const key of Object.keys(before).filter((key) => key !== "skills") as (keyof typeof before)[]) assert.equal(e.systemPromptOptions[key], before[key]);
@@ -131,7 +129,7 @@ test("disable, relevance-off, unconfigured, below-minimum and empty prompt make 
   const h = await setup(t, {}, true); const c = context();
   await setSetting(h.command, c.ctx, "enabled"); const disabled = event(); const original = disabled.systemPromptOptions.skills;
   await h.emit("before_agent_start", disabled, c.ctx); assert.equal(disabled.systemPromptOptions.skills, original);
-  assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "disabled advertises everything and the branch remembers it");
+  assert.ok(h.session.getBranch().some((entry) => entry.type === "message" && entry.message?.role === "system" && String(entry.message.sections?.skills).includes("<name>skill-0</name>")), "disabled mode commits the complete inventory to Pi's system section");
   await setSetting(h.command, c.ctx, "enabled"); await setSetting(h.command, c.ctx, "relevance.enabled"); await h.emit("before_agent_start", event(), c.ctx);
   await setSetting(h.command, c.ctx, "relevance.enabled"); await h.emit("before_agent_start", event(2), c.ctx);
   const empty = event(); empty.prompt = " "; await h.emit("before_agent_start", empty, c.ctx);
@@ -200,7 +198,7 @@ test("provider failure hides advertisements by default, explicitly configured op
   assert.equal(c.statuses.at(-1), "◇ ≡ 0/8 !network"); assert.doesNotMatch(JSON.stringify(h.messages), /SECRET-FIXTURE|private prompt/);
   await setSetting(h.command, c.ctx, "decision.failMode", "open"); const open = event(); const original = open.systemPromptOptions.skills; await h.emit("before_agent_start", open, c.ctx);
   assert.deepEqual(advertised(h, original, open.systemPromptOptions.skills), original.map((skill) => skill.name), "fail-open adds every remaining skill, once"); assert.equal(c.statuses.at(-1), "◇ ≡ 8/8 !open");
-  assert.equal(deltaMessages(h.session).length, 1);
+  assert.ok(!h.session.getBranch().some((entry) => entry.type === "custom_message" && entry.customType === "context-decisions-skills"));
 });
 test("malformed decisions and missing current native registry entries fail closed", async (t) => {
   const h = await setup(t, {}, true); const c = context({ async classify() { return { answers: {}, stopReason: "stop" }; } }); const e = event();

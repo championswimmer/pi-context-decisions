@@ -125,24 +125,6 @@ test("with tool filtering off, the prompt-time skill round alone holds the worki
   assert.deepEqual(messages(calls), [DECIDING_CONTEXT_LABEL, undefined], "the skill pass restores Pi's default message when it settles");
 });
 
-test("with tool filtering off, the turn_end skill round alone holds the working row", async (t) => {
-  const h = await toolSetup(t, { skills: true, tools: { enabled: false } });
-  const calls: RowCall[] = [];
-  withWorkingRow(h.ctx, calls);
-  h.skillList.push(skill("skill-one"), skill("skill-two"));
-  await h.start("first task");
-  const afterPrompt = calls.length;
-  let release!: () => void;
-  h.behavior.gate = new Promise<void>((resolve) => { release = resolve; });
-  const before = h.requests.length;
-  const ending = h.end({ pendingMessages: [{ role: "user", content: "second task", timestamp: 7 }] });
-  for (let attempt = 0; attempt < 200 && h.requests.length === before; attempt++) await tick();
-  assert.equal(h.requests.length, before + 1, "the queued user text starts a turn_end skill round");
-  assert.deepEqual(calls.slice(afterPrompt), [["message", DECIDING_CONTEXT_LABEL], ["visible", true]], "the turn_end skill round shows the row on its own");
-  release();
-  await ending;
-  assert.deepEqual(messages(calls.slice(afterPrompt)), [DECIDING_CONTEXT_LABEL, undefined], "and restores it when it settles");
-});
 
 test("a lazy single-flight decision for a tool call shows the working row while it scores", async (t) => {
   const h = await toolSetup(t, { extra: [A], scores: { ext_a: 2, mcp__srv__x: 2 } });

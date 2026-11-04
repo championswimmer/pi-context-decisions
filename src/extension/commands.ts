@@ -177,7 +177,7 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
     ...(error ? ["", `Settings error: ${error}`, "  Repair the settings file or choose a model in /decisions."] : []),
     ...(project?.error ? ["", `Project allowlist warning: ${project.error}`] : []),
     "",
-    `Skills: ${r.enabled ? "on" : "off"} · picker ${r.cadence}`,
+    `Skills: ${r.enabled ? "on" : "off"} · picker prompt`,
     `  Limits: max ${r.maxSkills} added per round · minimum inventory ${r.minCandidates}`,
     `  Always allowed: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0}`,
     "  Additive advertisements; explicit skill access is unchanged.",
@@ -207,7 +207,7 @@ function lastStatusLines(last: ReturnType<Controller["getLastDecision"]> | Retur
     `  Last (${last.trigger ?? "prompt"}): ${last.reason}${last.errorCode ? ` (${last.errorCode})` : ""}`,
     `    Added ${last.kept} of ${last.candidates} candidates · ${last.cached ? "cached scores (no call)" : `${last.latencyMs}ms`}`,
     ...("available" in last ? [`    Available: ${last.available}/${last.external} external · ${last.withheld} withheld`]
-      : [last.advertised === undefined ? "" : `    Advertised: ${last.advertised}${last.redelivered ? ` · ${last.redelivered} re-delivered` : ""}`].filter(Boolean)),
+      : [last.advertised === undefined ? "" : `    Advertised: ${last.advertised}`].filter(Boolean)),
     ...(tokens.length ? [`    Usage: ${tokens.join(" · ")}`] : []),
   ];
 }

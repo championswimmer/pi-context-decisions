@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { pickerEntries } from "../src/extension/commands.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
-import { defaultSettings, loadSettings, saveSettings, updateSetting } from "../src/settings.ts";
+import { defaultSettings, SettingsError, loadSettings, saveSettings, updateSetting } from "../src/settings.ts";
 import { setModel, setSetting } from "./helpers/settings-ui.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
 
@@ -190,21 +190,21 @@ test("request-time Pi key is honoured when the cached OAuth inventory is empty o
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/);
 });
 
-test("RPC Advanced edits shared tuning while Skills owns cadence; cadence is a select, not free text, and legacy keys are refused", async (t) => {
+test("RPC Advanced edits shared tuning while Skills no longer exposes cadence", async (t) => {
   const h = await fixture(t, { ui: true });
   h.inputs.push("0.625");
-  await h.menu("Advanced", row("decision.threshold:"), "Back", "Skills", row("relevance.cadence:"), row("tool-round"), "Back");
+  await h.menu("Advanced", row("decision.threshold:"), "Back", "Skills", "Back");
   const advanced = h.dialogs.find((dialog) => /Advanced/.test(dialog.title))!.options;
   assert.deepEqual(advanced.slice(2, 5).map((label) => label.split(":")[0]), ["decision.threshold", "decision.chunkSize", "relevance.maxSkills"]);
   assert.ok(advanced.includes("decision.threshold: 0.375")); assert.ok(!advanced.some((label) => label.startsWith("relevance.cadence")));
+  const skills = h.dialogs.find((dialog) => /Skills/.test(dialog.title))!.options;
+  assert.ok(!skills.some((label) => label.startsWith("relevance.cadence")));
   const settings = (await loadSettings(h.path)).settings;
-  assert.equal(settings.decision.threshold, 0.625); assert.equal(settings.relevance.cadence, "tool-round");
-  assert.ok(h.dialogs.some((dialog) => /Run picker/.test(dialog.title) && dialog.options.some((option) => option.startsWith("prompt")) && dialog.options.some((option) => option.startsWith("tool-round"))));
-  // Legacy keys exist only as load-time migration inputs; the shared validator refuses them as settings.
+  assert.equal(settings.decision.threshold, 0.625); assert.equal(Object.hasOwn(settings.relevance, "cadence"), false);
   for (const legacy of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.throws(() => updateSetting(defaultSettings(), `relevance.${legacy}`, "1"), /Removed setting.*threshold/, legacy);
-  await h.set("relevance.cadence", "every-token"); assert.equal((await loadSettings(h.path)).settings.relevance.cadence, "tool-round", "no option matches: nothing changes");
+  assert.throws(() => updateSetting(defaultSettings(), "relevance.cadence", "tool-round"), SettingsError);
   await h.set("relevance.maxSkills", "3"); await h.set("decision.chunkSize", "10");
   assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 10);
-  await h.command("status"); assert.match(h.messages.at(-1)!, /Skills: on · picker tool-round\n  Limits: max 3 added per round/);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Skills: on · picker prompt\n  Limits: max 3 added per round/);
   assert.match(h.messages.at(-1)!, /Decision settings \(Advanced\)\n  Threshold: 0.625 \(0–1\)/);
 });

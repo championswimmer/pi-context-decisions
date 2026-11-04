@@ -51,10 +51,6 @@ const RELEVANCE_FIELDS: readonly AdvancedField[] = [
   { key: "threshold", group: "decision", label: "Relevance threshold", kind: "decimal", hint: "0–1, inclusive. Skills, tools and groups qualify at or above this score. 0.375 is the default; 1 keeps only perfect scores." },
   { key: "chunkSize", group: "decision", label: "Shard size", kind: "int", hint: "1–50 candidates per decision request; every shard of the remaining candidates is evaluated." },
   { key: "maxSkills", group: "relevance", label: "Skills · Max added per round", kind: "int", hint: "0–1000 new skills added by one picking round, best first across all shards. Always-allowed and already-added skills do not count." },
-  { key: "cadence", group: "relevance", label: "Run picker", kind: "options", hint: "When the picker looks for more skills to add. Skills are only ever added, never removed.", options: [
-    { value: "prompt", description: "On each submitted prompt, and for queued steering/follow-up messages (default)." },
-    { value: "tool-round", description: "Also after each completed tool round: adds the next-best skills for the same task. No tool names, arguments or results are sent." },
-  ] },
   { key: "failMode", group: "decision", label: "On failure", kind: "options", hint: "Shared failure policy for skill and tool picking; configuration errors and aborts always fail closed.", options: [
     { value: "closed", description: "Add no new skills, tools or groups when scoring fails (default, recommended)." },
     { value: "open", description: "WARNING: every remaining skill, tool or group is added when scoring fails. Applies framework-wide." },
@@ -84,7 +80,7 @@ const ALL_TOOL_FIELDS: readonly AdvancedField[] = [
   { key: "maxAdded", group: "tools", label: "Tools · Max added per round", kind: "int", hint: "0–1000 new tools (or whole servers/extensions in group mode) per round, best first. Separate from skill advertisements; allowlisted and already-available ones do not count." },
   { key: "minCandidates", group: "tools", label: "Tools · Minimum candidates", kind: "int", hint: "0–1000. Tool gating starts at zero by default. Below this inventory size, no scoring and every tool stays available." },
 ];
-export const SKILL_FIELDS = RELEVANCE_FIELDS.filter((field) => field.key === "enabled" || field.key === "cadence");
+export const SKILL_FIELDS = RELEVANCE_FIELDS.filter((field) => field.key === "enabled");
 export const TOOL_FIELDS = ALL_TOOL_FIELDS.filter((field) => ["enabled", "mode", "cadence"].includes(field.key));
 export const ADVANCED_FIELDS = [
   ...RELEVANCE_FIELDS.filter((field) => !SKILL_FIELDS.includes(field)),

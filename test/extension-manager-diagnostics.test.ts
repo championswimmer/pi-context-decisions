@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createSyntheticSourceInfo, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { defaultSettings } from "../src/settings.ts";
 import { simHost } from "./helpers/pi-sim.ts";
@@ -82,7 +82,7 @@ test("session start/shutdown reset the cached host; sends stay bounded", async (
   // A warning before another start must not use the previous session's cached miss.
   hosted = true;
   await h.emit("before_agent_start", { type: "before_agent_start", messageType: "user", prompt: "task",
-    systemPromptOptions: { skills: [] } }, { ...ctx, cwd: "/fixture" });
+    systemPromptOptions: { skills: [{ name: "fixture", description: "Fixture", filePath: "/fixture/SKILL.md", baseDir: "/fixture", sourceInfo: createSyntheticSourceInfo("/fixture/SKILL.md", { source: "sdk" }), disableModelInvocation: false }] } }, { ...ctx, cwd: "/fixture" });
   assert.equal(probes, 3, "shutdown resets the cached miss even before another start");
   assert.equal(reports.at(-1)!.message, "SAFE_PROJECT");
   warning = "SAFE_THIRD"; await start(); assert.equal(probes, 4);

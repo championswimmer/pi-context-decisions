@@ -13,10 +13,9 @@ import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
 import type { ContextDecisionsSettings } from "../settings.ts";
 import { defaultSettings, loadSettings, parseSettings, saveSettings } from "../settings.ts";
 import { registerCommands } from "./commands.ts";
-import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type LedgerState, type SkillsDelta } from "./skill-ledger.ts";
+import { advertisedSkillNames } from "./skill-state.ts";
 import type { Controller, ExtensionDependencies, ExtensionHost, LastDecision } from "./contracts.ts";
-import { queuedUserTask } from "./queued-task.ts";
-import { decisionActivity, readPreviousFinalReply } from "./decision-activity.ts";
+import { readPreviousFinalReply } from "./decision-activity.ts";
 import { createToolFilter } from "./tool-filter.ts";
 import { beginDecisionLoader, endDecisionLoader, resetDecisionLoader } from "./decision-loader.ts";
 import { skillFooter } from "./footer-status.ts";
@@ -45,13 +44,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   const projectWarnings = new Set<string>();
   /** Scores for the current task: later rounds for the same task add the next-best skills without a call. */
   const scoreCache = new RelevanceScoreCache();
-  /** Full Pi skill objects from the latest before_agent_start; deltas need their canonical locations. */
+  /** Full Pi skill objects from the latest prompt for inventory and status. */
   let skillRefs = new Map<string, Skill>();
-  /** Latest bounded user task. Never assistant text, tool names, arguments or results. */
-  let runTask: string | undefined;
-  let failedKey: string | undefined;
-  const seenQueued = new Set<string>();
-  let busy = false;
   let toolsStatusShown = false;
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const toolFilter = createToolFilter({
@@ -134,7 +128,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         const next = parseSettings(change(structuredClone(settings)));
         await (deps.save ?? saveSettings)(next, deps.settingsPath);
         abortPending(); generation++;
-        settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); failedKey = undefined; toolFilter.invalidate();
+        settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); toolFilter.invalidate();
       });
       writeQueue = operation.catch(() => {});
       await operation;
@@ -165,7 +159,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     managerNoticeShown = false;
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
     abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
-    scoreCache.clear(); skillRefs = new Map(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset(true);
+    scoreCache.clear(); skillRefs = new Map(); toolFilter.reset(true);
     await projectWriteQueue;
     await writeQueue;
     await loading;
@@ -180,7 +174,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   pi.on("session_tree", () => {
     // Navigating the session tree changes the active branch: an in-flight pass was computed against the old one.
     // Everything branch-derived is re-read from the new branch at the next boundary; only transient state is dropped here.
-    abortPending(); generation++; last = undefined; scoreCache.clear(); runTask = undefined; failedKey = undefined; seenQueued.clear(); toolFilter.reset();
+    abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.reset();
   });
   pi.on("session_shutdown", (_event, ctx) => {
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
@@ -194,10 +188,6 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
     const names = new Set<string>();
     return skills.filter((skill) => !names.has(skill.name) && !!names.add(skill.name));
-  };
-  const ledgerFor = (ctx: ExtensionContext): LedgerState => {
-    try { return readLedger(ctx.sessionManager); }
-    catch { return { base: new Set(), added: new Set(), visible: new Set(), lost: [] }; }
   };
   /** `skills` is gated by the skill switch, `tools` by the tool-filtering switch: the two features are independent. */
   function resolveClient(ctx: ExtensionContext, current: ContextDecisionsSettings, responses: DecisionResponse[], feature: "skills" | "tools" = "skills"): { client: RelevanceClient | null; error?: string } {
@@ -227,195 +217,94 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const usage = sumUsage(responses);
     last = { ...fields, latencyMs: fields.latencyMs ?? round?.latencyMs ?? Date.now() - started, ...(usage ? { usage } : {}) };
   };
-  /**
-   * Additive advertisement. The system prompt carries only a STABLE base (always-allowed skills, or the whole
-   * inventory once filtering was off/unconfigured/below minimum on this branch). New skills are appended as
-   * user-role custom messages built with Pi's public formatSkillsForPrompt, never removed, never re-scored.
-   */
-  /**
-   * The tool handler is registered FIRST and starts the skill pass before awaiting its own, so both decision calls are in flight
-   * together (two handlers are needed for two hidden messages). The skill handler then awaits that same promise.
-   */
-  let skillPass: Promise<{ message: SkillsDelta } | undefined> | undefined;
-  const toolsActive = () => settings.tools.enabled;
+  // Both decisions start together; Pi receives the tool message and the mutated native skills options.
   pi.on("before_agent_start", async (event, ctx) => {
     warnManagerCapability(ctx);
-    skillPass = undefined;
     await controller.ensureLoaded();
-    if (toolsActive() || settingsError) {
-      skillPass = skillBeforeAgentStart(event, ctx);
-      skillPass.catch(() => {}); // surfaced by the skill handler below; never an unhandled rejection here
+    const skills = skillBeforeAgentStart(event, ctx);
+    const tools = toolFilter.beforeAgentStart(event as never, ctx);
+    const [, result] = await Promise.all([skills, tools]);
+    return result;
+  });
+  async function skillBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> {
+    const available = uniqueByName(event.systemPromptOptions.skills);
+    inventorySnapshot = toScopedSkills(available);
+    if (!available.length && !skillRefs.size) return;
+    let committed: Set<string>;
+    try { committed = advertisedSkillNames(ctx.sessionManager); }
+    catch {
+      // An unreadable branch cannot prove that any skill was already advertised.
+      event.systemPromptOptions.skills = available.filter((skill) => skill.disableModelInvocation);
+      record(undefined, { reason: "fail-closed", candidates: available.length, kept: 0, errorCode: "history", trigger: "prompt" }, [], Date.now());
+      controller.setStatus(ctx);
+      return;
     }
-    return toolFilter.beforeAgentStart(event as never, ctx);
-  });
-  pi.on("before_agent_start", async (event, ctx) => {
-    const started = skillPass; skillPass = undefined;
-    return started ?? skillBeforeAgentStart(event, ctx);
-  });
-  async function skillBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<{ message: SkillsDelta } | undefined> {
-    const inventory = uniqueByName(event.systemPromptOptions.skills);
-    inventorySnapshot = toScopedSkills(event.systemPromptOptions.skills);
-    skillRefs = new Map(inventory.map((skill) => [skill.name, skill]));
-    await controller.ensureLoaded();
-    // Runs started by a custom message (pi.sendMessage with triggerTurn) have no user prompt: base and re-delivery only.
+    // Keep committed descriptions stable during this extension lifetime. On reload only skills
+    // still in Pi's inventory can be reconstructed from their names.
+    const retained = [...skillRefs.values()].filter((skill) => committed.has(skill.name));
+    const inventory = uniqueByName([...retained, ...available]);
+    skillRefs = new Map(inventory.map((skill) => [skill.name, structuredClone(skill)]));
     const task = (event as { messageType?: unknown }).messageType === "custom" || typeof event.prompt !== "string" ? "" : taskWithoutExpandedSkill(event.prompt);
-    runTask = task.trim() ? task : undefined;
-    failedKey = undefined;
     const currentGeneration = generation;
     const current = structuredClone(settings);
-    const previousReply = task.trim() && current.relevance.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager) : undefined;
+    const previousReply = task.trim() ? readPreviousFinalReply(ctx.sessionManager) : undefined;
     const abort = new AbortController();
     pending.add(abort);
-    busy = true;
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
     const responses: DecisionResponse[] = [];
     const started = Date.now();
+    const invocable = inventory.filter((skill) => !skill.disableModelInvocation);
+    const apply = (names: ReadonlySet<string>) => {
+      const selected = inventory.filter((skill) => skill.disableModelInvocation || names.has(skill.name));
+      if (JSON.stringify(selected) !== JSON.stringify(event.systemPromptOptions.skills)) {
+        event.systemPromptOptions.skills = selected;
+      }
+    };
     try {
-      // Pi omits the skills section when neither `read` nor `bash` is declared, so nothing is exposed then:
-      // record no base at all (a later run with a reader must still score and advertise those skills).
-      const reader = skillReader(pi.getActiveTools());
-      const inventoryNames = new Set(inventory.map((skill) => skill.name));
-      const invocable = inventory.filter((skill) => !skill.disableModelInvocation);
-      const setSystemSkills = (names: ReadonlySet<string>) => {
-        if (!reader) return; // no section is rendered; leave Pi's array alone
-        const base = inventory.filter((skill) => skill.disableModelInvocation || names.has(skill.name));
-        // Nothing to hide: keep Pi's own array (and its prompt section) untouched.
-        if (base.length !== event.systemPromptOptions.skills.length) event.systemPromptOptions.skills = base;
-      };
-      const pinned = await pinsFor(ctx, current, event.systemPromptOptions.skills, true);
-      /**
-       * Nothing may be recorded or applied for a superseded pass (settings/allowlist save, session replacement,
-       * branch navigation) or a cancelled run: guard BEFORE any base mutation after an await. The system skills
-       * come from the CURRENT branch's base plus the effective always-allowed skills; no entry is appended, so
-       * nothing from the old pass can leak onto the new branch.
-       */
+      const pinned = await pinsFor(ctx, current, inventory, true);
       const superseded = () => currentGeneration !== generation || signal.aborted;
-      const supersededBase = () => new Set([...ledgerFor(ctx).base, ...pinned]);
       const bail = () => {
-        setSystemSkills(supersededBase());
-        // A cancelled run (same generation) is still reported as aborted; a superseded one is silent.
+        // Never expose unselected inventory when a concurrent operation cancels this pass.
+        apply(new Set([...committed, ...pinned]));
         if (currentGeneration !== generation) return;
         record(undefined, { reason: "fail-closed", candidates: invocable.length, kept: 0, errorCode: "aborted", trigger: "prompt" }, responses, started);
         controller.setStatus(ctx);
       };
       if (superseded()) { bail(); return; }
-      const ledger = ledgerFor(ctx);
-      const growBase = (names: Iterable<string>, pinnedNames = false) => {
-        if (!reader) return;
-        const fresh = [...new Set(names)].filter((name) => inventoryNames.has(name) && !ledger.base.has(name));
-        if (!fresh.length) return;
-        pi.appendEntry(SKILLS_BASE_ENTRY, pinnedNames ? { v: 1, names: fresh, pinned: true } : { v: 1, names: fresh });
-        for (const name of fresh) ledger.base.add(name);
-      };
-      const applyBase = () => setSystemSkills(ledger.base);
-      growBase(pinned, true); // allowlist removals never shrink the base: advertisements are only ever added
-      const lostSkills = reader ? ledger.lost.flatMap((name) => skillRefs.get(name) ?? []) : [];
+      let advertised: Set<string>;
+      try { advertised = advertisedSkillNames(ctx.sessionManager); }
+      catch { apply(new Set(pinned)); return; }
+      for (const name of pinned) advertised.add(name);
       const { client, error: configError } = resolveClient(ctx, current, responses);
       let reason: LastDecision["reason"] = "skipped";
       let errorCode: string | undefined;
       let round: SkillAdditionResult<Skill> | undefined;
-      const pinnedSet = new Set(pinned);
+      const hasReader = pi.getActiveTools().some((name) => name === "read" || name === "bash");
       if (configError) { reason = "fail-closed"; errorCode = "config"; }
       else if (!current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
-        // Today's semantics, made additive: disabled/unconfigured/below-minimum keep EVERYTHING advertised, and
-        // the branch remembers that, so enabling filtering later can never drop a skill the model already saw.
-        growBase(invocable.map((skill) => skill.name));
-      } else if (task.trim() && reader) {
-        const remaining = invocable.filter((skill) => !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
-        // Pi's own braille working row shows "Deciding Context" for as long as the round is in flight.
+        for (const skill of invocable) advertised.add(skill.name);
+      } else if (task.trim() && hasReader) {
+        const remaining = invocable.filter((skill) => !advertised.has(skill.name));
         beginDecisionLoader(ctx);
         try {
           round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, previousReply }, { store: scoreCache, key: cacheKey(task, current, previousReply || undefined) });
         } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;
-        if (round.errorCode && round.errorCode !== "aborted") failedKey = cacheKey(task, current);
       }
       if (superseded()) { bail(); return; }
-      applyBase();
-      // Re-check cancellation right before committing: cached scores or restoration must not slip past an abort.
-      const cancelled = signal.aborted;
-      const added = cancelled ? [] : round?.added ?? [];
-      const delta = reader && !cancelled ? buildSkillsDelta(added, lostSkills, reader, round?.picks) : undefined;
-      const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
+      for (const skill of round?.added ?? []) advertised.add(skill.name);
+      apply(advertised);
       record(round, {
-        reason, candidates: round?.candidates ?? invocable.length, kept: added.length,
-        advertised: invocable.filter((skill) => advertised.has(skill.name)).length, redelivered: delta?.details.redelivered.length ?? 0,
+        reason, candidates: round?.candidates ?? invocable.length, kept: round?.added.length ?? 0,
+        advertised: hasReader ? invocable.filter((skill) => advertised.has(skill.name)).length : committed.size,
         ...(round?.cached ? { cached: true } : {}), trigger: "prompt", ...(errorCode ? { errorCode } : {}),
       }, responses, started);
       controller.setStatus(ctx);
       if (errorCode && errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${reason} (${errorCode}); /decisions status`, "warning");
-      return delta ? { message: delta } : undefined;
-    } finally { pending.delete(abort); busy = false; }
+    } finally { pending.delete(abort); }
   }
-  /**
-   * Between model requests inside a run. Only adds: re-delivers skills that compaction/edits removed from model
-   * context (no scoring), and, for queued steering/follow-up user text or the opt-in `tool-round` cadence after
-   * completed tool calls, adds qualifying remaining skills. Tool-round scoring includes bounded assistant activity;
-   * tool results and thinking are excluded. The loop is never continued here.
-   */
-  pi.on("turn_end", async (event, ctx) => {
-    if (busy || event.outcome !== "completed" || event.context?.canContinue !== true) return;
-    const reader = skillReader(pi.getActiveTools());
-    if (!reader) return;
-    await controller.ensureLoaded();
-    const queued = queuedUserTask(event.context.pendingMessages);
-    const fresh = queued && !seenQueued.has(queued.id) ? queued : undefined;
-    const current = structuredClone(settings);
-    const toolRound = current.relevance.cadence === "tool-round" && event.toolResults.length > 0 && runTask !== undefined;
-    const ledger = ledgerFor(ctx);
-    const lostSkills = ledger.lost.flatMap((name) => skillRefs.get(name) ?? []);
-    if (fresh) { seenQueued.add(fresh.id); runTask = fresh.text; failedKey = undefined; }
-    const task = fresh?.text ?? (toolRound ? runTask : undefined);
-    const activity = !fresh && toolRound ? decisionActivity(ctx.sessionManager.getBranch()) : [];
-    const previousReply = fresh && current.relevance.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager, true) : undefined;
-    if (!task && !lostSkills.length) return;
-    const currentGeneration = generation;
-    const abort = new AbortController();
-    pending.add(abort);
-    busy = true;
-    const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
-    const responses: DecisionResponse[] = [];
-    const started = Date.now();
-    try {
-      let round: SkillAdditionResult<Skill> | undefined;
-      const key = task ? cacheKey(task, current, activity.length ? activity : previousReply) : undefined;
-      if (task && key !== undefined && (fresh || cacheKey(task, current) !== failedKey)) {
-        const { client } = resolveClient(ctx, current, responses);
-        if (client) {
-          const skills = [...skillRefs.values()];
-          const pinnedSet = new Set(await pinsFor(ctx, current, skills, false));
-          if (currentGeneration !== generation || signal.aborted) return; // superseded while reading the allowlist: score nothing
-          const remaining = skills.filter((skill) => !skill.disableModelInvocation && !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
-          beginDecisionLoader(ctx);
-          try {
-            round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, activity, previousReply }, { store: scoreCache, key });
-          } finally { endDecisionLoader(); }
-          if (round.errorCode && round.errorCode !== "aborted") failedKey = cacheKey(task, current);
-        }
-      }
-      if (currentGeneration !== generation || signal.aborted) return; // stale or cancelled (even with cached scores): commit nothing
-      const added = round?.added ?? [];
-      const delta = buildSkillsDelta(added, lostSkills, reader, round?.picks);
-      if (round) {
-        const advertised = new Set([...ledger.base, ...ledger.added, ...added.map((skill) => skill.name)]);
-        record(round, {
-          reason: round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered", candidates: round.candidates, kept: added.length,
-          advertised: [...skillRefs.values()].filter((skill) => !skill.disableModelInvocation && advertised.has(skill.name)).length,
-          redelivered: delta?.details.redelivered.length ?? 0, ...(round.cached ? { cached: true } : {}),
-          trigger: fresh ? "queued" : "tool-round", ...(round.errorCode ? { errorCode: round.errorCode } : {}),
-        }, responses, started);
-        controller.setStatus(ctx as unknown as Parameters<Controller["setStatus"]>[0]);
-      }
-      // Pi's boundary dispatch REPLACES the accumulated drafts with whatever a handler returns, so keep every
-      // earlier extension's custom/context_edit/compaction drafts and append ours.
-      return delta ? { entries: [...event.entries, { type: "custom_message" as const, ...delta }] } : undefined;
-    } finally { pending.delete(abort); busy = false; }
-  });
-  /**
-   * Tool/MCP filtering at the turn boundary. Registered AFTER the skill handler: Pi hands each handler the drafts accumulated so far, so
-   * this one appends to `event.entries` (the skill delta and any other extension's drafts stay).
-   */
+  /** Tool/MCP filtering still runs at turn boundaries independently of skills. */
   pi.on("turn_end", async (event, ctx) => (await toolFilter.turnEnd(event as never, ctx)) as never);
   pi.on("tool_call", async (event, ctx) => toolFilter.toolCall(event as never, ctx));
   pi.on("agent_end", (_event, ctx) => { toolFilter.agentEnd(ctx); });

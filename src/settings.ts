@@ -6,9 +6,6 @@ import { isAllowedOpenRouterModel } from "./catalog/openrouter-models.ts";
 import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist } from "./apps/allowlist.ts";
 import { DEFAULT_RELEVANCE_THRESHOLD, validThreshold } from "./apps/skill-filter.ts";
 
-/** When the additive picker runs. Both values only ever ADD skills for the same bounded user task. */
-export type PickerCadence = "prompt" | "tool-round";
-export const PICKER_CADENCES: readonly PickerCadence[] = ["prompt", "tool-round"];
 /** Framework-wide tuning used by skill/tool picking and explicit allowlist ranking. */
 export interface DecisionSettings {
   threshold: number;
@@ -24,7 +21,6 @@ export interface RelevanceSettings {
   enabled: boolean;
   /** Cap on newly advertised skills, not tools or entire tool groups. */
   maxSkills: number;
-  cadence: PickerCadence;
   /** Automatic skill picking starts at eight skills by default (tool gating starts at zero). */
   minCandidates: number;
   pinned: string[];
@@ -70,7 +66,7 @@ export function defaultToolSettings(): ToolFilterSettings {
 }
 export function defaultSettings(): ContextDecisionsSettings {
   return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(),
-    relevance: { enabled: true, maxSkills: 12, cadence: "prompt", minCandidates: 8, pinned: [] } };
+    relevance: { enabled: true, maxSkills: 12, minCandidates: 8, pinned: [] } };
 }
 export class SettingsError extends Error {
   readonly code = "config";
@@ -195,13 +191,14 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
     return value[name];
   };
   const skill = block("relevance"), tool = block("tools"), decision = block("decision");
-  keys(skill, [...Object.keys(result.relevance), ...SHARED_KEYS, ...LEGACY_RELEVANCE_KEYS], warnings);
+  keys(skill, [...Object.keys(result.relevance), ...SHARED_KEYS, ...LEGACY_RELEVANCE_KEYS, "cadence"], warnings);
   keys(tool, [...Object.keys(result.tools), ...LEGACY_TOOL_KEYS], warnings);
   keys(decision, SHARED_KEYS, warnings);
   if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
   if (tool.allowSubagentInheritedTools !== undefined) result.tools.allowSubagentInheritedTools = boolean(tool.allowSubagentInheritedTools, "tools.allowSubagentInheritedTools");
   if (tool.enabled !== undefined) result.tools.enabled = boolean(tool.enabled, "tools.enabled");
-  if (skill.cadence !== undefined) result.relevance.cadence = enumValue(skill.cadence, PICKER_CADENCES, "relevance.cadence") as PickerCadence;
+  // Accept and validate the retired skill cadence, but never persist it in the normalized settings.
+  if (skill.cadence !== undefined) enumValue(skill.cadence, ["prompt", "tool-round"], "relevance.cadence");
   if (tool.cadence !== undefined) result.tools.cadence = enumValue(tool.cadence, TOOL_CADENCES, "tools.cadence") as ToolCadence;
   if (tool.mode !== undefined) result.tools.mode = enumValue(tool.mode, TOOL_FILTER_MODES, "tools.mode") as ToolFilterMode;
   for (const [input, output, group, cap] of [[skill, result.relevance, "relevance", "maxSkills"], [tool, result.tools, "tools", "maxAdded"]] as const) {

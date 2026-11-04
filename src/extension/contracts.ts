@@ -7,7 +7,7 @@ import type { AllowlistScope, ScopedSkill } from "../apps/allowlist.ts";
 import type { ProjectAllowlistLists, ProjectAllowlistLoad } from "../project-allowlist.ts";
 import type { ToolFilterMode } from "../settings.ts";
 
-/** `appendEntry` records the stable-base ledger; `getActiveTools` chooses Pi's skill-file reader for deltas. */
+/** `appendEntry` stores tool filtering state; `getActiveTools` checks whether Pi can render skills. */
 export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand" | "appendEntry" | "getActiveTools">
   & Partial<Pick<ExtensionAPI, "getCommands" | "getAllTools" | "setActiveTools" | "events">>;
 export interface ExtensionRegistry extends RegistryLike {
@@ -33,12 +33,10 @@ export interface LastDecision {
   kept: number;
   /** Skills advertised on this branch after the round (stable base + additions). */
   advertised?: number;
-  /** Skills re-delivered after compaction or edits, without being re-scored. */
-  redelivered?: number;
   /** Scores were reused for the same task; no decision call was made. */
   cached?: boolean;
-  /** `prompt`: a submitted prompt. `queued`: steering/follow-up user text. `tool-round`: after completed tool calls. */
-  trigger?: "prompt" | "queued" | "tool-round";
+  /** Skill selection happens only at submitted-prompt boundaries. */
+  trigger?: "prompt";
   latencyMs: number;
   errorCode?: string;
   usage?: DecisionUsage;
