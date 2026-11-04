@@ -1,5 +1,8 @@
 # pi-context-decisions
 
+[![npm version](https://img.shields.io/npm/v/pi-context-decisions)](https://www.npmjs.com/package/pi-context-decisions)
+[![npm downloads](https://img.shields.io/npm/dm/pi-context-decisions)](https://www.npmjs.com/package/pi-context-decisions)
+
 Give [Pi](https://pi.dev) the skills relevant to your task, without advertising your entire collection up front.
 
 This extension uses a decision model to pick skill descriptions for Pi to see. As your task changes, it can add more. Skills already advertised stay available for the rest of that session branch.
