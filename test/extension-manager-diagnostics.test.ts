@@ -52,7 +52,7 @@ for (const mode of ["hosted", "absent", "old", "malformed", "unknown-version-sha
       assert.doesNotMatch(stderr.join("\n"), /PRIVATE/);
     }
     await h.command("status", ctx);
-    assert.match(stderr.at(-1)!, /Context decisions:/, "explicit reports keep stderr even with a host");
+    assert.match(stderr.at(-1)!, /Context decisions\n  Model:/, "explicit reports keep stderr even with a host");
     assert.equal(probes, 1, "explicit reports do not probe");
     await h.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, ctx);
     await h.emit("session_start", { type: "session_start", reason: "startup" }, ctx);

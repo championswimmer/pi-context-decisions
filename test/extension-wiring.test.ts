@@ -86,7 +86,7 @@ test("startup defaults perform no auth or inference and do not mutate advertisem
   assert.equal(c.calls(), 0); assert.equal(e.systemPromptOptions.skills, original, "the unchanged inventory keeps Pi's own array"); assert.equal(c.statuses[0], "◇ setup");
   assert.deepEqual(deltaMessages(h.session), [], "unconfigured advertises everything through the base: no delta");
   assert.deepEqual([...readLedger(h.session).base].sort(), original.map((skill) => skill.name).sort(), "the branch remembers that every skill was advertised");
-  await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions: not configured/);
+  await h.command("", { ...c.ctx, hasUI: false }); assert.match(h.messages.at(-1)!.text, /Context decisions\n  Model: not configured/);
 });
 test("RPC native selection persists, filters through real core, only skills mutate, later handler observes", async (t) => {
   const h = await setup(t); const c = context({}, true); await setModel(h.command, c.ctx, "Pi custom/nested/model");
@@ -103,7 +103,7 @@ test("RPC native selection persists, filters through real core, only skills muta
   assert.equal(c.statuses.at(-1), "◇ ≡ 1/8", "footer shows advertised/full inventory, not round latency or newly scored count");
   assert.equal(e.systemPrompt, "unchanged");
   for (const key of Object.keys(before).filter((key) => key !== "skills") as (keyof typeof before)[]) assert.equal(e.systemPromptOptions[key], before[key]);
-  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered, \+1 of 8 candidates, 1 advertised/); assert.match(h.messages.at(-1)!.text, /inputTokens/);
+  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /filtered\n    Added 1 of 8 candidates[^\n]*\n    Advertised: 1/); assert.match(h.messages.at(-1)!.text, /input tokens/);
 });
 test("30-skill hook respects persisted decimal thresholds and batch settings via the RPC settings menus", async (t) => {
   const batches: number[] = [];
@@ -122,7 +122,7 @@ test("30-skill hook respects persisted decimal thresholds and batch settings via
   assert.deepEqual(batches, [5, 5, 5, 5, 5, 5]);
   assert.deepEqual(advertised(h, original, e.systemPromptOptions.skills), original.filter((_, i) => i % 2 === 1).map((skill) => skill.name));
   assert.equal((await loadSettings(h.path)).settings.decision.threshold, 0.625);
-  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /threshold 0.625 \(0–1\).*shard 5/s);
+  await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /Threshold: 0.625 \(0–1\).*Shard size: 5/s);
   await setSetting(h.command, c.ctx, "decision.threshold", "1.6");
   assert.equal(h.messages.at(-1)!.level, "error");
   assert.equal((await loadSettings(h.path)).settings.decision.threshold, 0.625);
@@ -245,7 +245,7 @@ for (const failure of ["invalid-persisted", "missing-native"] as const) {
     assert.equal(e.prompt, prompt); assert.equal(e.systemPrompt, "unchanged");
     for (const key of Object.keys(options).filter((key) => key !== "skills") as (keyof typeof options)[]) assert.equal(e.systemPromptOptions[key], options[key]);
     await h.command("status", c.ctx);
-    if (failure === "invalid-persisted") assert.match(h.messages.at(-1)!.text, /fail-closed, \+0 of 7 candidates.*\(config\)/);
+    if (failure === "invalid-persisted") assert.match(h.messages.at(-1)!.text, /fail-closed \(config\)\n    Added 0 of 7 candidates/);
   });
 }
 test("whole filter timeout hides ads with timeout status and shutdown cancels ignored signals", async (t) => {
@@ -303,7 +303,7 @@ test("headless diagnostics deduplicate repeated messages; explicit status remain
     assert.deepEqual(stderr, [], "repeated identical automatic diagnostics should be deduplicated");
     assert.deepEqual(h.calls, { getAllTools: 0, setActiveTools: 0 });
     await h.command("status", c.ctx);
-    assert.match(stderr.pop() ?? "", /\[context-decisions\] Context decisions:/);
+    assert.match(stderr.pop() ?? "", /\[context-decisions\] Context decisions\n  Model:/);
     await h.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, c.ctx);
   }
   for (const mode of ["tui", "rpc"] as const) {

@@ -73,12 +73,12 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
 });
 test("status shows tool filtering lines and the not-a-sandbox sentence; off says opt-in", async (t) => {
   const off = await toolSetup(t, { tools: { enabled: false } });
-  await off.command("status"); assert.match(last(off), /Tool filtering: off \(opt-in, separate from skill filtering/);
+  await off.command("status"); assert.match(last(off), /Tool filtering: off \(opt-in\)\n  Enable in \/decisions Tools tab; independent of Skills/);
   const on = await toolSetup(t, { extra: [extTool("ext_a")], scores: { ext_a: 2 } });
   await on.start("task"); await on.command("status");
   const text = last(on);
-  assert.match(text, /Tool filtering: on · mode tools · picker prompt/); assert.match(text, /Last tool round \(prompt\): filtered, \+1 of 1 candidates, 1\/1 available/);
-  assert.match(text, /not a sandbox/); assert.match(text, /discovery listings/); assert.match(text, /mid-session keeps tools already registered available/);
+  assert.match(text, /Tool filtering: on · mode tools · picker prompt/); assert.match(text, /Last \(prompt\): filtered\n    Added 1 of 1 candidates/); assert.match(text, /Available: 1\/1 external/);
+  assert.match(text, /Not a sandbox/); assert.match(text, /discovery listings/); assert.match(text, /mid-session keeps tools already registered available/);
   assert.doesNotMatch(text, /ext_a/, "status carries counts, never tool names");
 });
 test("RPC tool-limit labels and input help follow mode changes while edits keep their original keys", async (t) => {

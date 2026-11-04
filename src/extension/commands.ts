@@ -165,37 +165,66 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
       credentials = auth.source === "pi" ? "Pi-resolved (may include Pi's env fallback)" : auth.source === "env" ? "environment" : credentialGuide(provider);
     }
   }
-  const last = controller.getLastDecision();
   const error = controller.getSettingsError();
   const project = ctx.cwd ? await controller.loadProjectAllowlist(ctx.cwd) : undefined;
   const managerStatus = controller.managerDiagnosticsStatus?.();
+  const r = settings.relevance;
+  const d = settings.decision;
   return [
-    `Context decisions: ${selectionLabel(settings.backend)}`,
-    `Credentials: ${credentials}`,
-    ...(managerStatus ? [managerStatus] : []),
-    `Subagents · Allow inherited tools: ${settings.tools.allowSubagentInheritedTools ? controller.subagentManagerPresent?.() ? "on (effective for bridged child tools)" : "on (ineffective: pi-subagent-manager not detected)" : "off"}. ${SUBAGENT_HELP}`,
-    `Skills: ${settings.relevance.enabled ? "on" : "off"} · picker ${settings.relevance.cadence} · max ${settings.relevance.maxSkills} added per round · minimum inventory ${settings.relevance.minCandidates}. Skills are only ever added; already-added skills are never re-scored`,
-    `Shared tuning (Advanced): threshold ${settings.decision.threshold} (0–1), fail-${settings.decision.failMode}; shard ${settings.decision.chunkSize}, concurrency ${settings.decision.concurrency === 0 ? "all shards parallel (0)" : settings.decision.concurrency}, timeout ${settings.decision.timeoutMs}ms, prompt ${settings.decision.maxPromptChars} chars, description ${settings.decision.maxDescriptionChars} chars. Skill/tool picking policy; limits also apply to allowlist ranking`,
-    `Always-allowed lists: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0} (${ctx.cwd ? cleanLabel(projectAllowlistPath(ctx.cwd)) : "no cwd"})`,
-    ...(project?.error ? [`Project allowlist warning: ${project.error}`] : []),
-    ...(error ? [`Settings error: ${error}. Repair the settings file, or choose a model in /decisions.`] : []),
-    ...(last ? [`Last (${last.trigger ?? "prompt"}): ${last.reason}, +${last.kept} of ${last.candidates} candidates${last.advertised === undefined ? "" : `, ${last.advertised} advertised`}${last.redelivered ? `, ${last.redelivered} re-delivered` : ""}${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}${settings.backend?.backend === "pi" ? " (cost, when present, is a catalog estimate)" : ""}` : ""}`] : []),
+    "Context decisions",
+    `  Model: ${selectionLabel(settings.backend)}`,
+    `  Credentials: ${credentials}`,
+    ...(error ? ["", `Settings error: ${error}`, "  Repair the settings file or choose a model in /decisions."] : []),
+    ...(project?.error ? ["", `Project allowlist warning: ${project.error}`] : []),
+    "",
+    `Skills: ${r.enabled ? "on" : "off"} · picker ${r.cadence}`,
+    `  Limits: max ${r.maxSkills} added per round · minimum inventory ${r.minCandidates}`,
+    `  Always allowed: global ${settings.globalAllowlist.length}, project ${project?.names.length ?? 0}`,
+    "  Additive advertisements; explicit skill access is unchanged.",
+    ...lastStatusLines(controller.getLastDecision(), settings),
+    "",
     ...toolStatusLines(controller, settings),
-    OPENROUTER_DECISION_SNAPSHOT.attribution,
-    "Skill advertisements are additive and never change explicit skill access.",
+    "",
+    "Decision settings (Advanced)",
+    `  Threshold: ${d.threshold} (0–1) · on failure: ${d.failMode}`,
+    `  Shard size: ${d.chunkSize} · concurrency: ${d.concurrency === 0 ? "all shards" : d.concurrency}`,
+    `  Timeout: ${d.timeoutMs}ms`,
+    `  Text limits: prompt ${d.maxPromptChars} · description ${d.maxDescriptionChars} chars`,
+    "",
+    `Subagents · Allow inherited tools: ${settings.tools.allowSubagentInheritedTools ? controller.subagentManagerPresent?.() ? "on (bridged child tools)" : "on (ineffective: pi-subagent-manager not detected)" : "off"}`,
+    ...(managerStatus ? [managerStatus] : []),
   ];
 }
+
+/** Shared, readable last-run details; never dump transport usage objects into status. */
+function lastStatusLines(last: ReturnType<Controller["getLastDecision"]> | ReturnType<Controller["getLastToolDecision"]>, settings: ReturnType<Controller["getSettings"]>): string[] {
+  if (!last) return [];
+  const usage = last.usage;
+  const tokens = usage?.totalTokens !== undefined ? [`${usage.totalTokens} tokens`]
+    : [usage?.inputTokens !== undefined ? `${usage.inputTokens} input tokens` : "", usage?.outputTokens !== undefined ? `${usage.outputTokens} output tokens` : ""].filter(Boolean);
+  if (usage?.cost !== undefined) tokens.push(`$${usage.cost}${settings.backend?.backend === "pi" ? " (catalog estimate)" : ""}`);
+  return [
+    `  Last (${last.trigger ?? "prompt"}): ${last.reason}${last.errorCode ? ` (${last.errorCode})` : ""}`,
+    `    Added ${last.kept} of ${last.candidates} candidates · ${last.cached ? "cached scores (no call)" : `${last.latencyMs}ms`}`,
+    ...("available" in last ? [`    Available: ${last.available}/${last.external} external · ${last.withheld} withheld`]
+      : [last.advertised === undefined ? "" : `    Advertised: ${last.advertised}${last.redelivered ? ` · ${last.redelivered} re-delivered` : ""}`].filter(Boolean)),
+    ...(tokens.length ? [`    Usage: ${tokens.join(" · ")}`] : []),
+  ];
+}
+
 /** Tool filtering status. Counts and modes only: no tool names, task text, arguments or results. */
 function toolStatusLines(controller: Controller, settings: ReturnType<Controller["getSettings"]>): string[] {
   const t = settings.tools;
-  if (!t.enabled) return ["Tool filtering: off (opt-in, separate from skill filtering; turn it on in the /decisions Tools tab)"];
-  const last = controller.getLastToolDecision();
+  if (!t.enabled) return ["Tool filtering: off (opt-in)", "  Enable in /decisions Tools tab; independent of Skills."];
   return [
-    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence} · max ${t.maxAdded} added per round · minimum ${t.minCandidates}${settings.backend ? "" : " · no decision model selected: every tool stays available"}`,
-    `Tool allowlists: tools global ${t.alwaysAllowedTools.length}, MCP servers & extensions global ${t.alwaysAllowedMcpServers.length}`,
-    "Built-in MCP allowlist scope is captured from bounded names-only Pi config reads at session_start (trusted full project definitions override global; settings-only overrides keep global). Disk edits require /reload. Extensions use public sourceInfo.scope. Unresolved built-in origins use Global.",
-    ...(last ? [`Last tool round (${last.trigger}): ${last.reason}, +${last.kept} of ${last.candidates} candidates, ${last.available}/${last.external} available, ${last.withheld} withheld${last.cached ? ", cached scores (no call)" : `, ${last.latencyMs}ms`}${last.errorCode ? ` (${last.errorCode})` : ""}${last.usage ? `; usage ${JSON.stringify(last.usage)}` : ""}`] : []),
-    "Tool filtering hides declared tools and blocks calls to unavailable external tools through Pi's tool pipeline. It is not a sandbox: bash, discovery listings (the mcp_servers prompt section, codemode searchTools, tool_search results) and MCP server connections are unaffected. Pi's built-in tools are never filtered. Enabling it mid-session keeps tools already registered available on that branch.",
+    `Tool filtering: on · mode ${t.mode} · picker ${t.cadence}`,
+    `  Limits: max ${t.maxAdded} added per round · minimum candidates ${t.minCandidates}`,
+    ...(settings.backend ? [] : ["  No decision model selected: every tool stays available."]),
+    `  Always allowed (global): ${t.alwaysAllowedTools.length} tools · ${t.alwaysAllowedMcpServers.length} MCP/extension groups`,
+    ...lastStatusLines(controller.getLastToolDecision(), settings),
+    "  Not a sandbox: built-ins, bash, discovery listings and connections are unaffected.",
+    "  Enabling mid-session keeps tools already registered available.",
+    "  MCP config scope is captured at session start; disk edits need /reload.",
   ];
 }
 async function status(controller: Controller, ctx: CommandContext, env?: Record<string, string | undefined>) {

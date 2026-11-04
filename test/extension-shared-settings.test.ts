@@ -57,7 +57,7 @@ test("shared timeout bounds both passes and still fails closed by default", asyn
   assert.equal((await h.gate("tool_high"))?.block, true);
   await h.command("status");
   assert.match(h.messages.at(-1)!, /Last \(prompt\).*timeout/);
-  assert.match(h.messages.at(-1)!, /Last tool round \(prompt\).*timeout/);
+  assert.match(h.messages.at(-1)!, /Tool filtering:[\s\S]*Last \(prompt\).*timeout/);
 });
 
 test("status separates independent switches from one shared Advanced policy, without making decisions", async (t) => {
@@ -65,8 +65,8 @@ test("status separates independent switches from one shared Advanced policy, wit
   await h.command("status");
   let report = h.messages.at(-1)!;
   assert.match(report, /Skills: off · picker prompt/); assert.match(report, /Tool filtering: on · mode tools/);
-  assert.match(report, /Shared tuning \(Advanced\): threshold 0.625 \(0–1\), fail-closed; shard 7/);
-  assert.equal((report.match(/threshold 0.625/g) ?? []).length, 1, "one shared threshold, not per-feature copies");
+  assert.match(report, /Decision settings \(Advanced\)\n  Threshold: 0.625 \(0–1\) · on failure: closed\n  Shard size: 7/);
+  assert.equal((report.match(/Threshold: 0.625/g) ?? []).length, 1, "one shared threshold, not per-feature copies");
   await h.set("tools.enabled"); await h.set("relevance.enabled");
   await h.command("status"); report = h.messages.at(-1)!;
   assert.match(report, /Skills: on · picker prompt/); assert.match(report, /Tool filtering: off/);
