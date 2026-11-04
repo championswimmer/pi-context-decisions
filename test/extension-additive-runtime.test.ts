@@ -90,13 +90,13 @@ test("round 1 adds the best skills; the system prompt keeps only the stable base
   assert.deepEqual(h.scoredNames(), h.inventory.map((s) => s.name), "all twelve candidates were scored in round 1");
   assert.doesNotMatch(JSON.stringify(h.requests), /SKILL\.md|private/, "locations never enter the decision payload");
 });
-test("prompt and cached tool-round skill picks survive canonical delta writes into history", async (t) => {
+test("prompt and adaptive tool-round skill picks survive canonical delta writes into history", async (t) => {
   const h = await setup(t, { relevance: { cadence: "tool-round", maxSkills: 1 }, score: (name) => name === "skill-0" ? 1.6 : name === "skill-1" ? 1.4 : 0 });
   await h.start("choose relevant skills");
   assert.deepEqual((h.deltas()[0].details as { picks?: unknown }).picks, { "skill-0": { score: 1.6, threshold: 0.375 } });
   await h.end({ toolResults: TOOL });
   assert.deepEqual((h.deltas()[1].details as { picks?: unknown }).picks, { "skill-1": { score: 1.4, threshold: 0.375 } });
-  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests.length, 2);
   await h.command("history");
   assert.match(h.messages.at(-1)!, /\+ skill-0  score 1\.6 \/ ≥0\.75/);
   assert.match(h.messages.at(-1)!, /\+ skill-1  score 1\.4 \/ ≥0\.75/);
@@ -336,26 +336,26 @@ test("queued steering/follow-up user text is picked at turn_end from THAT text; 
   assert.deepEqual((await h.end({ pendingMessages: [custom, { role: "assistant", content: "assistant text" }] })).drafts, []);
   assert.equal(h.requests.length, calls + 1, "only user text is ever used as a task");
 });
-test("tool-round cadence adds the next-best skills for the SAME task from cached scores: no extra call, no tool data sent", async (t) => {
+test("tool-round cadence re-scores remaining skills using assistant activity, never tool results", async (t) => {
   const h = await setup(t, { relevance: { cadence: "tool-round", maxSkills: 2 } });
   await h.start("write the thing");
   assert.equal(h.requests.length, 1);
   const secret = [{ toolName: "bash", content: "TOOL-RESULT-SECRET", arguments: { command: "SECRET-ARG" } }];
   const round1 = await h.end({ toolResults: secret });
   assert.deepEqual(round1.drafts.map((d) => (d.details as { added: string[] }).added), [nameList(2, 3)], "the next two best, after the prompt round's skill-0, skill-1");
-  assert.equal(h.requests.length, 1, "cached scores: zero extra decision calls");
+  assert.equal(h.requests.length, 2, "changed activity causes rescoring");
   const round2 = await h.end({ toolResults: secret });
   assert.deepEqual(round2.drafts.map((d) => (d.details as { added: string[] }).added), [nameList(4, 5)]);
-  assert.equal(h.requests.length, 1); assert.equal(round2.continued, false);
-  assert.doesNotMatch(JSON.stringify(h.requests), /TOOL-RESULT-SECRET|SECRET-ARG|assistant|bash/);
+  assert.equal(h.requests.length, 3); assert.equal(round2.continued, false);
+  assert.doesNotMatch(JSON.stringify(h.requests), /TOOL-RESULT-SECRET|SECRET-ARG/);
   assert.deepEqual(advertised(h.sim, h.inventory, []), nameList(0, 1, 2, 3, 4, 5));
 });
-test("tool-round stops when nothing qualifies and does not keep calling the decision model", async (t) => {
+test("tool-round adds nothing below threshold but re-scores when activity changes", async (t) => {
   const h = await setup(t, { relevance: { cadence: "tool-round", maxSkills: 12 }, decision: { threshold: 0.5 }, score: (name) => name === "skill-0" ? 2 : name === "skill-1" ? 1.2 : 0.2 });
   await h.start("task");
   assert.deepEqual(h.deltas().map(h.names), [["skill-0", "skill-1"]]);
   for (let round = 0; round < 3; round++) assert.deepEqual((await h.end({ toolResults: TOOL })).drafts, []);
-  assert.equal(h.requests.length, 1, "rejected skills are re-scored only when the task changes");
+  assert.equal(h.requests.length, 4, "changed activity re-scores remaining skills");
 });
 test("tool-round after a failed round does not hammer the backend; a new prompt retries", async (t) => {
   const h = await setup(t, { relevance: { cadence: "tool-round" }, fail: true });
@@ -386,17 +386,17 @@ test("a stale turn_end round (settings saved mid-pass) commits no entry and reco
   assert.deepEqual(result.drafts, []); assert.deepEqual(h.deltas().map(h.names), [nameList(0, 1, 2)], "only the committed prompt round is on the branch");
   assert.ok(h.signals.at(-1)!.aborted, "the superseded decision was cancelled");
 });
-test("nothing but name/description and the latest bounded user task is ever sent, in every cadence", async (t) => {
+test("only bounded task, candidate metadata and approved activity are sent", async (t) => {
   const h = await setup(t, { relevance: { cadence: "tool-round" }, decision: { maxPromptChars: 12 } });
   await h.start("SECRET-FIRST-LONG-PROMPT-TEXT");
   await h.end({ toolResults: TOOL, pendingMessages: [{ role: "user", content: "QUEUED-USER-TASK-LONGER", timestamp: 1 }] });
   await h.end({ toolResults: [{ toolName: "read", content: "TOOL-OUTPUT" }] });
   for (const request of h.requests) {
-    assert.deepEqual(Object.keys(request.state).sort(), ["skills", "task"]);
+    assert.deepEqual(Object.keys(request.state).sort(), request.state.activity ? ["activity", "skills", "task"] : ["skills", "task"]);
     assert.ok(String(request.state.task).length <= 12);
     for (const entry of Object.values(request.state.skills as Record<string, object>)) assert.deepEqual(Object.keys(entry).sort(), ["description", "name"]);
   }
-  assert.doesNotMatch(JSON.stringify(h.requests), /TOOL-OUTPUT|assistant|SKILL\.md|private/);
+  assert.doesNotMatch(JSON.stringify(h.requests), /TOOL-OUTPUT|SKILL\.md|private/);
 });
 test("turn_end re-delivers skills lost to compaction mid-run, without scoring and without continuing the loop", async (t) => {
   const h = await setup(t);

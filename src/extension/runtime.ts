@@ -16,6 +16,7 @@ import { registerCommands } from "./commands.ts";
 import { SKILLS_BASE_ENTRY, buildSkillsDelta, readLedger, skillReader, type LedgerState, type SkillsDelta } from "./skill-ledger.ts";
 import type { Controller, ExtensionDependencies, ExtensionHost, LastDecision } from "./contracts.ts";
 import { queuedUserTask } from "./queued-task.ts";
+import { decisionActivity, readPreviousFinalReply } from "./decision-activity.ts";
 import { createToolFilter } from "./tool-filter.ts";
 import { beginDecisionLoader, endDecisionLoader, resetDecisionLoader } from "./decision-loader.ts";
 import { skillFooter } from "./footer-status.ts";
@@ -220,8 +221,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     }
     return [...new Set([...current.relevance.pinned, ...allowlistedNames(skills, { global: current.globalAllowlist, project: project.names })])];
   };
-  const cacheKey = (task: string, current: ContextDecisionsSettings) =>
-    JSON.stringify([task, current.backend, current.decision.maxPromptChars, current.decision.maxDescriptionChars]);
+  const cacheKey = (task: string, current: ContextDecisionsSettings, activity: unknown = undefined) =>
+    JSON.stringify([task, current.backend, current.decision.maxPromptChars, current.decision.maxDescriptionChars, activity]);
   const record = (round: SkillAdditionResult<Skill> | undefined, fields: Omit<LastDecision, "latencyMs" | "usage"> & { latencyMs?: number }, responses: DecisionResponse[], started: number) => {
     const usage = sumUsage(responses);
     last = { ...fields, latencyMs: fields.latencyMs ?? round?.latencyMs ?? Date.now() - started, ...(usage ? { usage } : {}) };
@@ -262,6 +263,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     failedKey = undefined;
     const currentGeneration = generation;
     const current = structuredClone(settings);
+    const previousReply = task.trim() && current.relevance.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager) : undefined;
     const abort = new AbortController();
     pending.add(abort);
     busy = true;
@@ -323,7 +325,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         // Pi's own braille working row shows "Deciding Context" for as long as the round is in flight.
         beginDecisionLoader(ctx);
         try {
-          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal }, { store: scoreCache, key: cacheKey(task, current) });
+          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, previousReply }, { store: scoreCache, key: cacheKey(task, current, previousReply || undefined) });
         } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;
@@ -349,8 +351,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   /**
    * Between model requests inside a run. Only adds: re-delivers skills that compaction/edits removed from model
    * context (no scoring), and, for queued steering/follow-up user text or the opt-in `tool-round` cadence after
-   * completed tool calls, adds the next-best remaining skills. Nothing but the latest bounded user task and
-   * candidate names/descriptions is ever sent to the decision model, and the loop is never continued here.
+   * completed tool calls, adds qualifying remaining skills. Tool-round scoring includes bounded assistant activity;
+   * tool results and thinking are excluded. The loop is never continued here.
    */
   pi.on("turn_end", async (event, ctx) => {
     if (busy || event.outcome !== "completed" || event.context?.canContinue !== true) return;
@@ -365,6 +367,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const lostSkills = ledger.lost.flatMap((name) => skillRefs.get(name) ?? []);
     if (fresh) { seenQueued.add(fresh.id); runTask = fresh.text; failedKey = undefined; }
     const task = fresh?.text ?? (toolRound ? runTask : undefined);
+    const activity = !fresh && toolRound ? decisionActivity(ctx.sessionManager.getBranch()) : [];
+    const previousReply = fresh && current.relevance.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager, true) : undefined;
     if (!task && !lostSkills.length) return;
     const currentGeneration = generation;
     const abort = new AbortController();
@@ -375,8 +379,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const started = Date.now();
     try {
       let round: SkillAdditionResult<Skill> | undefined;
-      const key = task ? cacheKey(task, current) : undefined;
-      if (task && key !== undefined && (fresh || key !== failedKey)) {
+      const key = task ? cacheKey(task, current, activity.length ? activity : previousReply) : undefined;
+      if (task && key !== undefined && (fresh || cacheKey(task, current) !== failedKey)) {
         const { client } = resolveClient(ctx, current, responses);
         if (client) {
           const skills = [...skillRefs.values()];
@@ -385,9 +389,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
           const remaining = skills.filter((skill) => !skill.disableModelInvocation && !ledger.base.has(skill.name) && !ledger.added.has(skill.name) && !pinnedSet.has(skill.name));
           beginDecisionLoader(ctx);
           try {
-            round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal }, { store: scoreCache, key });
+            round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, activity, previousReply }, { store: scoreCache, key });
           } finally { endDecisionLoader(); }
-          if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
+          if (round.errorCode && round.errorCode !== "aborted") failedKey = cacheKey(task, current);
         }
       }
       if (currentGeneration !== generation || signal.aborted) return; // stale or cancelled (even with cached scores): commit nothing

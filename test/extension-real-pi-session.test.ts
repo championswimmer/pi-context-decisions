@@ -4,18 +4,18 @@
 // context conversion and compaction behavior, which the SimSession stand-in only mirrors.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSession, createSyntheticSourceInfo, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type ExtensionFactory, type Skill } from "@earendil-works/pi-coding-agent";
-import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import { createFauxCore, fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import { defaultSettings, saveSettings } from "../src/settings.ts";
 import { SKILLS_MESSAGE_TYPE } from "../src/extension/skill-ledger.ts";
 import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
 
-async function realPi(t: { after(fn: () => Promise<void>): void }, cadence: "prompt" | "tool-round", script: (ctx: { session: () => AgentSession }) => Parameters<ReturnType<typeof createFauxCore>["setResponses"]>[0], globalAllowlist: string[] = [], earlier?: (pi: Parameters<ExtensionFactory>[0]) => void) {
+async function realPi(t: { after(fn: () => Promise<void>): void }, cadence: "prompt" | "tool-round", script: (ctx: { session: () => AgentSession }) => Parameters<ReturnType<typeof createFauxCore>["setResponses"]>[0], globalAllowlist: string[] = [], earlier?: (pi: Parameters<ExtensionFactory>[0]) => void, score?: (name: string, request: import("../src/decision/types.ts").DecisionRequest) => number) {
   const root = await mkdtemp(join(tmpdir(), "real-pi-")); t.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = join(root, "agent"); await mkdir(agentDir, { recursive: true });
   const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -35,7 +35,7 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, cadence: "pro
       createClient: () => createDecisionClient({ id: "pi", model: "fixture", async decide(request) {
         const metadata = request.state.skills as Record<string, { name: string }>;
         decisions.push({ task: String(request.state.task), skills: Object.values(metadata).map((skill) => skill.name) });
-        return { answers: Object.fromEntries(Object.entries(metadata).map(([id, skill]) => [id, { type: "score", score: 2 - Number(skill.name.slice(6)) * 0.2 }])) };
+        return { answers: Object.fromEntries(Object.entries(metadata).map(([id, skill]) => [id, { type: "score", score: score?.(skill.name, request) ?? 2 - Number(skill.name.slice(6)) * 0.2 }])) };
       } }) })] });
   await loader.reload();
   const sessionManager = SessionManager.inMemory(root);
@@ -68,17 +68,80 @@ test("real Pi, prompt cadence: the delta is persisted right after the user messa
   }
   assert.equal(h.contexts.length, 2, "a tool round happened but no extra model request was created by the extension");
 });
-test("real Pi, tool-round cadence: the next-best skills arrive between the tool result and the next request with no extra decision call", async (t) => {
+test("real Pi, tool-round cadence: the next-best skills arrive between the tool result and the next request after adaptive rescoring", async (t) => {
   let h!: Awaited<ReturnType<typeof realPi>>;
   h = await realPi(t, "tool-round", () => [(ctx) => { h.record(ctx); return fauxAssistantMessage([TOOL()], { stopReason: "toolUse" }); }, (ctx) => { h.record(ctx); return fauxAssistantMessage([fauxText("done")]); }]);
   await h.session.prompt("write something about thing 0");
   assert.deepEqual(h.branch(), ["user", 'delta["skill-0","skill-1"]', "assistant", "toolResult", 'delta["skill-2","skill-3"]', "assistant"]);
-  assert.equal(h.decisions.length, 1, "cached scores: the tool round made no decision call");
+  assert.equal(h.decisions.length, 2, "the tool round re-scores with activity");
   const second = h.contexts[1].messages.filter((m) => m.role === "user").map(h.text);
   assert.match(second.at(-1)!, /<name>skill-2<\/name>[\s\S]*<name>skill-3<\/name>/);
   assert.equal(h.faux.state.callCount, 2);
   const history = readDecisionsHistory(h.sessionManager);
   assert.deepEqual(history.turns.map((turn) => [turn.turn, turn.batches.map((b) => [b.turn, b.items.skills])]), [[1, [[1, ["skill-0", "skill-1"]], [2, ["skill-2", "skill-3"]]]]], "history follows real Pi commit boundaries");
+});
+test("real Pi: activity makes a formerly irrelevant skill qualify without exposing results or thinking", async (t) => {
+  const requests: import("../src/decision/types.ts").DecisionRequest[] = [];
+  let h!: Awaited<ReturnType<typeof realPi>>;
+  h = await realPi(t, "tool-round", () => [
+    () => fauxAssistantMessage([fauxThinking("THINKING-SECRET"), fauxText("Investigating database"), TOOL()], { stopReason: "toolUse" }),
+    () => fauxAssistantMessage([fauxText("done")]),
+    () => fauxAssistantMessage([fauxText("second done")]),
+  ], [], undefined, (name, request) => {
+    if (name === "skill-1") requests.push(structuredClone(request));
+    return name === "skill-0" && JSON.stringify(request.state.activity ?? []).includes("Investigating database") ? 2 : 0;
+  });
+  await writeFile(join(h.root, "package.json"), "RESULT-SECRET");
+  await h.session.prompt("original task");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].state.activity, undefined);
+  assert.equal(requests[1].state.task, "original task");
+  assert.match(JSON.stringify(requests[1].state.activity), /Investigating database.*read.*package\.json/);
+  assert.ok(h.branch().includes('delta["skill-0"]'));
+  assert.doesNotMatch(JSON.stringify(requests), /RESULT-SECRET|THINKING-SECRET/);
+  await h.session.prompt("a new task");
+  assert.equal(requests[2].state.task, "a new task");
+  assert.equal(requests[2].state.activity, undefined, "new user prompt resets activity");
+  assert.equal(requests[2].state.previousReply, undefined, "tool-round cadence does not send the prior final reply");
+});
+test("real Pi prompt cadence uses only the preceding final reply to qualify a skill", async (t) => {
+  const requests: import("../src/decision/types.ts").DecisionRequest[] = [];
+  const h = await realPi(t, "prompt", () => [
+    () => fauxAssistantMessage([fauxText("INTERMEDIATE"), TOOL()], { stopReason: "toolUse" }),
+    () => fauxAssistantMessage([fauxThinking("THINKING-SECRET"), fauxText("database is ready")]),
+    () => fauxAssistantMessage([fauxText("second final")]),
+    () => fauxAssistantMessage([fauxText("third final")]),
+  ], [], undefined, (name, request) => {
+    if (name === "skill-1") requests.push(structuredClone(request));
+    return name === "skill-0" && JSON.stringify(request.state.previousReply ?? {}).includes("database is ready") ? 2 : 0;
+  });
+  await writeFile(join(h.root, "package.json"), "RESULT-SECRET");
+  await h.session.prompt("first goal");
+  await h.session.prompt("second goal");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].state.previousReply, undefined);
+  assert.equal(requests[1].state.task, "second goal");
+  assert.deepEqual(requests[1].state.previousReply, { text: "database is ready" });
+  assert.doesNotMatch(JSON.stringify(requests), /INTERMEDIATE|RESULT-SECRET|THINKING-SECRET/);
+  assert.ok(h.branch().includes('delta["skill-0"]'));
+  await h.session.prompt("third goal");
+  assert.equal(requests[2].state.task, "third goal");
+  assert.deepEqual(requests[2].state.previousReply, { text: "second final" }, "older final is not included");
+});
+test("real Pi queued prompt uses preceding run final, not current tool-call text", async (t) => {
+  const requests: import("../src/decision/types.ts").DecisionRequest[] = [];
+  let h!: Awaited<ReturnType<typeof realPi>>;
+  h = await realPi(t, "prompt", ({ session }) => [
+    () => fauxAssistantMessage([fauxText("previous run final")]),
+    () => { void session().steer("queued goal"); return fauxAssistantMessage([fauxText("CURRENT-INTERMEDIATE"), TOOL()], { stopReason: "toolUse" }); },
+    () => fauxAssistantMessage([fauxText("done")]),
+  ], [], undefined, (name, request) => { if (name === "skill-0") requests.push(structuredClone(request)); return 0; });
+  await h.session.prompt("first");
+  await h.session.prompt("second");
+  assert.deepEqual(requests.map((r) => [r.state.task, r.state.previousReply]), [
+    ["first", undefined], ["second", { text: "previous run final" }], ["queued goal", { text: "previous run final" }],
+  ]);
+  assert.doesNotMatch(JSON.stringify(requests), /CURRENT-INTERMEDIATE/);
 });
 test("real Pi: steering text queued during a run is picked at turn_end from that text, over the remaining candidates only", async (t) => {
   let h!: Awaited<ReturnType<typeof realPi>>;
@@ -142,7 +205,7 @@ test("real Pi: our turn_end draft does not erase another extension's boundary dr
   assert.deepEqual(entries.filter((entry) => entry.type === "custom_message").map((entry) => (entry.details as { added: string[] }).added), [["skill-0", "skill-1"], ["skill-2", "skill-3"]], "and so is ours");
 });
 
-test("real Pi skills tool-round: queued user text changes the task, then cached additions continue across the next round", async (t) => {
+test("real Pi skills tool-round: queued user text changes the task, then activity re-scores remaining skills across the next round", async (t) => {
   let h!: Awaited<ReturnType<typeof realPi>>;
   h = await realPi(t, "tool-round", ({ session }) => [
     (ctx) => { h.record(ctx); void session().steer("new user task"); return fauxAssistantMessage([TOOL()], { stopReason: "toolUse" }); },
@@ -153,7 +216,8 @@ test("real Pi skills tool-round: queued user text changes the task, then cached 
   assert.deepEqual(h.decisions, [
     { task: "original user task", skills: ["skill-0", "skill-1", "skill-2", "skill-3", "skill-4", "skill-5"] },
     { task: "new user task", skills: ["skill-2", "skill-3", "skill-4", "skill-5"] },
-  ], "only the new USER task causes another decision; subsequent rounds reuse its scores");
+    { task: "new user task", skills: ["skill-4", "skill-5"] },
+  ], "queued user task resets the goal; subsequent activity re-scores remaining candidates");
   assert.match(h.contexts[1].messages.filter((m) => m.role === "user").map(h.text).join(), /<name>skill-2<\/name>[\s\S]*<name>skill-3<\/name>/);
   assert.match(h.contexts[2].messages.filter((m) => m.role === "user").map(h.text).join(), /<name>skill-4<\/name>[\s\S]*<name>skill-5<\/name>/);
   assert.equal(h.contexts.length, 3, "the final assistant turn never creates another request");

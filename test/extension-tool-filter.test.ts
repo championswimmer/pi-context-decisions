@@ -239,7 +239,7 @@ test("cadence initial: a failed initial pick records nothing, so the next user p
   assert.equal(h.requests.at(-1)!.state.task, "second"); assert.equal(h.ledger().at(-1)?.initialTask, "second");
   assert.equal(await h.gate("ext_a"), undefined);
 });
-test("cadence tool-round: next-best candidates arrive after a completed tool round from cached scores; aborted and assistant-only turns do nothing", async (t) => {
+test("cadence tool-round: next-best candidates arrive after a completed tool round after activity rescoring; aborted and assistant-only turns do nothing", async (t) => {
   const h = await toolSetup(t, { tools: { cadence: "tool-round", maxAdded: 1 }, extra: [A, B, C], scores: { ext_a: 2, ext_b: 1.5, ext_c: 1 } });
   await h.start("task");
   assert.deepEqual(h.ledger().at(-1)?.tools, ["ext_a"]);
@@ -250,7 +250,7 @@ test("cadence tool-round: next-best candidates arrive after a completed tool rou
   assert.deepEqual(h.ledger().at(-1)?.tools, ["ext_b"]); assert.deepEqual(h.active(), [...CORE, "ext_a", "ext_b"]);
   await h.end({ toolResults: [{}] });
   assert.deepEqual(h.ledger().at(-1)?.tools, ["ext_c"]);
-  assert.equal(h.requests.length, calls, "no extra decision call for the same task");
+  assert.equal(h.requests.length, calls + 2, "changed activity re-scores remaining candidates");
 });
 test("cadence prompt: queued steering text is a new task for the remaining candidates; prompt cadence ignores tool results alone", async (t) => {
   const h = await toolSetup(t, { tools: { maxAdded: 1 }, extra: [A, B], scores: { ext_a: 2 } });
@@ -343,7 +343,7 @@ for (const mode of ["tools", "mcp"] as const) {
   });
 }
 
-test("cached group tool-round grants keep their group score alongside the turn_end notice", async (t) => {
+test("adaptive group tool-round grants keep their group score alongside the turn_end notice", async (t) => {
   const h = await toolSetup(t, { tools: { mode: "mcp", cadence: "tool-round", maxAdded: 1 },
     extra: [mcpTool("anchor", "run"), mcpTool("agent_browser", "run"), extTool("plugin", "codemode")],
     scores: { mcp__anchor: 2, mcp__agent_browser: 1.6, ext__plugin: 1.4 } });
@@ -353,7 +353,7 @@ test("cached group tool-round grants keep their group score alongside the turn_e
   assert.ok(h.notices().some((notice) => (notice.details as { groups?: string[] }).groups?.includes("mcp__agent_browser")));
   await h.end({ toolResults: [{}] });
   assert.deepEqual(h.ledger().at(-1)?.picks, { ext__plugin: { score: 1.4, threshold: 0.375 } });
-  assert.equal(h.requests.length, 1, "tool-round additions used cached scores but still persisted their numeric picks");
+  assert.equal(h.requests.length, 3, "tool-round additions re-scored and persisted their numeric picks");
   await h.set("decision.threshold", "0.9");
   await h.command("history");
   assert.match(h.messages.at(-1)!, /\+ mcp__agent_browser  score 1\.6 \/ ≥0\.75 · notice/);
