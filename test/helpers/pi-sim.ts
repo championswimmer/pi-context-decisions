@@ -4,11 +4,13 @@
 // commit order. Not a Pi test: it only enforces the contracts documented in Pi 1.1.0.
 import type { ExtensionAPI, ExtensionContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
 import type { CommandContext, ExtensionHost } from "../../src/extension/contracts.ts";
-import { SKILLS_MESSAGE_TYPE, readLedger, type BranchEntryLike } from "../../src/extension/skill-ledger.ts";
+import { formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-agent";
+import { advertisedSkillNames } from "../../src/extension/skill-state.ts";
+import type { BranchEntryLike } from "../../src/extension/tool-ledger.ts";
 
 export interface SimEntry extends BranchEntryLike {
   id: string; parentId: string | null; timestamp: string;
-  message?: { role: string; content?: unknown; timestamp?: number };
+  message?: { role: string; content?: unknown; timestamp?: number; stopReason?: string; sections?: Record<string, string | null> };
   display?: boolean;
   firstKeptEntryId?: string; summary?: string;
   targetId?: string; replacement?: { content: unknown } | null;
@@ -28,6 +30,9 @@ export class SimSession {
   }
   appendMessage(role: "user" | "assistant" | "toolResult" | "system", content: unknown = "") {
     return this.push({ type: "message", message: { role, content, timestamp: 1_700_000_000_000 + this.counter } });
+  }
+  appendSkillsSection(section: string | null) {
+    return this.push({ type: "message", message: { role: "system", content: "", sections: { skills: section }, timestamp: Date.now() } });
   }
   /** Retained-from entry: everything before `firstKeptEntryId` is summarized away, as Pi's compaction does. */
   compact(firstKeptEntryId: string) { return this.push({ type: "compaction", firstKeptEntryId, summary: "SUMMARY" }); }
@@ -141,6 +146,17 @@ export function simHost(session = new SimSession(), tools: string[] = ["read", "
       const results: unknown[] = [];
       for (const handler of handlers.get(event) ?? []) results.push(await handler(value, ctx as ExtensionContext));
       if (event === "before_agent_start") {
+        // Pi applies a native system section update before the new user message.
+        const skills = (value as { systemPromptOptions?: { skills?: Skill[] } }).systemPromptOptions?.skills;
+        if (skills) {
+          const reader = state.active.includes("read") ? "read" : state.active.includes("bash") ? "bash" : undefined;
+          const formatted = reader ? formatSkillsForPrompt(skills, reader).trim() : "";
+          const next = formatted ? `<skills>\n${formatted}\n</skills>` : null;
+          try {
+            const previous = [...host.session.getBranch()].reverse().find((entry) => entry.message?.role === "system" && entry.message.sections && "skills" in entry.message.sections)?.message?.sections?.skills ?? null;
+            if (next !== previous) host.session.appendSkillsSection(next);
+          } catch { /* An unreadable branch cannot be projected in this stand-in. */ }
+        }
         // Pi persists the user message, then each handler message, in that order.
         const prompt = (value as { prompt?: string }).prompt;
         if (typeof prompt === "string") host.session.appendMessage("user", prompt);
@@ -184,14 +200,14 @@ export async function turnEnd(host: SimHost, ctx: CommandContext, options: TurnE
     if (draft.type === "custom_message") host.session.appendCustomMessage(draft);
     else if (draft.type === "custom" && draft.customType) host.session.appendCustom(draft.customType, draft.data);
   }
-  const drafts = entries.filter((draft) => draft.type === "custom_message" && draft.customType === SKILLS_MESSAGE_TYPE);
+  const drafts = entries.filter((draft) => draft.type === "custom_message" && draft.customType === "context-decisions-skills");
   const all = entries;
   return { drafts, continued, all };
 }
 export const deltaMessages = (session: SimSession) =>
-  session.getBranch().filter((entry) => entry.type === "custom_message" && entry.customType === SKILLS_MESSAGE_TYPE);
+  session.getBranch().filter((entry) => entry.type === "custom_message" && entry.customType === "context-decisions-skills");
 /** Skills the model sees on this branch: system-prompt skills of the run plus every visible delta. */
 export function advertised<T extends { name: string; disableModelInvocation?: boolean }>(host: SimHost, inventory: readonly T[], runSkills: readonly T[]): string[] {
-  const names = new Set([...runSkills.map((skill) => skill.name), ...readLedger(host.session).visible]);
+  const names = new Set([...runSkills.map((skill) => skill.name), ...advertisedSkillNames(host.session as never)]);
   return inventory.filter((skill) => !skill.disableModelInvocation && names.has(skill.name)).map((skill) => skill.name);
 }

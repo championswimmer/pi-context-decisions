@@ -85,20 +85,20 @@ function mount(fixture: OpsFixture, options: { rows?: number; initialRoute?: Ini
   };
   return { component, results, press, text, until, tui, get renders() { return renders; }, closedHooks };
 }
-/** Skills rows: toggle, cadence, global, project, status, close. */
+/** Skills rows: toggle, global, project, status, close. */
 const toRow = (h: ReturnType<typeof mount>, row: number) => { h.press(...Array(row).fill(KEY.down)); };
 
-test("Skills tab shows exactly the six concise rows; relevance knobs and the nested Tools & MCP entry are not on it", async () => {
+test("Skills tab shows exactly the five concise rows; relevance knobs and the nested Tools & MCP entry are not on it", async () => {
   const f = fakeOps(); const h = mount(f); await h.until(/Always allowed · Project\s+3/);
-  const labels = ["Skill filtering", "Run picker", "Always allowed · Global", "Always allowed · Project", "Status…", "Close"];
+  const labels = ["Skill filtering", "Always allowed · Global", "Always allowed · Project", "Status…", "Close"];
   const text = h.text(100); let at = -1;
   for (const label of labels) { const next = text.indexOf(label); assert.ok(next > at, `${label} out of order or missing`); at = next; }
-  assert.doesNotMatch(text, /threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode|Tools & MCP/i);
+  assert.doesNotMatch(text, /Run picker|threshold|Batch size|Concurrency|Timeout|On failure|Scoring mode|Tools & MCP/i);
   assert.match(text, /Skills\s+Tools\s+Advanced/, "the tab strip lists both tabs"); assert.doesNotMatch(text, /\[ (Skill|Tool) picker \]/, "no bracket selectors");
   assert.equal(h.results.length, 0); h.component.dispose();
 });
 
-test("the description yields to the list: all six rows plus the tab strip incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
+test("the description yields to the list: all five rows plus the tab strip incl. Close fit a 16-row terminal; tiny heights keep the selected row", () => {
   const f = fakeOps(); const h = mount(f, { rows: 14 });
   const text = h.text(100); assert.match(text, /Status…/); assert.match(text, /Close/);
   assert.ok(h.component.render(100).length <= dialogHeightBudget(14));
@@ -238,16 +238,15 @@ test("a valid edit saves once and returns to Advanced with a Saved banner", asyn
   assert.equal(f.settings.decision.chunkSize, 25); assert.match(h.text(), /Saved/); assert.match(h.text(), /Shard size\s+25/); h.component.dispose();
 });
 
-test("threshold is in Advanced; skill cadence stays on Skills and saves through the same path", async () => {
+test("threshold is in Advanced; skill cadence is not exposed", async () => {
   const f = fakeOps(); const h = mount(f, { initialRoute: "advanced" });
   assert.doesNotMatch(h.text(), /Skill filtering|Run picker/);
   h.press(KEY.down, KEY.down, KEY.enter); assert.match(h.text(), /Value: 0\.375/);
   h.press(...Array(5).fill(KEY.backspace), ..."0.5", KEY.enter); await tick();
   assert.equal(f.settings.decision.threshold, 0.5);
-  h.press(KEY.tab, KEY.down, KEY.enter); assert.match(h.text(), /Decisions › Skills › Run picker/);
-  h.press(KEY.down, KEY.enter); await tick();
-  assert.equal(f.settings.relevance.cadence, "tool-round");
-  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:decision.threshold=0.5", "updateSetting:relevance.cadence=tool-round"]);
+  h.press(KEY.tab);
+  assert.doesNotMatch(h.text(), /Run picker/);
+  assert.deepEqual(f.calls.filter((call) => call.startsWith("updateSetting")), ["updateSetting:decision.threshold=0.5"]);
   h.component.dispose();
 });
 
@@ -372,17 +371,17 @@ test("focus reaches the edit Input only in the edit route", async () => {
 });
 
 test("status route loads lines, scrolls and refreshes; errors render inline", async () => {
-  const f = fakeOps(); const h = mount(f); toRow(h, 4); h.press(KEY.enter);
+  const f = fakeOps(); const h = mount(f); toRow(h, 3); h.press(KEY.enter);
   await h.until(/Credentials: environment/); h.press(KEY.enter); await tick(); assert.equal(f.calls.filter((call) => call === "statusLines").length, 2);
   h.press(KEY.esc); assert.doesNotMatch(h.text(), /Decisions › Status/); h.component.dispose();
   const g = fakeOps({ statusLines: async () => { throw new SettingsError("Repair settings first"); } });
-  const k = mount(g, { initialRoute: "main" }); toRow(k, 4); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
+  const k = mount(g, { initialRoute: "main" }); toRow(k, 3); k.press(KEY.enter); await k.until(/Repair settings first/); k.component.dispose();
 });
 
 test("allowlist route embeds the editor within the dialog budget; Esc from search pops to main and cancels ranking", async () => {
   const ranks: AbortSignal[] = [];
   const f = fakeOps({ allowlist: async (scope, signal) => { f.calls.push(`allowlist:${scope}`); (f.signals.allowlist ??= []).push(signal); return allowlistDeps(scope, { rankLabel: "fixture · paid", rank: (_query, _skills, s) => { ranks.push(s); return new Promise<RelevanceItem[]>(() => {}); } }); } });
-  const h = mount(f, { rows: 20 }); toRow(h, 2); h.press(KEY.enter);
+  const h = mount(f, { rows: 20 }); toRow(h, 1); h.press(KEY.enter);
   await h.until(/Search:/);
   const lines = h.component.render(100); assert.ok(lines.length <= dialogHeightBudget(20), `${lines.length} lines`);
   assert.match(h.text(), /Decisions › Always allowed · Global/);
@@ -396,7 +395,7 @@ test("allowlist route embeds the editor within the dialog budget; Esc from searc
 test("allowlist save feedback appears as a banner on main, not as a transcript report", async () => {
   const saves: string[][] = [];
   const f = fakeOps({ allowlist: async (scope) => allowlistDeps(scope, { async save(names) { saves.push(names); } }) });
-  const h = mount(f); toRow(h, 2); h.press(KEY.enter); await h.until(/Search:/);
+  const h = mount(f); toRow(h, 1); h.press(KEY.enter); await h.until(/Search:/);
   h.press(KEY.down, KEY.space, KEY.save); await h.until(/Always-allowed skills saved/);
   assert.deepEqual(saves, [["skill-00"]]);
   h.press(KEY.esc, KEY.esc); assert.doesNotMatch(h.text(), /Search:/);
@@ -406,13 +405,13 @@ test("allowlist save feedback appears as a banner on main, not as a transcript r
 test("project row is disabled without a working directory and shows the reason instead of opening", async () => {
   const f = fakeOps({}, { hasCwd: false }); const h = mount(f);
   assert.match(h.text(), /Always allowed · Project\s+n\/a/); assert.ok(!f.calls.includes("projectCount"));
-  toRow(h, 3); h.press(KEY.enter); assert.match(h.text(), /No working directory/); assert.ok(!f.calls.some((call) => call.startsWith("allowlist")));
+  toRow(h, 2); h.press(KEY.enter); assert.match(h.text(), /No working directory/); assert.ok(!f.calls.some((call) => call.startsWith("allowlist")));
   h.component.dispose();
 });
 
 test("project warning is visible on the row without leaving the dialog", async () => {
   const f = fakeOps({ projectCount: async () => ({ count: 2, warning: "Project allowlist is malformed" }) });
-  const h = mount(f); await h.until(/Always allowed · Project\s+2 ⚠/); toRow(h, 3); assert.match(h.text(), /malformed/); h.component.dispose();
+  const h = mount(f); await h.until(/Always allowed · Project\s+2 ⚠/); toRow(h, 2); assert.match(h.text(), /malformed/); h.component.dispose();
 });
 
 test("settings errors render as a banner on main", () => {
@@ -469,7 +468,7 @@ test("rendered frame fits width and height at every size for every route, with h
   const routes: [string, (h: ReturnType<typeof mount>) => void][] = [
     ["main", () => {}], ["tools", (h) => h.component.navigate("tools")], ["advanced", (h) => h.component.navigate("advanced")], ["provider", (h) => h.component.navigate("provider")],
     ["model", (h) => h.component.navigate("model")], ["allowlist", (h) => h.component.navigate({ allowlist: "global" })],
-    ["status", (h) => { toRow(h, 4); h.press(KEY.enter); }],
+    ["status", (h) => { toRow(h, 3); h.press(KEY.enter); }],
     ["edit", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.enter); }],
     ["options", (h) => { h.component.navigate("advanced"); h.press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter); }],
   ];

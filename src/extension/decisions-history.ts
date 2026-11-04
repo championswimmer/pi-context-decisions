@@ -1,7 +1,11 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SKILLS_BASE_ENTRY, SKILLS_MESSAGE_TYPE } from "./skill-ledger.ts";
+import { skillNamesFromSection } from "./skill-state.ts";
 import { TOOLS_LEDGER_ENTRY, TOOLS_NOTICE_TYPE } from "./tool-ledger.ts";
 import { sanitizeTerminalText } from "./settings-model.ts";
+
+// Read-only compatibility for sessions written before native skill delivery.
+const SKILLS_BASE_ENTRY = "context-decisions-base";
+const SKILLS_MESSAGE_TYPE = "context-decisions-skills";
 
 export const HISTORY_KINDS = ["skills", "redelivered", "pinned", "base", "tools", "groups", "noticeTools", "noticeGroups"] as const;
 export type HistoryKind = typeof HISTORY_KINDS[number];
@@ -20,7 +24,7 @@ export interface HistoryTurn {
   batches: HistoryBatch[];
 }
 export interface DecisionsHistory { turns: HistoryTurn[] }
-export const HISTORY_NOTE = "Committed active-branch history by user prompt; empty prompts omitted. Turn = one-based assistant response index, including tool rounds. Queued user prompts start a row too; messages before the same response share a row. Counts include confirmed base skills, not re-deliveries or notices. Historical additions, not current visibility or proof of a provider request. Picks show score (raw 0–2) / ≥ minimum (2 × stored threshold). Missing picks are unknown: fail-open/base reasons were not stored.";
+export const HISTORY_NOTE = "Committed active-branch history by user prompt; empty prompts omitted. Turn = one-based assistant response index, including tool rounds. Counts are historical advertisements/availability, not proof of a provider request or current visibility. Native skill sections store no picks or pin reasons. Recorded tool and legacy skill picks show score (raw 0–2) / ≥ minimum (2 × stored threshold); missing picks are unknown.";
 const LABELS: Record<HistoryKind, string> = {
   skills: "Skills advertised",
   redelivered: "Skills re-delivered (not new)",
@@ -71,19 +75,15 @@ const markFor = (picks: Map<string, RecordedPick>, allowlisted: ReadonlySet<stri
   return pick ? qualifyingMark(pick.score, pick.threshold) : UNKNOWN_MARK;
 };
 const hasItems = (batch: HistoryBatch) => HISTORY_KINDS.some((kind) => batch.items[kind].length > 0);
-const decodeXml = (value: string) => value.replace(/&(amp|lt|gt|quot|apos);/g, (_match, entity: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" })[entity]!);
 
 /**
  * Read-only, branch-derived snapshot: never consults live scores, pending drafts or settings. Optional names-only
  * membership comes from the filter's existing registry snapshot, never a fresh lookup or a parsed tool-name prefix.
  * It only collapses tools covered by a group at the SAME response boundary; earlier tools-mode grants stay historical.
- * Old records store no membership, so unloaded/unknown members remain individual rather than guessed.
- * getBranch deliberately preserves compacted/edited history. A committed delta was added to context at
- * that point, even if it was later summarized away. Base custom entries alone are NOT delivery proof:
- * show those names only when a subsequent committed system skills section actually advertises them.
- * Added skills/tools carry their raw score and threshold when recorded (`picks`); allowlist grants are marked
- * pinned and never scored. Pick reasons and fail-open flags are not stored, so missing picks show as unknown.
- * A later notice can reuse the original committed grant's mark, not a live decision or today's threshold.
+ * Native skill advertisements come directly from committed Pi system sections; no score or pin reason is inferred.
+ * Legacy skill custom records remain readable, but new sessions need no skill ledger. Compacted/edited history
+ * remains historical evidence on the branch, not a claim that an advertisement is still provider-visible.
+ * Tool picks and legacy skill picks use stored raw score/threshold; missing picks remain unknown.
  * Notices are a distinct context event, never a declaration.
  */
 export function readDecisionsHistory(session: Pick<ExtensionContext["sessionManager"], "getBranch">, toolGroups: ReadonlyMap<string, string> = new Map()): DecisionsHistory {
@@ -143,12 +143,11 @@ export function readDecisionsHistory(session: Pick<ExtensionContext["sessionMana
     } else if (entry.type === "message" && entry.message.role === "system") {
       const skills = entry.message.sections?.skills;
       if (typeof skills !== "string") continue;
-      // Pi's public formatSkillsForPrompt uses these XML-escaped tags. Do not display paths/descriptions.
-      for (const match of skills.matchAll(/<name>([^<]{1,1536})<\/name>/g)) {
-        const name = decodeXml(match[1]);
-        if (!recordedBase.has(name) || seen.skills.has(name)) continue;
+      for (const name of skillNamesFromSection(skills)) {
+        if (seen.skills.has(name) || seen.base.has(name) || seen.pinned.has(name)) continue;
         if (recordedPinned.has(name)) add("pinned", [name], entry.timestamp, () => PINNED_MARK);
-        else add("base", [name], entry.timestamp, () => BASE_MARK);
+        else if (recordedBase.has(name)) add("base", [name], entry.timestamp, () => BASE_MARK);
+        else add("skills", [name], entry.timestamp);
       }
     } else if (entry.type === "custom_message" && entry.customType === SKILLS_MESSAGE_TYPE) {
       const details = object(entry.details);

@@ -586,7 +586,7 @@ test("notice: nothing to announce when every candidate is available", async (t) 
 const skillFixture = (count = 4) => Array.from({ length: count }, (_, i) => ({ name: `skill-${i}`, description: `Description ${i}`, filePath: `/private/${i}/SKILL.md`, baseDir: `/private/${i}`,
   sourceInfo: { path: `/private/${i}/SKILL.md`, source: "fixture", scope: "user" as const, origin: "top-level" as const }, disableModelInvocation: false }));
 
-test("with skill AND tool filtering on, both decision calls are in flight together and the skill delta is exactly what skills alone produce", async (t) => {
+test("with skill AND tool filtering on, both decision calls are in flight together and native skills match what skills alone produce", async (t) => {
   const scores = { skill_scores: 0, "skill-0": 2, "skill-1": 1.5, ext_a: 2 };
   const both = await toolSetup(t, { skills: true, extra: [A, B], scores, settings: { relevance: { ...defaultSettings().relevance, enabled: true, maxSkills: 2, minCandidates: 0 } } as never });
   both.skillList.push(...skillFixture());
@@ -594,24 +594,23 @@ test("with skill AND tool filtering on, both decision calls are in flight togeth
   const running = both.start("do the thing");
   await until(() => both.requests.length === 2, "both decision calls");
   assert.equal(both.behavior.peak, 2, "skill and tool decision calls overlap");
-  release(); const { results } = await running;
-  const skillMessage = (results.at(-1) as { message: { customType: string; content: string; details: unknown } }).message;
+  release(); const { e } = await running;
   const toolsOnly = await toolSetup(t, { skills: true, tools: { enabled: false }, extra: [A, B], scores, settings: { relevance: { ...defaultSettings().relevance, enabled: true, maxSkills: 2, minCandidates: 0 } } as never });
   toolsOnly.skillList.push(...skillFixture());
   const alone = await toolsOnly.start("do the thing");
-  const aloneMessage = (alone.results.at(-1) as { message: typeof skillMessage }).message;
-  assert.equal(skillMessage.customType, "context-decisions-skills");
-  assert.deepEqual(skillMessage, aloneMessage, "the skill delta is unchanged by tool filtering");
+  assert.deepEqual(e.systemPromptOptions.skills.map((skill) => skill.name), ["skill-0", "skill-1"]);
+  assert.deepEqual(e.systemPromptOptions.skills, alone.e.systemPromptOptions.skills, "the native skills section is unchanged by tool filtering");
   assert.deepEqual(both.active(), [...CORE, "ext_a"]); assert.equal(await both.gate("ext_a"), undefined);
   assert.equal(both.requests.filter((request) => request.state.tools).length, 1); assert.equal(both.requests.filter((request) => request.state.skills).length, 1);
   const kinds = both.sim.session.getBranch().filter((entry) => entry.customType?.startsWith("context-decisions")).map((entry) => entry.customType);
-  assert.deepEqual(kinds, ["context-decisions-tools", "context-decisions-skills"], "the tool ledger record, then the hidden skill delta, right after the user message");
+  assert.deepEqual(kinds, ["context-decisions-tools"], "only the tool ledger is custom; skills use Pi's native section");
+  assert.ok(both.sim.session.getBranch().some((entry) => entry.type === "message" && entry.message?.role === "system" && String(entry.message.sections?.skills).includes("<name>skill-0</name>")));
 });
 test("a failing tool round never disturbs the skill pass, and vice versa", async (t) => {
   const h = await toolSetup(t, { skills: true, extra: [A], fail: true, settings: { relevance: { ...defaultSettings().relevance, enabled: true, maxSkills: 2, minCandidates: 0 }, decision: { failMode: "closed" } } as never });
   h.skillList.push(...skillFixture());
-  const { results } = await h.start("task");
-  assert.equal((results.at(-1) as { message?: unknown } | undefined)?.message, undefined, "closed failure adds no skills");
+  const { e } = await h.start("task");
+  assert.deepEqual(e.systemPromptOptions.skills, [], "closed failure adds no skills");
   assert.deepEqual(h.active(), CORE, "and no tools");
   assert.equal(h.requests.length, 2, "each feature made exactly one (failed) call");
 });

@@ -127,7 +127,7 @@ test("real renderer: closing returns focus to the editor, removes every dialog r
 test("real renderer: keyboard input reaches the dialog while it owns focus, not the editor underneath", async () => {
   const s = await scenario(24, 0);
   // Pi forwards stdin to the focused component; emulate that path.
-  s.tui.getFocusedComponent()!.handleInput!("\x1b[B"); s.tui.getFocusedComponent()!.handleInput!("\x1b[B");
+  s.tui.getFocusedComponent()!.handleInput!("\x1b[B");
   s.tui.renderNow(); await s.terminal.flush();
   assert.equal(s.editor.getValue(), "", "typing must not reach the editor while the dialog is focused");
   const viewport = s.terminal.snapshot().lines.join("\n");

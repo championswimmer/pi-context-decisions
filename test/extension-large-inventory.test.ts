@@ -43,7 +43,7 @@ for (const [count, maxQuestions, expected] of [[400, undefined, [50, 50, 50, 50,
     } finally { if (timer) clearTimeout(timer); release(); }
     await operation;
     assert.deepEqual(advertised(host, original, event.systemPromptOptions.skills), original.filter((_, i) => i % 50 === 0).map((skill) => skill.name));
-    assert.deepEqual(event.systemPromptOptions.skills, []);
+    assert.deepEqual(event.systemPromptOptions.skills, original.filter((_, i) => i % 50 === 0));
     assert.equal(event.systemPrompt, "unchanged");
     assert.deepEqual(event.systemPromptOptions.selectedTools, ["read"]);
     assert.deepEqual(event.systemPromptOptions.sections, { mcp_servers: "unchanged" });

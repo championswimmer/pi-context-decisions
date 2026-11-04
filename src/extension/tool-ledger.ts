@@ -1,4 +1,4 @@
-import type { BranchEntryLike } from "./skill-ledger.ts";
+export interface BranchEntryLike { type: string; id?: string; customType?: string; data?: unknown; details?: unknown; content?: unknown }
 import type { AdditionPick } from "../apps/skill-filter.ts";
 
 /**

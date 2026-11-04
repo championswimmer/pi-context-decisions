@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { BeforeAgentStartEvent } from "@earendil-works/pi-coding-agent";
-import { advertised, deltaMessages, simHost } from "./helpers/pi-sim.ts";
+import { advertised, simHost } from "./helpers/pi-sim.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionRegistry } from "../src/extension/contracts.ts";
 import { defaultSettings, saveSettings } from "../src/settings.ts";
@@ -43,7 +43,9 @@ for (const [selection, url, provider] of [
   try { await sim.emit("before_agent_start", event, ctx); }
   finally { globalThis.fetch = original; }
   assert.equal(calls, 1); assert.deepEqual(lookups, [provider]);
-  assert.deepEqual(advertised(sim, skills, event.systemPromptOptions.skills), ["fixture-0"]); assert.deepEqual(event.systemPromptOptions.skills, []);
-  const [delta] = deltaMessages(sim.session); assert.match(String(delta.content), /<name>fixture-0<\/name>/); assert.doesNotMatch(String(delta.content), /fixture-1/);
+  assert.deepEqual(advertised(sim, skills, event.systemPromptOptions.skills), ["fixture-0"]);
+  assert.deepEqual(event.systemPromptOptions.skills.map((skill) => skill.name), ["fixture-0"]);
+  const section = sim.session.getBranch().find((entry) => entry.message?.role === "system" && entry.message.sections?.skills)?.message?.sections?.skills;
+  assert.match(String(section), /<name>fixture-0<\/name>/); assert.doesNotMatch(String(section), /fixture-1/);
   assert.deepEqual(event.systemPromptOptions.selectedTools, ["read"]); assert.equal(event.systemPromptOptions.sections.mcp_servers, "unchanged"); assert.equal(event.systemPrompt, "Do not replace");
 });

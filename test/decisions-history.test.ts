@@ -5,8 +5,10 @@ import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { historyBatchLines, historyReportLines, historyTurnLines, historyTurnSummary, qualifyingMark, readDecisionsHistory, type DecisionsHistory } from "../src/extension/decisions-history.ts";
 import { classifyTools } from "../src/apps/tool-inventory.ts";
 import { readToolLedger } from "../src/extension/tool-ledger.ts";
-import { SKILLS_BASE_ENTRY, SKILLS_MESSAGE_TYPE, buildSkillsDelta } from "../src/extension/skill-ledger.ts";
 import { TOOLS_LEDGER_ENTRY, TOOLS_NOTICE_TYPE, toolRecords, buildToolNotice } from "../src/extension/tool-ledger.ts";
+// Fixtures for read-only compatibility with sessions from before native skill delivery.
+const SKILLS_BASE_ENTRY = "context-decisions-base";
+const SKILLS_MESSAGE_TYPE = "context-decisions-skills";
 
 const batches = (history: DecisionsHistory) => history.turns.flatMap((turn) => turn.batches);
 const session = () => SessionManager.inMemory("/virtual");
@@ -163,8 +165,8 @@ test("a base record is not context delivery: require the actual committed Pi ski
   const h = readDecisionsHistory(s);
   assert.equal(batches(h).length, 1);
   assert.deepEqual(batches(h)[0].items.base, [name]);
-  assert.deepEqual(batches(h)[0].items.skills, ["delta-first"]);
-  assert.doesNotMatch(historyReportLines(h).join("\n"), /PRIVATE|overwritten|not-recorded/);
+  assert.deepEqual(batches(h)[0].items.skills, ["delta-first", "not-recorded"]);
+  assert.doesNotMatch(historyReportLines(h).join("\n"), /PRIVATE|overwritten/);
 });
 
 test("history is branch-derived, survives compaction/edits, and includes re-delivery-only batches without inventing new picks", () => {
@@ -248,25 +250,21 @@ test("oversized unfiltered skill bases retain every validated name once confirme
   assert.match(report.at(-1)!, /report truncated/);
 });
 
-test("oversized fail-open skill deltas and re-deliveries retain every name emitted by the canonical writer", () => {
+test("native cumulative sections retain every skill and count additions only once", () => {
   const s = session();
-  const skills = oversizedSkills(); const expected = skills.map((skill) => skill.name);
+  const skills = oversizedSkills();
+  const section = formatSkillsForPrompt(skills);
   user(s);
-  const added = buildSkillsDelta(skills, [], "read")!;
-  assert.equal(added.details.added.length, 1001, "explicit fail-open can advertise the entire remaining inventory");
-  s.appendCustomMessageEntry(added.customType, added.content, added.display, added.details);
+  s.appendMessage({ role: "system", content: "", sections: { skills: section }, timestamp: 0 });
   assistant(s);
   user(s);
-  const redelivered = buildSkillsDelta([], skills, "read")!;
-  s.appendCustomMessageEntry(redelivered.customType, redelivered.content, redelivered.display, redelivered.details);
+  s.appendMessage({ role: "system", content: "", sections: { skills: section }, timestamp: 0 });
   assistant(s);
   const h = readDecisionsHistory(s);
-  assert.equal(batches(h).length, 2);
-  assert.deepEqual(batches(h)[0].items.skills, expected);
-  assert.deepEqual(batches(h)[1].items.redelivered, expected);
-  assert.equal(historyBatchLines(batches(h)[0]).at(-1), "  + oversized-1000  unknown (no recorded pick)", "fail-open adds have no recorded pick");
-  assert.equal(historyBatchLines(batches(h)[1]).at(-1), "  + oversized-1000  re-delivered", "re-delivery is marked without a new score");
-  assert.match(historyReportLines(h).at(-1)!, /report truncated/, "report bounds stay independent of the complete model");
+  assert.equal(batches(h).length, 1, "an unchanged native section is not a new addition");
+  assert.deepEqual(batches(h)[0].items.skills, skills.map((skill) => skill.name));
+  assert.equal(historyBatchLines(batches(h)[0]).at(-1), "  + oversized-1000  unknown (no recorded pick)");
+  assert.match(historyReportLines(h).at(-1)!, /report truncated/);
 });
 
 const skillNamed = (name: string) => ({ name, description: "PRIVATE", filePath: `/PRIVATE/${name}/SKILL.md`, disableModelInvocation: false } as Skill);
@@ -287,11 +285,9 @@ test("added items show raw score / ≥ minimum from recorded picks; pinned (allo
   for (const line of lines) assert.doesNotMatch(line, /PRIVATE|label|beat|threshold|score:/, "added lines carry only the numbers, never labels");
 });
 
-test("canonical skill and tool writers produce the exact score shown in details and bounded reports", () => {
+test("native skills and scored tool records share a response without inventing skill scores", () => {
   const s = session(); user(s);
-  const skill = skillNamed("selected");
-  const delta = buildSkillsDelta([skill], [skillNamed("returning")], "read", new Map([[skill.name, { score: 1.6, threshold: 0.375 }]]))!;
-  s.appendCustomMessageEntry(delta.customType, delta.content, delta.display, delta.details);
+  s.appendMessage({ role: "system", content: "", sections: { skills: formatSkillsForPrompt([skillNamed("selected")]) }, timestamp: 0 });
   const group = "mcp__agent_browser";
   for (const data of toolRecords({ groups: [group], picks: new Map([[group, { score: 1.6, threshold: 0.375 }]]) })) record(s, data);
   assistant(s);
@@ -299,13 +295,11 @@ test("canonical skill and tool writers produce the exact score shown in details 
   s.appendCustomMessageEntry(notice.customType, notice.content, notice.display, notice.details);
   const h = readDecisionsHistory(s);
   const lines = historyTurnLines(h.turns[0]);
-  assert.ok(lines.includes("  + selected  score 1.6 / ≥0.75"));
-  assert.ok(lines.includes("  + returning  re-delivered"));
+  assert.ok(lines.includes("  + selected  unknown (no recorded pick)"));
   assert.ok(lines.includes("  + mcp__agent_browser  score 1.6 / ≥0.75"));
-  assert.equal(batches(h)[1].marks?.noticeGroups?.get(group), "score 1.6 / ≥0.75", "a later notice reuses the committed group pick, not a fresh score");
+  assert.equal(batches(h)[1].marks?.noticeGroups?.get(group), "score 1.6 / ≥0.75");
   assert.equal(historyTurnSummary(h.turns[0]), "1 skills, 1 tools/MCPs added");
   assert.doesNotMatch(historyReportLines(h).join("\n"), /PRIVATE|Tool availability/);
-  assert.ok(lines.filter((line) => line.startsWith("  + ")).every((line) => !line.includes("unknown")), "every rendered name has its recorded score or re-delivery label");
 });
 
 test("notice-before-grant at one boundary gets its recorded score, but a future boundary cannot retroactively score an old notice", () => {

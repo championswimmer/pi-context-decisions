@@ -22,10 +22,16 @@ async function until(component: Component, pattern: RegExp, width = 120): Promis
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }
-/** Skills tab rows in dialog order: toggle, provider, model, global, project, Advanced, Status, Close. */
 function openAllowlistRow(component: Component, row: "global" | "project") {
-  for (let i = 0; i < (row === "global" ? 2 : 3); i++) component.handleInput!(keys.down);
-  component.handleInput!(keys.enter);
+  const selected = new RegExp(`❯\\s+Always allowed · ${row === "global" ? "Global" : "Project"}`);
+  for (let i = 0; i < 10; i++) {
+    if (selected.test(component.render(120).join("\n"))) {
+      component.handleInput!(keys.enter);
+      return;
+    }
+    component.handleInput!(keys.down);
+  }
+  assert.fail(`Could not select ${row} allowlist row`);
 }
 async function saved(component: Component): Promise<void> {
   const deadline = Date.now() + 2000;

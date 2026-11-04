@@ -6,7 +6,6 @@
   "relevance": {
     "enabled": true,
     "maxSkills": 6,
-    "cadence": "prompt",
     "minCandidates": 0,
     "pinned": []
   },
