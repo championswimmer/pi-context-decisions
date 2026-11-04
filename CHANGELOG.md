@@ -27,6 +27,17 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v1.4.0...v2.0.0
 
+### [v2.6.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.6.0) — Minor release (2026-11-04)
+
+<!-- Release notes generated using configuration in .github/release.yml at v2.6.0 -->
+
+#### What's Changed
+##### Merged pull requests
+* fix: make decisions status reports easier to read by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/9
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v2.5.0...v2.6.0
+
 ### [v2.5.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v2.5.0) — Minor release (2026-10-31)
 
 <!-- Release notes generated using configuration in .github/release.yml at v2.5.0 -->
