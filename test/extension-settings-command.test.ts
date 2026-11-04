@@ -196,6 +196,39 @@ test("missing keys are labelled, guide to env or /login, and are never persisted
   dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
 });
 
+test("printed status has short, separated sections and the dialog uses the same report", async (t) => {
+  const h = await harness(t);
+  await h.command("status");
+  const report = h.messages.at(-1)!;
+  const sections = report.split("\n\n");
+  assert.equal(sections.length, 5);
+  assert.match(sections[0]!, /^Context decisions\n  Model: not configured\n  Credentials: not configured$/);
+  assert.match(sections[1]!, /^Skills: on · picker prompt\n  Limits:/);
+  assert.match(sections[2]!, /^Tool filtering: off \(opt-in\)/);
+  assert.match(sections[3]!, /^Decision settings \(Advanced\)\n  Threshold:/);
+  assert.match(sections[4]!, /^Subagents · Allow inherited tools: off$/);
+  assert.ok(report.split("\n").every((line) => line.length <= 90), "default report should not need long lines");
+  assert.doesNotMatch(report, /\{"|Top models|token window/);
+
+  const run = h.command(""); const dialog = await h.dialog();
+  for (let i = 0; i < 4; i++) dialog.handleInput!(KEY.down);
+  dialog.handleInput!(KEY.enter);
+  await h.until(dialog, /Credentials:/);
+  // Collect the scrollable view: status stays readable even in a narrow dialog.
+  const screens: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    screens.push(h.text(dialog, 64));
+    dialog.handleInput!(KEY.down);
+  }
+  const visible = screens.join("\n");
+  for (const heading of sections.map((section) => section.split("\n")[0]!)) assert.ok(visible.includes(heading), heading);
+  assert.match(visible, /Threshold: 0\.375/);
+  assert.match(visible, /Shard size: 50/);
+  assert.match(visible, /Credentials: not configured/);
+  dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
+  assert.equal(h.requests.length, 0, "status never makes decision calls");
+});
+
 test("dialog work never reads ctx.signal (the agent-run signal), even through status, models and ranking", async (t) => {
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   const run = h.command(""); const dialog = await h.dialog();
@@ -251,8 +284,8 @@ test("a custom() failure is reported as a safe error and does not wedge later op
 
 test("headless commands keep their text output without a dialog", async (t) => {
   const h = await harness(t, { mode: "print", custom: false });
-  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions: not configured/);
-  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: not configured/, "no arguments: the status, never a dialog");
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Context decisions\n  Model: not configured/);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions\n  Model: not configured/, "no arguments: the status, never a dialog");
   await h.command("pin alpha"); assert.match(h.messages.at(-1)!, /Pinned skills updated/);
   await h.command("tools list"); assert.match(h.messages.at(-1)!, /Tools \(/);
   assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);

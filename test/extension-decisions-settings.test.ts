@@ -78,7 +78,7 @@ test("the setter subcommands are gone: each is rejected with the usage line, cha
 });
 test("headless /decisions prints the status instead of a menu", async (t) => {
   const h = await fixture(t);
-  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions: not configured/); assert.equal(h.dialogs.length, 0);
+  await h.command(""); assert.match(h.messages.at(-1)!, /Context decisions\n  Model: not configured/); assert.equal(h.dialogs.length, 0);
 });
 test("RPC Advanced edits validate and persist; cancelling leaves settings alone", async (t) => {
   const h = await fixture(t, { ui: true });
@@ -98,7 +98,7 @@ test("RPC enable/disable, batch size and all-parallel settings persist with boun
   await h.set("decision.chunkSize", "51"); assert.match(h.messages.at(-1)!, /integer in \[1, 50\]/);
   await h.set("decision.concurrency", "33"); assert.match(h.messages.at(-1)!, /integer in \[0, 32\]/);
   await h.set("enabled"); settings = (await loadSettings(h.path)).settings; assert.equal(settings.relevance.enabled, true);
-  await h.command("status"); assert.match(h.messages.at(-1)!, /all shards parallel/); assert.equal(h.inference(), 0);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /concurrency: all shards/); assert.equal(h.inference(), 0);
 });
 
 for (const [provider, model, variable] of [
@@ -205,6 +205,6 @@ test("RPC Advanced edits shared tuning while Skills owns cadence; cadence is a s
   await h.set("relevance.cadence", "every-token"); assert.equal((await loadSettings(h.path)).settings.relevance.cadence, "tool-round", "no option matches: nothing changes");
   await h.set("relevance.maxSkills", "3"); await h.set("decision.chunkSize", "10");
   assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 3); assert.equal((await loadSettings(h.path)).settings.decision.chunkSize, 10);
-  await h.command("status"); assert.match(h.messages.at(-1)!, /Skills: on · picker tool-round · max 3 added per round/);
-  assert.match(h.messages.at(-1)!, /Shared tuning \(Advanced\): threshold 0.625 \(0–1\)/);
+  await h.command("status"); assert.match(h.messages.at(-1)!, /Skills: on · picker tool-round\n  Limits: max 3 added per round/);
+  assert.match(h.messages.at(-1)!, /Decision settings \(Advanced\)\n  Threshold: 0.625 \(0–1\)/);
 });
