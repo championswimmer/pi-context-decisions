@@ -20,6 +20,7 @@ import type { ProjectAllowlistLoad } from "../project-allowlist.ts";
 import type { ContextDecisionsSettings, ToolFilterMode } from "../settings.ts";
 import type { CommandContext, ExtensionHost, LastToolDecision, ToolReport } from "./contracts.ts";
 import { queuedUserTask } from "./queued-task.ts";
+import { decisionActivity, readPreviousFinalReply } from "./decision-activity.ts";
 import { beginDecisionLoader, endDecisionLoader } from "./decision-loader.ts";
 import { toolFooter } from "./footer-status.ts";
 import { TOOLS_LEDGER_ENTRY, buildToolNotice, readToolLedger, toolRecords, type ToolLedgerData, type ToolLedgerState, type ToolNotice } from "./tool-ledger.ts";
@@ -79,6 +80,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   const fresh = () => ({ marker: false, tools: new Set<string>(), groups: new Set<string>(), considered: new Set<string>(), withheld: new Set<string>(), released: new Set<string>(), initialTask: undefined as string | undefined, picks: new Map<string, AdditionPick>(), allowlisted: new Set<string>() });
   let pend = fresh();
   let runTask: string | undefined;
+  let runPreviousReply: { text: string } | undefined;
   let failedKey: string | undefined;
   let last: LastToolDecision | undefined;
   let counts: { available: number; external: number; withheld: number; mode: ToolFilterMode } | undefined;
@@ -173,6 +175,10 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   };
   const cacheKey = (task: string, settings: ContextDecisionsSettings) =>
     JSON.stringify([settings.tools.mode, task, settings.backend, settings.decision.maxPromptChars, settings.decision.maxDescriptionChars]);
+  const scoringKey = (task: string, settings: ContextDecisionsSettings, activity?: import("../decision/types.ts").JsonValue[]) => {
+    const context = activity?.length ? activity : settings.tools.cadence === "prompt" ? runPreviousReply : undefined;
+    return context ? JSON.stringify([cacheKey(task, settings), context]) : cacheKey(task, settings);
+  };
   /** Cadence task for catch-up and lazy scoring: the first task for `initial`, the latest otherwise. */
   const cadenceTask = (settings: ContextDecisionsSettings, ledger: ToolLedgerState): string | undefined =>
     settings.tools.cadence === "initial" ? ledger.initialTask : runTask;
@@ -191,9 +197,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
    * Score undecided candidates. `only` narrows to specific identifiers; `needScore` restricts to candidates a decision call would be
    * needed for under the task key (catch-up and gate), as opposed to also re-selecting cached next-best ones (`tool-round`).
    */
-  const decide = async (ctx: ExtensionContext, c: Frame, task: string, trigger: Trigger, options: { signal: AbortSignal; generation: number; needScoreOnly: boolean; excludeConsidered: boolean; recordConsidered: boolean; journal?: Journal }): Promise<Outcome> => {
+  const decide = async (ctx: ExtensionContext, c: Frame, task: string, trigger: Trigger, options: { signal: AbortSignal; generation: number; needScoreOnly: boolean; excludeConsidered: boolean; recordConsidered: boolean; journal?: Journal; activity?: import("../decision/types.ts").JsonValue[] }): Promise<Outcome> => {
     const { settings, mode } = c;
-    const key = cacheKey(task, settings);
+    const key = scoringKey(task, settings, options.activity);
     let names = remaining(c.inv, mode, c.avail);
     if (options.excludeConsidered) names = new Set([...names].filter((name) => !c.ledger.considered.has(name)));
     let candidates = candidatesFor(c.inv, mode, names, settings.decision.maxDescriptionChars);
@@ -205,7 +211,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     if (!candidates.length) return "ok";
     if (error) { last = { ...base(), reason: "fail-closed", candidates: candidates.length, kept: 0, errorCode: "config", latencyMs: Date.now() - started }; return "failed"; }
     if (!client) return "failed";
-    if (key === failedKey && trigger !== "prompt" && trigger !== "queued" && trigger !== "initial") return "failed";
+    if (cacheKey(task, settings) === failedKey && trigger !== "prompt" && trigger !== "queued" && trigger !== "initial") return "failed";
     let round: ToolAdditionResult;
     // Every trigger (prompt, initial, queued, tool-round, catch-up, lazy gate) scores through here: Pi's braille
     // working row reads "Deciding Context" while the round is in flight and restores itself on release.
@@ -213,14 +219,14 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     try {
       round = await scoreToolAdditions(task, candidates, client, {
         ...settings.decision, subject: mode === "mcp" ? "mcp_server" : "tool", maxAdded: settings.tools.maxAdded,
-        maxQuestions: 50, signal: options.signal,
+        maxQuestions: 50, signal: options.signal, activity: options.activity, previousReply: settings.tools.cadence === "prompt" ? runPreviousReply : undefined,
       }, { store: cache, key });
     } catch (error2) {
       round = { added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes: [], considered: [], picks: new Map(), errorCode: safeCode(error2) };
     } finally { endDecisionLoader(); }
     // A superseded (settings/allowlist save, branch change, session replacement) or cancelled round commits nothing.
     if (options.generation !== deps.generation() || options.signal.aborted) return "superseded";
-    if (round.errorCode && round.errorCode !== "aborted") failedKey = key;
+    if (round.errorCode && round.errorCode !== "aborted") failedKey = cacheKey(task, settings);
     addAvailable(mode, round.added, options.journal);
     for (const name of round.added) {
       const pick = round.picks.get(name);
@@ -416,9 +422,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         const key = tool.group && mode === "mcp" ? tool.group : tool.name;
         const task = cadenceTask(settings, c.ledger);
         if (state === "on" && !degraded && settings.backend && task) {
-          const taskKey = cacheKey(task, settings);
+          const taskKey = scoringKey(task, settings);
           const candidate = candidatesFor(inv, mode, new Set([key]), settings.decision.maxDescriptionChars)[0];
-          const eligible = !!candidate && cache.needsScoring(taskKey, candidate) && taskKey !== failedKey && !(settings.tools.cadence === "initial" && c.ledger.considered.has(key));
+          const eligible = !!candidate && cache.needsScoring(taskKey, candidate) && cacheKey(task, settings) !== failedKey && !(settings.tools.cadence === "initial" && c.ledger.considered.has(key));
           if (eligible) {
             if (inflight?.key !== taskKey) {
               const operation = deps.beginOperation();
@@ -465,6 +471,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const error = deps.getSettingsError();
       const task = event.messageType === "custom" || typeof event.prompt !== "string" ? "" : taskWithoutExpandedSkill(event.prompt).trim();
       runTask = task || undefined;
+      runPreviousReply = task && settings.tools.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager) : undefined;
       failedKey = undefined;
       const ledger0 = readLedger(ctx);
       const state = stateOf(settings, error, ledger0);
@@ -573,7 +580,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const newText = queued && !seenQueued.has(queued.id) ? queued : undefined;
       if (newText) seenQueued.add(newText.id);
       const tools = settings.tools;
-      if (newText && tools.cadence !== "initial") { runTask = newText.text; failedKey = undefined; }
+      if (newText && tools.cadence !== "initial") { runTask = newText.text; runPreviousReply = tools.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager, true) : undefined; failedKey = undefined; }
       const operation = deps.beginOperation();
       const generation = deps.generation();
       const j = journal();
@@ -601,7 +608,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
         } else if (state === "on" && remaining(inv, settings.tools.mode, c.avail).size) {
           const toolRound = tools.cadence === "tool-round" && !newText && (event.toolResults?.length ?? 0) > 0 && runTask !== undefined;
           if (newText && !initial) outcome = await decide(ctx, c, newText.text, "queued", { signal, generation, needScoreOnly: false, excludeConsidered: false, recordConsidered: false, journal: j });
-          else if (toolRound) outcome = await decide(ctx, c, runTask!, "tool-round", { signal, generation, needScoreOnly: false, excludeConsidered: false, recordConsidered: false, journal: j });
+          else if (toolRound) outcome = await decide(ctx, c, runTask!, "tool-round", { signal, generation, needScoreOnly: false, excludeConsidered: false, recordConsidered: false, journal: j, activity: decisionActivity(ctx.sessionManager.getBranch()) });
           else {
             const task = cadenceTask(settings, ledger);
             if (task) outcome = await decide(ctx, c, task, "catch-up", { signal, generation, needScoreOnly: true, excludeConsidered: initial, recordConsidered: initial, journal: j });
@@ -641,7 +648,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     },
     reset(session = false) {
       if (session) { scopeEpoch++; scopeWarnings.clear(); snapshot = undefined; mcpOrigins = { scopes: new Map(), warnings: [] }; }
-      cacheEpoch++; pend = fresh(); runTask = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear();
+      cacheEpoch++; pend = fresh(); runTask = undefined; runPreviousReply = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear();
     },
     invalidate() { cacheEpoch++; projectCache = undefined; failedKey = undefined; last = undefined; inflight = undefined; cache.clear(); },
     historyToolGroups: () => new Map((snapshot?.tools ?? []).flatMap((tool) => tool.group ? [[tool.name, tool.group] as const] : [])),

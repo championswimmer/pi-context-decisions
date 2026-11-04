@@ -109,8 +109,8 @@ Choose the timing (called *cadence*) separately for skills and tools:
 
 | Setting | In plain English |
 | --- | --- |
-| **Each prompt** (`prompt`, default) | Pick for each new user task, including an update you queue while the agent is working. |
-| **After tool rounds too** (`tool-round`) | Also add more after completed tool results, before the next model step. Reuse scores for the same user task—not guesses about a new subtask. |
+| **Each prompt** (`prompt`, default) | Pick for each new user task, including queued updates, using the task and bounded visible text of the immediately preceding run's final assistant reply when available. |
+| **After tool rounds too** (`tool-round`) | Also add more after completed tool results, before the next model step. Re-score remaining candidates using the task plus bounded recent assistant text and tool calls (including arguments); never tool results or private reasoning. |
 | **First prompt only** (`initial`, tools only) | Keep using the first task. Later tools are checked against it; candidates already considered are not picked again. A failed first pick can retry. |
 
 New tools can also be checked when they appear or are first called. With no decision model selected, or too few candidates, everything stays available without scoring. A failed decision adds nothing by default; earlier choices stay.

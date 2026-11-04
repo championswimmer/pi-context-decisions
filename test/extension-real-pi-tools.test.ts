@@ -31,6 +31,7 @@ interface Request { declared: string[]; system: { toolsAdded: string[]; toolsRem
 interface Options {
   tools?: Partial<ToolFilterSettings>;
   scores?: Record<string, number>;
+  scoreRequest?: (name: string, request: import("../src/decision/types.ts").DecisionRequest) => number;
   /** Extensions loaded BEFORE ours (registration order is handler order). */
   earlier?: ((pi: ExtensionAPI) => void)[];
   /** Extensions loaded after ours, and builtin-flagged inputs (loaded last, like the CLI's built-ins). */
@@ -68,7 +69,7 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
     createClient: () => createDecisionClient({ id: "pi", model: "fixture", async decide(request) {
       const metadata = (request.state.tools ?? request.state.servers) as Record<string, { name: string }>;
       decisions.push({ task: String(request.state.task), names: Object.values(metadata).map((entry) => entry.name), raw: JSON.stringify(request) });
-      return { answers: Object.fromEntries(Object.entries(metadata).map(([id, entry]) => [id, { type: "score", score: scores[entry.name] ?? 0 }])) };
+      return { answers: Object.fromEntries(Object.entries(metadata).map(([id, entry]) => [id, { type: "score", score: options.scoreRequest?.(entry.name, request) ?? scores[entry.name] ?? 0 }])) };
     } }) });
   const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } } as never, { projectTrusted: options.projectTrusted ?? true });
   const loader = new DefaultResourceLoader({ cwd: root, agentDir, settingsManager, noSkills: true,
@@ -411,7 +412,62 @@ test("real Pi keeps live MCP scope stable after disk edits, including resource r
   assert.equal(await gate("list_mcp_resources", { server: "live" }), undefined);
 });
 
-test("real Pi tool-round: capped direct additions reach each next same-run request from cached scores", async (t) => {
+test("real Pi prompt cadence uses the previous final reply for tool scoring and lazy cache", async (t) => {
+  const h = await realPi(t, (h) => [
+    h.step(() => fauxAssistantMessage([fauxText("INTERMEDIATE"), TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" })),
+    h.step(() => fauxAssistantMessage([fauxText("database is ready")])), finish(h),
+  ], { tools: { cadence: "prompt" }, files: { "a.txt": "RESULT-SECRET" }, earlier: [toolsExtension([{ name: "ext_db" }, { name: "ext_other" }])],
+    scoreRequest: (name, request) => name === "ext_db" && JSON.stringify(request.state.previousReply ?? {}).includes("database is ready") ? 2 : 0 });
+  await h.session.prompt("same goal");
+  await h.session.prompt("same goal");
+  assert.equal(h.requests[0].declared.includes("ext_db"), false);
+  assert.equal(h.requests[2].declared.includes("ext_db"), true);
+  assert.equal(h.decisions.length, 2);
+  assert.equal(JSON.parse(h.decisions[0].raw).state.previousReply, undefined);
+  assert.deepEqual(JSON.parse(h.decisions[1].raw).state.previousReply, { text: "database is ready" });
+  assert.doesNotMatch(JSON.stringify(h.decisions), /INTERMEDIATE|RESULT-SECRET/);
+  const blocked = await h.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "ext_other", toolCallId: "gate", input: {} } as never);
+  assert.equal(blocked?.block, true);
+  assert.equal(h.decisions.length, 2, "lazy gate uses the contextual score cache");
+});
+test("real Pi queued tool decision retains the prior final and excludes the current intermediate", async (t) => {
+  const h = await realPi(t, (h) => [
+    h.step(() => fauxAssistantMessage([fauxText("previous run final")])),
+    h.step(() => { void h.session.steer("queued goal"); return fauxAssistantMessage([fauxText("CURRENT-INTERMEDIATE"), TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }),
+    finish(h),
+  ], { tools: { cadence: "prompt" }, files: { "a.txt": "RESULT-SECRET" }, earlier: [toolsExtension([{ name: "ext_db" }])] });
+  await h.session.prompt("first"); await h.session.prompt("second");
+  assert.deepEqual(h.decisions.map((d) => [d.task, JSON.parse(d.raw).state.previousReply]), [
+    ["first", undefined], ["second", { text: "previous run final" }], ["queued goal", { text: "previous run final" }],
+  ]);
+  assert.doesNotMatch(JSON.stringify(h.decisions), /CURRENT-INTERMEDIATE|RESULT-SECRET/);
+});
+test("real Pi: tool-round activity can enable a previously irrelevant tool without forwarding results", async (t) => {
+  const h = await realPi(t, (h) => [
+    h.step(() => fauxAssistantMessage([fauxText("Need database support"), TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" })), finish(h),
+  ], { tools: { cadence: "tool-round" }, files: { "a.txt": "RESULT-PRIVATE" }, earlier: [toolsExtension([{ name: "ext_db" }])],
+    scoreRequest: (name, request) => name === "ext_db" && JSON.stringify(request.state.activity ?? []).includes("Need database support") ? 2 : 0 });
+  await h.session.prompt("original goal");
+  assert.equal(h.requests[0].declared.includes("ext_db"), false);
+  assert.equal(h.requests[1].declared.includes("ext_db"), true);
+  assert.equal(h.decisions.length, 2);
+  assert.match(h.decisions[1].raw, /Need database support.*read.*a.txt/);
+  assert.doesNotMatch(JSON.stringify(h.decisions), /RESULT-PRIVATE/);
+});
+
+test("real Pi: activity can qualify a previously irrelevant MCP group", async (t) => {
+  const h = await realPi(t, (h) => [
+    h.step(() => fauxAssistantMessage([fauxText("Need database support"), TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" })), finish(h),
+  ], { tools: { mode: "mcp", cadence: "tool-round" }, files: { "a.txt": "RESULT-PRIVATE" },
+    earlier: [toolsExtension([{ name: "mcp__db__query", exposure: "deferred", namespace: { name: "mcp__db" } }])],
+    scoreRequest: (name, request) => name === "mcp__db" && JSON.stringify(request.state.activity ?? []).includes("Need database support") ? 2 : 0 });
+  await h.session.prompt("original goal");
+  assert.doesNotMatch(h.requests[0].text.join(), /MCP servers: mcp__db/);
+  assert.match(h.requests[1].text.join(), /MCP servers: mcp__db/);
+  assert.equal(h.decisions.length, 2);
+  assert.doesNotMatch(JSON.stringify(h.decisions), /RESULT-PRIVATE/);
+});
+test("real Pi tool-round: capped direct additions reach each next same-run request after activity rescoring", async (t) => {
   const h = await realPi(t, (h) => [call(h, "ext_a"), call(h, "ext_a"), finish(h)], {
     tools: { cadence: "tool-round", maxAdded: 1 },
     earlier: [toolsExtension([{ name: "ext_a" }, { name: "ext_b" }, { name: "ext_c" }])],
@@ -419,7 +475,7 @@ test("real Pi tool-round: capped direct additions reach each next same-run reque
   });
   await h.session.prompt("do the task");
   assert.deepEqual(h.requests.map((r) => r.declared), [[...CORE, "ext_a"], [...CORE, "ext_a", "ext_b"], [...CORE, "ext_a", "ext_b", "ext_c"]]);
-  assert.equal(h.decisions.length, 1, "same-task rounds reuse scores, not new model decisions");
+  assert.equal(h.decisions.length, 3, "new activity causes new decisions");
 });
 
 test("real Pi tool-round: capped indirect group additions and earlier drafts reach each next request", async (t) => {
@@ -434,19 +490,19 @@ test("real Pi tool-round: capped indirect group additions and earlier drafts rea
   assert.match(h.requests[0].text.join(), /MCP servers: mcp__a/);
   assert.match(h.requests[1].text.join(), /MCP servers: mcp__b/);
   assert.match(h.requests[2].text.join(), /MCP servers: mcp__c/);
-  assert.equal(h.decisions.length, 1);
+  assert.equal(h.decisions.length, 3);
   assert.doesNotMatch(h.decisions[0].raw, /TOOL-RESULT-SECRET/);
   assert.equal(h.sessionManager.getBranch().filter((e) => e.type === "custom" && e.customType === "earlier-round").length, 2);
 });
 
-test("real Pi tool-round: queued user task refreshes remaining scores, then later rounds use that task's cache", async (t) => {
+test("real Pi tool-round: queued user task refreshes remaining scores, then later activity re-scores remaining candidates", async (t) => {
   const h = await realPi(t, (h) => [
     h.step(() => { void h.session.steer("new USER task"); h.scores.ext_b = 1.5; h.scores.ext_c = 1; return fauxAssistantMessage([TOOL_CALL("ext_a")], { stopReason: "toolUse" }); }),
     call(h, "ext_a"), finish(h),
   ], { tools: { cadence: "tool-round", maxAdded: 1 }, earlier: [toolsExtension([{ name: "ext_a" }, { name: "ext_b" }, { name: "ext_c" }])], scores: { ext_a: 2 } });
   await h.session.prompt("original USER task");
   assert.deepEqual(h.requests.map((r) => r.declared), [[...CORE, "ext_a"], [...CORE, "ext_a", "ext_b"], [...CORE, "ext_a", "ext_b", "ext_c"]]);
-  assert.deepEqual(h.decisions.map((d) => [d.task, d.names]), [["original USER task", ["ext_a", "ext_b", "ext_c"]], ["new USER task", ["ext_b", "ext_c"]]]);
+  assert.deepEqual(h.decisions.map((d) => [d.task, d.names]), [["original USER task", ["ext_a", "ext_b", "ext_c"]], ["new USER task", ["ext_b", "ext_c"]], ["new USER task", ["ext_c"]]]);
 });
 
 test("real Pi tool-round: a newly registered indirect tool is announced even without an earlier baseline notice", async (t) => {
