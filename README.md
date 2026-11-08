@@ -9,6 +9,16 @@ This extension uses a decision model to pick skill descriptions for Pi to see. A
 
 It can also filter external tools, MCP servers and extension tool groups. That is a separate feature, **off by default**.
 
+## Check out my other Pi extensions
+
+- [![pi-cache-graph](https://img.shields.io/badge/📊_pi--cache--graph-orange?style=flat-square)](https://github.com/championswimmer/pi-cache-graph) — Real-time prompt cache hit rates and token metrics.
+- [![pi-checklist](https://img.shields.io/badge/✅_pi--checklist-teal?style=flat-square)](https://github.com/championswimmer/pi-checklist) — Session task checklist with dependencies and a TUI renderer.
+- [![pi-context-decisions](https://img.shields.io/badge/🧠_pi--context--decisions-indigo?style=flat-square)](https://github.com/championswimmer/pi-context-decisions) — Selects relevant skills and optionally filters tools for each task.
+- [![pi-context-prune](https://img.shields.io/badge/✂️_pi--context--prune-green?style=flat-square)](https://github.com/championswimmer/pi-context-prune) — Prunes verbose tool outputs from context while preserving history.
+- [![pi-context-usage](https://img.shields.io/badge/🪟_pi--context--usage-purple?style=flat-square)](https://github.com/championswimmer/pi-context-usage) — Dot-grid visualization of context window token usage.
+- [![pi-gauge](https://img.shields.io/badge/⚡_pi--gauge-yellow?style=flat-square)](https://github.com/championswimmer/pi-gauge) — Live tokens/sec and TTFT in the status bar.
+- [![pi-subagent-manager](https://img.shields.io/badge/🤖_pi--subagent--manager-blue?style=flat-square)](https://github.com/championswimmer/pi-subagent-manager) — Delegate work to parallel subagents and monitor their progress.
+
 ## When is it useful?
 
 - **You have lots of skills.** For a task such as “Review these validation changes,” it can advertise relevant review skills instead of unrelated release or UI skills.
