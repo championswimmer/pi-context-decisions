@@ -13,6 +13,17 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v3.0.0...v4.0.0
 
+### [v4.1.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v4.1.0) — Minor release (2026-11-16)
+
+<!-- Release notes generated using configuration in .github/release.yml at v4.1.0 -->
+
+#### What's Changed
+##### Merged pull requests
+* Fix missing skill pick scores in decision history by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/12
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v4.0.0...v4.1.0
+
 ## [v3.0.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v3.0.0) — Major release (2026-11-04)
 
 <!-- Release notes generated using configuration in .github/release.yml at v3.0.0 -->
