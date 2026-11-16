@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { skillNamesFromSection } from "./skill-state.ts";
+import { SKILL_SCORE_ENTRY, skillNamesFromSection } from "./skill-state.ts";
 import { TOOLS_LEDGER_ENTRY, TOOLS_NOTICE_TYPE } from "./tool-ledger.ts";
 import { sanitizeTerminalText } from "./settings-model.ts";
 
@@ -24,7 +24,7 @@ export interface HistoryTurn {
   batches: HistoryBatch[];
 }
 export interface DecisionsHistory { turns: HistoryTurn[] }
-export const HISTORY_NOTE = "Committed active-branch history by user prompt; empty prompts omitted. Turn = one-based assistant response index, including tool rounds. Counts are historical advertisements/availability, not proof of a provider request or current visibility. Native skill sections store no picks or pin reasons. Recorded tool and legacy skill picks show score (raw 0–2) / ≥ minimum (2 × stored threshold); missing picks are unknown.";
+export const HISTORY_NOTE = "Committed active-branch history by user prompt; empty prompts omitted. Turn = one-based assistant response index, including tool rounds. Counts are historical advertisements/availability, not proof of a provider request or current visibility. Native sections alone do not record scores or pin reasons. Recorded skill and tool picks show score (raw 0–2) / ≥ minimum (2 × stored threshold); other missing picks are unknown.";
 const LABELS: Record<HistoryKind, string> = {
   skills: "Skills advertised",
   redelivered: "Skills re-delivered (not new)",
@@ -48,6 +48,7 @@ const newBatch = (turn: number): HistoryBatch => ({ turn, answered: false, items
 const PINNED_MARK = "pinned (allowlist)";
 const BASE_MARK = "base (unfiltered)";
 const REDELIVERED_MARK = "re-delivered";
+const NATIVE_SKILL_MARK = "no score (native pick)";
 const UNKNOWN_MARK = "unknown (no recorded pick)";
 const defaultMark = (kind: HistoryKind): string => kind === "pinned" ? PINNED_MARK : kind === "base" ? BASE_MARK : kind === "redelivered" ? REDELIVERED_MARK : UNKNOWN_MARK;
 interface RecordedPick { score: number; threshold: number }
@@ -80,10 +81,9 @@ const hasItems = (batch: HistoryBatch) => HISTORY_KINDS.some((kind) => batch.ite
  * Read-only, branch-derived snapshot: never consults live scores, pending drafts or settings. Optional names-only
  * membership comes from the filter's existing registry snapshot, never a fresh lookup or a parsed tool-name prefix.
  * It only collapses tools covered by a group at the SAME response boundary; earlier tools-mode grants stay historical.
- * Native skill advertisements come directly from committed Pi system sections; no score or pin reason is inferred.
- * Legacy skill custom records remain readable, but new sessions need no skill ledger. Compacted/edited history
- * remains historical evidence on the branch, not a claim that an advertisement is still provider-visible.
- * Tool picks and legacy skill picks use stored raw score/threshold; missing picks remain unknown.
+ * Native advertisements come from committed Pi system sections. Separately committed numeric metadata
+ * annotates only names newly advertised by the referenced section. Legacy records remain readable.
+ * Compacted/edited history remains historical evidence, not a claim of provider visibility.
  * Notices are a distinct context event, never a declaration.
  */
 export function readDecisionsHistory(session: Pick<ExtensionContext["sessionManager"], "getBranch">, toolGroups: ReadonlyMap<string, string> = new Map()): DecisionsHistory {
@@ -97,6 +97,7 @@ export function readDecisionsHistory(session: Pick<ExtensionContext["sessionMana
   let batch = newBatch(1);
   let inBatch = new Map<HistoryKind, Set<string>>();
   let batchGroups = new Set<string>();
+  let nativeSections = new Map<string, Set<string>>();
   // Buffer until the assistant: before_agent_start records precede the user, and turn_end deltas
   // precede queued steering. Both belong to a user in this same response boundary, not the prior prompt.
   const finishBatch = () => {
@@ -133,6 +134,7 @@ export function readDecisionsHistory(session: Pick<ExtensionContext["sessionMana
       hasUser = false;
       inBatch = new Map();
       batchGroups = new Set();
+      nativeSections = new Map();
       continue;
     }
     if (entry.type === "message" && entry.message.role === "user") {
@@ -143,11 +145,19 @@ export function readDecisionsHistory(session: Pick<ExtensionContext["sessionMana
     } else if (entry.type === "message" && entry.message.role === "system") {
       const skills = entry.message.sections?.skills;
       if (typeof skills !== "string") continue;
+      const newlyAdvertised = new Set<string>();
+      nativeSections.set(entry.id, newlyAdvertised);
       for (const name of skillNamesFromSection(skills)) {
         if (seen.skills.has(name) || seen.base.has(name) || seen.pinned.has(name)) continue;
         if (recordedPinned.has(name)) add("pinned", [name], entry.timestamp, () => PINNED_MARK);
         else if (recordedBase.has(name)) add("base", [name], entry.timestamp, () => BASE_MARK);
-        else add("skills", [name], entry.timestamp);
+        else { add("skills", [name], entry.timestamp, () => NATIVE_SKILL_MARK); newlyAdvertised.add(name); }
+      }
+    } else if (entry.type === "custom" && entry.customType === SKILL_SCORE_ENTRY) {
+      const data = object(entry.data);
+      const sectionNames = typeof data?.sectionId === "string" ? nativeSections.get(data.sectionId) : undefined;
+      if (data?.v === 1 && sectionNames) for (const [name, pick] of picksOf(data.picks)) {
+        if (sectionNames.has(name)) batch.marks!.skills!.set(name, qualifyingMark(pick.score, pick.threshold));
       }
     } else if (entry.type === "custom_message" && entry.customType === SKILLS_MESSAGE_TYPE) {
       const details = object(entry.details);

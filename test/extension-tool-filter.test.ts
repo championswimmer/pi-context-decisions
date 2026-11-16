@@ -603,7 +603,7 @@ test("with skill AND tool filtering on, both decision calls are in flight togeth
   assert.deepEqual(both.active(), [...CORE, "ext_a"]); assert.equal(await both.gate("ext_a"), undefined);
   assert.equal(both.requests.filter((request) => request.state.tools).length, 1); assert.equal(both.requests.filter((request) => request.state.skills).length, 1);
   const kinds = both.sim.session.getBranch().filter((entry) => entry.customType?.startsWith("context-decisions")).map((entry) => entry.customType);
-  assert.deepEqual(kinds, ["context-decisions-tools"], "only the tool ledger is custom; skills use Pi's native section");
+  assert.deepEqual(kinds, ["context-decisions-tools", "context-decisions-skill-scores"], "native skills have non-context score metadata alongside the tool ledger");
   assert.ok(both.sim.session.getBranch().some((entry) => entry.type === "message" && entry.message?.role === "system" && String(entry.message.sections?.skills).includes("<name>skill-0</name>")));
 });
 test("a failing tool round never disturbs the skill pass, and vice versa", async (t) => {
