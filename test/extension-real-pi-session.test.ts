@@ -10,6 +10,8 @@ import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import { defaultSettings, saveSettings } from "../src/settings.ts";
 import { advertisedSkillNames } from "../src/extension/skill-state.ts";
+import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
+import { SKILL_SCORE_ENTRY } from "../src/extension/skill-state.ts";
 
 test("real Pi persists cumulative native skill section updates, without custom skill messages", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "native-real-pi-")); t.after(() => rm(root, { recursive: true, force: true }));
@@ -36,6 +38,11 @@ test("real Pi persists cumulative native skill section updates, without custom s
   await created.session.prompt("first task"); await created.session.prompt("second task");
   assert.deepEqual(decisions, [["skill-0", "skill-1", "skill-2", "skill-3", "skill-4", "skill-5"], ["skill-2", "skill-3", "skill-4", "skill-5"]]);
   assert.deepEqual([...advertisedSkillNames(sessionManager)], ["skill-0", "skill-1", "skill-2", "skill-3"]);
+  const scoreEntries = sessionManager.getBranch().filter((entry) => entry.type === "custom" && entry.customType === SKILL_SCORE_ENTRY);
+  assert.equal(scoreEntries.length, 2);
+  const history = readDecisionsHistory(sessionManager);
+  assert.equal(history.turns[0].batches[0].marks?.skills?.get("skill-0"), "score 2 / ≥0.75");
+  assert.equal(history.turns[1].batches[0].marks?.skills?.get("skill-2"), "score 1.6 / ≥0.75");
   const sections = sessionManager.getBranch().flatMap((entry) => entry.type === "message" && entry.message.role === "system" && typeof entry.message.sections?.skills === "string" ? [entry.message.sections.skills] : []);
   assert.ok(sections.length >= 2); assert.match(sections.at(-1)!, /<name>skill-3<\/name>/);
   assert.ok(sessionManager.getBranch().every((entry) => entry.type !== "custom_message" || entry.customType !== "context-decisions-skills"));

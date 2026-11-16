@@ -8,6 +8,8 @@ import type { BeforeAgentStartEvent, Skill } from "@earendil-works/pi-coding-age
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext } from "../src/extension/contracts.ts";
 import { advertisedSkillNames } from "../src/extension/skill-state.ts";
+import { SKILL_SCORE_ENTRY } from "../src/extension/skill-state.ts";
+import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
 import { defaultSettings, saveSettings, type RelevanceSettings, type DecisionSettings } from "../src/settings.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
@@ -45,8 +47,48 @@ test("Pi skills section grows on later prompts, excluding committed skills from 
   assert.deepEqual(await h.start("second"), ["skill-0", "skill-1", "skill-2", "skill-3"]);
   assert.deepEqual(h.scored(1), ["skill-2", "skill-3", "skill-4", "skill-5"]);
   assert.deepEqual([...advertisedSkillNames(h.sim.session as never)], ["skill-0", "skill-1", "skill-2", "skill-3"]);
-  assert.equal(h.sim.session.getBranch().filter((e) => e.type === "custom_message" || e.type === "custom").length, 0);
+  assert.equal(h.sim.session.getBranch().filter((e) => e.type === "custom_message").length, 0);
+  assert.equal(h.sim.session.getBranch().filter((e) => e.customType === "context-decisions-skill-scores").length, 2);
   assert.doesNotMatch(JSON.stringify(h.requests), /private|SKILL\.md|filePath|baseDir/);
+});
+
+test("score metadata follows committed native sections across reload and branch navigation", async (t) => {
+  const h = await setup(t, { pins: ["skill-5"], relevance: { maxSkills: 1 } });
+  await h.start("first"); await turnEnd(h.sim, h.ctx);
+  const fork = h.sim.session.leaf!;
+  await h.start("second"); await turnEnd(h.sim, h.ctx);
+  const marks = () => readDecisionsHistory(h.sim.session as never).turns.flatMap((turn) => turn.batches).map((batch) => batch.marks!.skills!);
+  assert.equal(marks()[0].get("skill-0"), "score 2 / ≥0.75");
+  assert.equal(marks()[0].get("skill-5"), "no score (native pick)");
+  assert.equal(marks()[1].get("skill-1"), "score 1.9 / ≥0.75");
+  const entries = h.sim.session.getBranch().filter((entry) => entry.customType === SKILL_SCORE_ENTRY);
+  assert.doesNotMatch(JSON.stringify(entries), /Description|private|first|second|SKILL\.md/);
+  await h.sim.emit("session_start", {}, h.ctx);
+  assert.equal(marks()[1].get("skill-1"), "score 1.9 / ≥0.75");
+  h.sim.session.navigate(fork); await h.sim.emit("session_tree", {}, h.ctx);
+  assert.equal(marks().length, 1);
+});
+
+test("unscored passthrough and failed-open rounds never persist score metadata", async (t) => {
+  for (const options of [{ unconfigured: true }, { relevance: { minCandidates: 20 } }, { fail: true, decision: { failMode: "open" as const } }]) {
+    const h = await setup(t, options); await h.start("task");
+    assert.equal(h.sim.session.getBranch().filter((entry) => entry.customType === SKILL_SCORE_ENTRY).length, 0);
+  }
+});
+
+test("uncommitted and overridden selections do not acquire scores", async (t) => {
+  const h = await setup(t); const event = h.event("task");
+  // Call the hook without the simulator's commit phase (preflight failure).
+  await h.sim.handlers.get("before_agent_start")![0](event, { ...h.ctx, sessionManager: h.sim.session } as never);
+  await h.sim.emit("message_end", { message: { role: "user" } }, h.ctx);
+  assert.equal(h.sim.session.getBranch().filter((entry) => entry.customType === SKILL_SCORE_ENTRY).length, 0);
+  const next = h.event("task again");
+  await h.sim.handlers.get("before_agent_start")![0](next, { ...h.ctx, sessionManager: h.sim.session } as never);
+  // A later extension removed skill-1 from the actual section.
+  h.sim.session.appendSkillsSection("<skills><skill><name>skill-0</name></skill></skills>");
+  await h.sim.emit("message_end", { message: { role: "user" } }, h.ctx);
+  const data = h.sim.session.getBranch().find((entry) => entry.customType === SKILL_SCORE_ENTRY)?.data as { picks: Record<string, unknown> };
+  assert.deepEqual(Object.keys(data.picks), ["skill-0"]);
 });
 
 test("pins and manual-only skills bypass scoring; unpinning never drops a committed skill", async (t) => {

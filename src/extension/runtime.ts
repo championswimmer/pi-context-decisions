@@ -1,4 +1,5 @@
 import { subagentManagerPresent } from "./subagent-manager.ts";
+
 import { MIN_SUBAGENT_MANAGER_DIAGNOSTICS_VERSION, MANAGER_DIAGNOSTICS_HELP, createManagerDiagnostics } from "./manager-diagnostics.ts";
 import type { BeforeAgentStartEvent, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
@@ -12,8 +13,9 @@ import { DecisionError } from "../decision/errors.ts";
 import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
 import type { ContextDecisionsSettings } from "../settings.ts";
 import { defaultSettings, loadSettings, parseSettings, saveSettings } from "../settings.ts";
+import { SKILL_SCORE_ENTRY } from "./skill-state.ts";
 import { registerCommands } from "./commands.ts";
-import { advertisedSkillNames } from "./skill-state.ts";
+import { advertisedSkillNames, skillNamesFromSection } from "./skill-state.ts";
 import type { Controller, ExtensionDependencies, ExtensionHost, LastDecision } from "./contracts.ts";
 import { readPreviousFinalReply } from "./decision-activity.ts";
 import { createToolFilter } from "./tool-filter.ts";
@@ -44,6 +46,8 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   const projectWarnings = new Set<string>();
   /** Scores for the current task: later rounds for the same task add the next-best skills without a call. */
   const scoreCache = new RelevanceScoreCache();
+  // Pending only until Pi commits the native section and starts committing its user message.
+  let pendingSkillScores: { branchLeaf: string | null; picks: Map<string, { score: number; threshold: number }> } | undefined;
   /** Full Pi skill objects from the latest prompt for inventory and status. */
   let skillRefs = new Map<string, Skill>();
   let toolsStatusShown = false;
@@ -158,7 +162,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     managerDiagnostics.reset();
     managerNoticeShown = false;
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
-    abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
+    pendingSkillScores = undefined; abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
     scoreCache.clear(); skillRefs = new Map(); toolFilter.reset(true);
     await projectWriteQueue;
     await writeQueue;
@@ -174,7 +178,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   pi.on("session_tree", () => {
     // Navigating the session tree changes the active branch: an in-flight pass was computed against the old one.
     // Everything branch-derived is re-read from the new branch at the next boundary; only transient state is dropped here.
-    abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.reset();
+    pendingSkillScores = undefined; abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.reset();
   });
   pi.on("session_shutdown", (_event, ctx) => {
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
@@ -182,7 +186,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     commands.closeDialogs();
     managerDiagnostics.reset();
     resetDecisionLoader();
-    abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
+    pendingSkillScores = undefined; abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
     if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
   });
   const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
@@ -227,11 +231,16 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     return result;
   });
   async function skillBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): Promise<void> {
+    pendingSkillScores = undefined;
     const available = uniqueByName(event.systemPromptOptions.skills);
     inventorySnapshot = toScopedSkills(available);
     if (!available.length && !skillRefs.size) return;
     let committed: Set<string>;
-    try { committed = advertisedSkillNames(ctx.sessionManager); }
+    let branchLeaf: string | null;
+    try {
+      committed = advertisedSkillNames(ctx.sessionManager);
+      branchLeaf = ctx.sessionManager.getBranch().at(-1)?.id ?? null;
+    }
     catch {
       // An unreadable branch cannot prove that any skill was already advertised.
       event.systemPromptOptions.skills = available.filter((skill) => skill.disableModelInvocation);
@@ -295,6 +304,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (superseded()) { bail(); return; }
       for (const skill of round?.added ?? []) advertised.add(skill.name);
       apply(advertised);
+      if (round?.picks?.size && hasReader) pendingSkillScores = { branchLeaf, picks: new Map(round.picks) };
       record(round, {
         reason, candidates: round?.candidates ?? invocable.length, kept: round?.added.length ?? 0,
         advertised: hasReader ? invocable.filter((skill) => advertised.has(skill.name)).length : committed.size,
@@ -304,6 +314,23 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (errorCode && errorCode !== "aborted") controller.report(ctx, `Skill advertisements ${reason} (${errorCode}); /decisions status`, "warning");
     } finally { pending.delete(abort); }
   }
+  // Pi emits message_end before persisting that message. By the user event, its preceding
+  // native system section is already committed; a preflight failure never reaches here.
+  pi.on("message_end", (event, ctx) => {
+    if (event.message.role !== "user" || !pendingSkillScores) return;
+    const pendingScores = pendingSkillScores;
+    pendingSkillScores = undefined;
+    try {
+      const branch = ctx.sessionManager.getBranch();
+      const start = pendingScores.branchLeaf === null ? 0 : branch.findIndex((entry) => entry.id === pendingScores.branchLeaf) + 1;
+      if (pendingScores.branchLeaf !== null && start === 0) return;
+      const sectionEntry = branch.slice(start).reverse().find((entry) => entry.type === "message" && entry.message.role === "system" && typeof entry.message.sections?.skills === "string");
+      if (!sectionEntry || sectionEntry.type !== "message" || sectionEntry.message.role !== "system") return;
+      const names = new Set(skillNamesFromSection(sectionEntry.message.sections?.skills ?? ""));
+      const picks = Object.fromEntries([...pendingScores.picks].filter(([name]) => names.has(name)));
+      if (Object.keys(picks).length) pi.appendEntry(SKILL_SCORE_ENTRY, { v: 1, sectionId: sectionEntry.id, picks });
+    } catch { /* An unreadable or changed branch cannot prove the advertisement. */ }
+  });
   /** Tool/MCP filtering still runs at turn boundaries independently of skills. */
   pi.on("turn_end", async (event, ctx) => (await toolFilter.turnEnd(event as never, ctx)) as never);
   pi.on("tool_call", async (event, ctx) => toolFilter.toolCall(event as never, ctx));

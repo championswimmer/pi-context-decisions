@@ -159,7 +159,10 @@ export function simHost(session = new SimSession(), tools: string[] = ["read", "
         }
         // Pi persists the user message, then each handler message, in that order.
         const prompt = (value as { prompt?: string }).prompt;
-        if (typeof prompt === "string") host.session.appendMessage("user", prompt);
+        if (typeof prompt === "string") {
+          for (const handler of handlers.get("message_end") ?? []) await handler({ type: "message_end", message: { role: "user", content: prompt } }, ctx as ExtensionContext);
+          host.session.appendMessage("user", prompt);
+        }
         for (const result of results) {
           const message = (result as { message?: { customType: string; content: unknown; display: boolean; details?: unknown } } | undefined)?.message;
           if (message) host.session.appendCustomMessage(message);

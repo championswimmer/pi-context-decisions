@@ -63,11 +63,11 @@ async function setup(t: { after(fn: () => Promise<void>): void }, deps: Partial<
   return { ...h, path, messages };
 }
 
-test("real entry factory registers one command and seven hooks (two for opt-in tool filtering), no custom provider or tools", async () => {
+test("real entry factory registers one command and eight hooks (two for opt-in tool filtering), no custom provider or tools", async () => {
   const h = host(); contextDecisions(h.pi as ExtensionAPI);
   assert.deepEqual([...h.commands.keys()], ["decisions"]);
   assert.equal(h.commands.has("context-decisions"), false);
-  assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "turn_end", "tool_call", "agent_end"]);
+  assert.deepEqual([...h.handlers.keys()], ["session_start", "session_tree", "session_shutdown", "before_agent_start", "message_end", "turn_end", "tool_call", "agent_end"]);
   // The dialog owns every setting: only status/history, the paid self-test, read-only listings and the legacy pin list remain as arguments.
   assert.deepEqual((await h.commands.get("decisions")!.getArgumentCompletions!(""))!.map((item) => item.value), ["status", "history", "test", "tools", "mcp", "pin", "unpin"]);
   assert.equal(await h.commands.get("decisions")!.getArgumentCompletions!("mo"), null);

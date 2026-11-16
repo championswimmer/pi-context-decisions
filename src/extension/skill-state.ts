@@ -1,5 +1,8 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+/** Non-context metadata for scores of skills in a committed native section. */
+export const SKILL_SCORE_ENTRY = "context-decisions-skill-scores";
+
 /** Read skill names from Pi's canonical skills section without exposing descriptions or paths. */
 export function skillNamesFromSection(section: string): string[] {
   const entities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };

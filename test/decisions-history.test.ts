@@ -263,7 +263,7 @@ test("native cumulative sections retain every skill and count additions only onc
   const h = readDecisionsHistory(s);
   assert.equal(batches(h).length, 1, "an unchanged native section is not a new addition");
   assert.deepEqual(batches(h)[0].items.skills, skills.map((skill) => skill.name));
-  assert.equal(historyBatchLines(batches(h)[0]).at(-1), "  + oversized-1000  unknown (no recorded pick)");
+  assert.equal(historyBatchLines(batches(h)[0]).at(-1), "  + oversized-1000  no score (native pick)");
   assert.match(historyReportLines(h).at(-1)!, /report truncated/);
 });
 
@@ -295,13 +295,28 @@ test("native skills and scored tool records share a response without inventing s
   s.appendCustomMessageEntry(notice.customType, notice.content, notice.display, notice.details);
   const h = readDecisionsHistory(s);
   const lines = historyTurnLines(h.turns[0]);
-  assert.ok(lines.includes("  + selected  unknown (no recorded pick)"));
+  assert.ok(lines.includes("  + selected  no score (native pick)"));
   assert.ok(lines.includes("  + mcp__agent_browser  score 1.6 / ≥0.75"));
   assert.equal(batches(h)[1].marks?.noticeGroups?.get(group), "score 1.6 / ≥0.75");
   assert.equal(historyTurnSummary(h.turns[0]), "1 skills, 1 tools/MCPs added");
   assert.doesNotMatch(historyReportLines(h).join("\n"), /PRIVATE|Tool availability/);
 });
 
+
+test("skill score metadata only annotates names introduced by its referenced section", () => {
+  const s = session();
+  const first = s.appendMessage({ role: "system", content: "", sections: { skills: formatSkillsForPrompt([skillNamed("first"), skillNamed("invalid")]) }, timestamp: 0 });
+  s.appendCustomEntry("context-decisions-skill-scores", { v: 1, sectionId: first, picks: { first: { score: 1.5, threshold: 0.25 }, invalid: { score: 4, threshold: 0.25 }, absent: { score: 2, threshold: 0 } } });
+  user(s); assistant(s);
+  const second = s.appendMessage({ role: "system", content: "", sections: { skills: formatSkillsForPrompt([skillNamed("first"), skillNamed("invalid"), skillNamed("second")]) }, timestamp: 0 });
+  s.appendCustomEntry("context-decisions-skill-scores", { v: 1, sectionId: second, picks: { first: { score: 0, threshold: 0 }, second: { score: 1, threshold: 0.5 } } });
+  user(s); assistant(s);
+  const turns = batches(readDecisionsHistory(s));
+  assert.equal(turns[0].marks?.skills?.get("first"), "score 1.5 / ≥0.5");
+  assert.equal(turns[0].marks?.skills?.get("invalid"), "no score (native pick)");
+  assert.equal(turns[1].marks?.skills?.get("second"), "score 1 / ≥1");
+  assert.ok(!turns.some((batch) => batch.items.skills.includes("absent")));
+});
 test("notice-before-grant at one boundary gets its recorded score, but a future boundary cannot retroactively score an old notice", () => {
   const s = session(); user(s);
   const notice = buildToolNotice([], ["mcp__agent_browser"], true)!;
