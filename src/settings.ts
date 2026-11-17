@@ -18,6 +18,8 @@ export interface DecisionSettings {
   concurrency: number;
 }
 export interface RelevanceSettings {
+  /** Experimental: score the entire invocable inventory, including advertised skills. */
+  constantMatrix: boolean;
   enabled: boolean;
   /** Cap on newly advertised skills, not tools or entire tool groups. */
   maxSkills: number;
@@ -68,7 +70,7 @@ export function defaultToolSettings(): ToolFilterSettings {
 }
 export function defaultSettings(): ContextDecisionsSettings {
   return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(), history: { enabled: false, model: "" },
-    relevance: { enabled: true, maxSkills: 12, minCandidates: 8, pinned: [] } };
+    relevance: { enabled: true, constantMatrix: false, maxSkills: 12, minCandidates: 8, pinned: [] } };
 }
 export class SettingsError extends Error {
   readonly code = "config";
@@ -204,6 +206,7 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
     result.history.model = history.model;
   }
   if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
+  if (skill.constantMatrix !== undefined) result.relevance.constantMatrix = boolean(skill.constantMatrix, "relevance.constantMatrix");
   if (tool.allowSubagentInheritedTools !== undefined) result.tools.allowSubagentInheritedTools = boolean(tool.allowSubagentInheritedTools, "tools.allowSubagentInheritedTools");
   if (tool.enabled !== undefined) result.tools.enabled = boolean(tool.enabled, "tools.enabled");
   // Accept and validate the retired skill cadence, but never persist it in the normalized settings.

@@ -60,6 +60,7 @@ const RELEVANCE_FIELDS: readonly AdvancedField[] = [
   { key: "minCandidates", group: "relevance", label: "Skills · Minimum inventory", kind: "int", hint: "0–1000. Below this many skills, nothing is scored and every skill stays advertised." },
   { key: "maxPromptChars", group: "decision", label: "Prompt size (chars)", kind: "int", hint: "1–4000 characters of the task sent to the decision model." },
   { key: "maxDescriptionChars", group: "decision", label: "Description size (chars)", kind: "int", hint: "1–400 characters of each candidate description sent." },
+  { key: "constantMatrix", group: "relevance", label: "Skills · Constant scoring matrix [lab]", kind: "bool", hint: "Experimental: score all invocable skills, including already advertised skills, in a stable order. Existing skills remain advertised and do not count toward the cap. More tokens; cache hits are not guaranteed." },
 ];
 export function advancedField(key: string): AdvancedField | undefined { return RELEVANCE_FIELDS.find((field) => field.key === key); }
 /**

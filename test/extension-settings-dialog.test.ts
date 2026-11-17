@@ -121,6 +121,38 @@ test("toggle calls the save once even if Enter repeats; display changes only aft
   assert.equal(h.results.length, 0, "a save never closes the dialog"); h.component.dispose();
 });
 
+test("Advanced constant-matrix lab toggles independently of skill filtering", async () => {
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  const index = ADVANCED_FIELDS.findIndex((field) => field.group === "relevance" && field.key === "constantMatrix");
+  assert.ok(index >= 0);
+  toRow(h, 2 + index); // Provider and model precede Advanced fields.
+  assert.match(h.text(), /❯ Skills · Constant scoring matrix \[lab\]\s+Off/);
+  h.press(KEY.enter); await tick();
+  assert.equal(f.settings.relevance.enabled, true);
+  assert.equal(f.settings.relevance.constantMatrix, true);
+  assert.match(h.text(), /❯ Skills · Constant scoring matrix \[lab\]\s+On/);
+  h.press(KEY.space); await tick();
+  assert.equal(f.settings.relevance.enabled, true);
+  assert.equal(f.settings.relevance.constantMatrix, false);
+  assert.deepEqual(f.calls.filter((call) => call === "toggleEnabled" || call.startsWith("updateSetting:")), [
+    "updateSetting:relevance.constantMatrix=true", "updateSetting:relevance.constantMatrix=false",
+  ]);
+  h.component.dispose();
+});
+
+test("Advanced lab toggles retain independent settings", async () => {
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  const matrix = ADVANCED_FIELDS.findIndex((field) => field.group === "relevance" && field.key === "constantMatrix");
+  toRow(h, 2 + matrix); h.press(KEY.enter); await tick();
+  assert.equal(f.settings.relevance.constantMatrix, true);
+  assert.equal(f.settings.history.enabled, false);
+  h.press(...Array(60).fill(KEY.down), KEY.up); h.press(KEY.enter); await tick();
+  assert.equal(f.settings.history.enabled, true);
+  assert.equal(f.settings.relevance.constantMatrix, true);
+  assert.equal(f.settings.relevance.enabled, true);
+  h.component.dispose();
+});
+
 test("a failed toggle shows a sanitized inline error and leaves the old value", async () => {
   const f = fakeOps(); f.ops.toggleEnabled = async () => { throw new Error("PRIVATE_PROVIDER_BODY"); };
   const h = mount(f); await h.until(/Always allowed · Project\s+3/);

@@ -301,10 +301,17 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       else if (!current.relevance.enabled || !client || invocable.length < current.relevance.minCandidates) {
         for (const skill of invocable) advertised.add(skill.name);
       } else if (task.trim() && hasReader) {
-        const remaining = invocable.filter((skill) => !advertised.has(skill.name));
+        const candidates = current.relevance.constantMatrix
+          ? [...invocable].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+          : invocable.filter((skill) => !advertised.has(skill.name));
+        // In the experiment, scores depend on the full ordered matrix, not just each individual skill.
+        const activity = [previousReply, historySnapshot];
+        const key = current.relevance.constantMatrix
+          ? JSON.stringify([cacheKey(task, current, activity), candidates.map(({ name, description }) => [name, description]), current.decision.chunkSize])
+          : cacheKey(task, current, activity);
         beginDecisionLoader(ctx);
         try {
-          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, previousReply, history: historySnapshot }, { store: scoreCache, key: cacheKey(task, current, [previousReply, historySnapshot]) });
+          round = await scoreAdditions(task, candidates, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, previousReply, history: historySnapshot, ...(current.relevance.constantMatrix ? { advertised } : {}) }, { store: scoreCache, key });
         } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;
