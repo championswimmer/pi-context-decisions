@@ -25,6 +25,17 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 **Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v4.1.0...v4.2.0
 
+#### [v4.2.2](https://github.com/championswimmer/pi-context-decisions/releases/tag/v4.2.2) — Patch release (2026-11-17)
+
+<!-- Release notes generated using configuration in .github/release.yml at v4.2.2 -->
+
+##### What's Changed
+###### Merged pull requests
+* feat(history): refine [lab] Past Turn Summaries settings by @championswimmer in https://github.com/championswimmer/pi-context-decisions/pull/15
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v4.2.1...v4.2.2
+
 #### [v4.2.1](https://github.com/championswimmer/pi-context-decisions/releases/tag/v4.2.1) — Patch release (2026-11-17)
 
 <!-- Release notes generated using configuration in .github/release.yml at v4.2.1 -->
