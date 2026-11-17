@@ -8,6 +8,7 @@ import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts"
 import { CORE, extTool, mcpTool, resourceTools, toolSetup } from "./helpers/tool-fixture.ts";
 import { toolRecords } from "../src/extension/tool-ledger.ts";
 import { readDecisionsHistory, historyTurnSummary } from "../src/extension/decisions-history.ts";
+import { rpcContext } from "./helpers/settings-ui.ts";
 import { builtinSource, extensionSource, type SimToolInfo } from "./helpers/pi-sim.ts";
 
 const A = extTool("ext_a"), B = extTool("ext_b"), C = extTool("ext_c");
@@ -238,6 +239,31 @@ test("cadence initial: a failed initial pick records nothing, so the next user p
   await h.start("second");
   assert.equal(h.requests.at(-1)!.state.task, "second"); assert.equal(h.ledger().at(-1)?.initialTask, "second");
   assert.equal(await h.gate("ext_a"), undefined);
+});
+test("disabling history during a run removes it from tool-round and lazy scoring", async (t) => {
+  const h = await toolSetup(t, { settings: { history: { enabled: true, model: "" } }, tools: { cadence: "tool-round", maxAdded: 1 }, extra: [A, B, C], scores: { ext_a: 2, ext_b: 0, ext_c: 0 } });
+  await h.start("earlier prompt");
+  const source = h.sim.session.getBranch().find((entry) => entry.message?.role === "user")!;
+  h.sim.session.appendCustom("context-decisions-past-turn-summary", { sourceId: source.id, kind: "prompt", text: "prior work" });
+  await h.start("current task");
+  assert.deepEqual(h.requests.at(-1)!.state.history, [{ kind: "prompt", text: "prior work" }]);
+  let entered = false, toggled = false;
+  const ctx = rpcContext(h.ctx, { async select(title: string, options: string[]) {
+    if (title === "Decisions · settings") { if (entered) return "Done"; entered = true; return "Advanced"; }
+    if (!toggled) { toggled = true; return options.find((item) => item.startsWith("Past Turn Summaries [Lab]:")); }
+    return "Back";
+  } });
+  await h.sim.command("", ctx);
+  assert.equal((await loadSettings(h.path)).settings.history.enabled, false);
+  const beforeRound = h.requests.length;
+  await h.end({ toolResults: [{}] });
+  assert.ok(h.requests.length > beforeRound, "continued tool-round must rescore");
+  assert.equal(h.requests.at(-1)!.state.history, undefined);
+  h.sim.registerTool(mcpTool("late", "x", "codemode"));
+  const beforeLazy = h.requests.length;
+  await h.gate("mcp__late__x");
+  assert.ok(h.requests.length > beforeLazy, "late tool must trigger lazy scoring");
+  assert.equal(h.requests.at(-1)!.state.history, undefined);
 });
 test("cadence tool-round: next-best candidates arrive after a completed tool round after activity rescoring; aborted and assistant-only turns do nothing", async (t) => {
   const h = await toolSetup(t, { tools: { cadence: "tool-round", maxAdded: 1 }, extra: [A, B, C], scores: { ext_a: 2, ext_b: 1.5, ext_c: 1 } });

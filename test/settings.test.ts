@@ -17,6 +17,15 @@ test("defaults are independent, disabled until a backend is chosen, fail closed,
   assert.equal(b.decision.maxPromptChars, 4000); assert.equal(b.decision.maxDescriptionChars, 400); assert.equal(b.decision.chunkSize, 50); assert.equal(b.decision.concurrency, 0);
   assert.deepEqual((await loadSettings(join(await directory(t), "missing.json"))).settings, b);
 });
+test("housekeeping settings default off, validate identity, and persist", async (t) => {
+  assert.deepEqual(defaultSettings().history, { enabled: false, model: "" });
+  for (const model of ["model", "/model", "provider/", "provider/ bad", "provider/evil\nmodel"]) assert.throws(() => parseSettings({ history: { enabled: true, model } }), SettingsError);
+  assert.throws(() => parseSettings({ history: { enabled: "true" } }), SettingsError);
+  const path = join(await directory(t), "history.json");
+  const settings = parseSettings({ history: { enabled: true, model: "provider/nested/model" } });
+  await saveSettings(settings, path);
+  assert.deepEqual((await loadSettings(path)).settings.history, settings.history);
+});
 test("every static router ID accepted by direct and native, aliases and outside-ten rejected", () => {
   for (const { id } of OPENROUTER_DECISION_MODELS) {
     assert.deepEqual(validateBackendSelection({ backend: "openrouter", model: id }), { backend: "openrouter", model: id });

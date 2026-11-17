@@ -19,10 +19,10 @@ const makeSkills = (): Skill[] => Array.from({ length: 6 }, (_, i) => ({
   name: `skill-${i}`, description: `Description ${i}`, filePath: `/private/${i}/SKILL.md`, baseDir: `/private/${i}`,
   sourceInfo: { path: `/private/${i}/SKILL.md`, source: "fixture", scope: "user", origin: "top-level" }, disableModelInvocation: false,
 }));
-async function setup(t: { after(fn: () => Promise<void>): void }, options: { relevance?: Partial<RelevanceSettings>; decision?: Partial<DecisionSettings>; pins?: string[]; tools?: string[]; unconfigured?: boolean; fail?: boolean } = {}) {
+async function setup(t: { after(fn: () => Promise<void>): void }, options: { relevance?: Partial<RelevanceSettings>; decision?: Partial<DecisionSettings>; pins?: string[]; tools?: string[]; unconfigured?: boolean; fail?: boolean; historyEnabled?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "native-skill-")); t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, "settings.json"); const base = defaultSettings();
-  await saveSettings({ ...base, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, globalAllowlist: options.pins ?? [], decision: { ...base.decision, ...options.decision }, relevance: { ...base.relevance, minCandidates: 0, maxSkills: 2, ...options.relevance } }, path);
+  await saveSettings({ ...base, history: { ...base.history, enabled: !!options.historyEnabled }, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, globalAllowlist: options.pins ?? [], decision: { ...base.decision, ...options.decision }, relevance: { ...base.relevance, minCandidates: 0, maxSkills: 2, ...options.relevance } }, path);
   const sim = simHost(new SimSession(), options.tools);
   const inventory = makeSkills(); const requests: DecisionRequest[] = []; const messages: string[] = [];
   const behavior: { fail: boolean; gate?: Promise<void>; allowlistGate?: Promise<void> } = { fail: !!options.fail };
@@ -81,6 +81,23 @@ test("constant matrix cache is invalidated when the scored inventory shrinks", a
   h.inventory.splice(h.inventory.findIndex((skill) => skill.name === "skill-5"), 1);
   await h.start("same");
   assert.equal(h.requests.length, calls + 1);
+});
+
+test("constant matrix cache includes the past-turn summary snapshot", async (t) => {
+  const h = await setup(t, { historyEnabled: true, relevance: { constantMatrix: true, maxSkills: 1 } });
+  const source = h.sim.session.appendMessage("user", "earlier task");
+  h.sim.session.appendCustom("context-decisions-past-turn-summary", { sourceId: source.id, kind: "prompt", text: "first summary" });
+  await h.start("same task");
+  const count = h.requests.length;
+  assert.match(JSON.stringify(h.requests[0].state.history), /first summary/);
+  await h.start("same task");
+  assert.equal(h.requests.length, count, "unchanged history and matrix reuse scores");
+  const next = h.sim.session.appendMessage("user", "another task");
+  h.sim.session.appendCustom("context-decisions-past-turn-summary", { sourceId: next.id, kind: "prompt", text: "second summary" });
+  await h.start("same task");
+  assert.equal(h.requests.length, count + 1, "changed history invalidates the full-matrix cache");
+  assert.match(JSON.stringify(h.requests.at(-1)!.state.history), /second summary/);
+  assert.equal(h.scored(count).length, 6, "the full matrix remains in the request");
 });
 
 test("score metadata follows committed native sections across reload and branch navigation", async (t) => {

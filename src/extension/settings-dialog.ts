@@ -28,6 +28,7 @@ export type AllowlistKind = "skills" | "tools" | "mcp";
 export type SettingsRoute =
   | { kind: "main" } | { kind: "advanced" } | { kind: "tools" } | { kind: "provider" }
   | { kind: "model"; filter?: { backend: BackendSelection["backend"]; provider?: string } }
+  | { kind: "housekeeping-model" }
   | { kind: "edit"; key: string; group?: SettingsGroup } | { kind: "options"; key: string; group?: SettingsGroup }
   | { kind: "status" } | { kind: "history" } | { kind: "history-batch"; turn: HistoryTurn }
   | { kind: "allowlist"; scope: AllowlistScope; list?: AllowlistKind };
@@ -47,6 +48,8 @@ export interface SettingsDialogOps {
   listProviders(signal: AbortSignal): Promise<ProviderRow[]>;
   listModels(filter: Extract<SettingsRoute, { kind: "model" }>["filter"], signal: AbortSignal): Promise<ModelRow[]>;
   selectModel(selection: BackendSelection | null, signal: AbortSignal): Promise<{ message: string }>;
+  listHousekeepingModels?(signal: AbortSignal): Promise<string[]>;
+  selectHousekeepingModel?(model: string, signal: AbortSignal): Promise<void>;
   statusLines(signal: AbortSignal): Promise<string[]>;
   /** Local committed branch snapshot. No live decisions, credentials or settings mutations. */
   history?(signal: AbortSignal): Promise<DecisionsHistory>;
@@ -77,6 +80,7 @@ interface Frame {
   banner?: Banner;
   providers?: ProviderRow[];
   models?: ModelRow[];
+  housekeepingModels?: string[];
   lines?: string[];
   history?: DecisionsHistory;
   input?: Input;
@@ -183,6 +187,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     if (route.kind === "main" || route.kind === "tools") loadProject();
     else if (route.kind === "provider") load(frame, (signal) => ops.listProviders(signal), (rows) => { frame.providers = rows; frame.selected = 0; });
     else if (route.kind === "model") load(frame, (signal) => ops.listModels(route.filter, signal), (rows) => { frame.models = rows; frame.selected = 0; });
+    else if (route.kind === "housekeeping-model") load(frame, (signal) => ops.listHousekeepingModels?.(signal) ?? Promise.resolve([]), (models) => { frame.housekeepingModels = models; frame.selected = 0; });
     else if (route.kind === "status") load(frame, (signal) => ops.statusLines(signal), (lines) => { frame.lines = lines.map((line) => sanitizeTerminalText(line, 800)); frame.scroll = 0; });
     else if (route.kind === "history") load(frame, (signal) => ops.history ? ops.history(signal) : Promise.reject(new Error("Session history is unavailable")), (history) => { frame.history = history; frame.selected = 0; frame.offset = 0; });
     else if (route.kind === "history-batch") { frame.lines = historyTurnLines(route.turn); frame.scroll = 0; }
@@ -312,6 +317,8 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       { label: "Model", value: modelLabel(settings.backend), description: "Shared decision model. Choosing one never enables filtering.", run: () => push({ kind: "model", filter: backendFilter(settings.backend) }) },
       ...fields(ADVANCED_FIELDS),
       footerIconsItem(),
+      { label: "Past Turn Summaries [Lab]", value: settings.history.enabled ? "On" : "Off", toggle: true, description: "Off by default. Sends visible prompts and final replies to the selected housekeeping model and summaries to the decision provider.", run: () => mutate(frame, () => ops.updateSetting("history.enabled", String(!settings.history.enabled)), () => ok(frame, "Saved")) },
+      { label: "Past Turn Summaries · Model [Lab]", value: sanitizeTerminalText(settings.history.model || "Not selected", 160), description: "Choose an available Pi housekeeping model; sends visible prompts and final replies to its provider.", run: () => push({ kind: "housekeeping-model" }) },
     ];
     if (route.kind === "provider") {
       if (!frame.providers) return [{ label: frame.loading ? "Checking credentials…" : "No providers available", disabled: frame.loading ? "Checking credentials without any inference calls…" : "No providers available.", run: () => {} }];
@@ -323,6 +330,10 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
           else push({ kind: "model", filter: { backend: row.backend, ...(row.backend === "pi" ? { provider: row.provider } : {}) } });
         },
       }));
+    }
+    if (route.kind === "housekeeping-model") {
+      if (!frame.housekeepingModels) return [{ label: "Loading available models…", disabled: "Loading", run: () => {} }];
+      return ["", ...frame.housekeepingModels].map((model) => ({ label: model ? sanitizeTerminalText(model, 160) : "None", description: "Select housekeeping model without enabling summaries.", run: () => mutate(frame, () => ops.selectHousekeepingModel?.(model, lifetime.signal) ?? Promise.reject(new Error("Unavailable")), (_value, current) => { if (!current) return; unwind(); const root = top(); if (root) root.banner = { text: "Saved", tone: "success" }; }) }));
     }
     if (route.kind === "model") {
       if (!frame.models) return [{ label: frame.loading ? "Checking credentials…" : "No models available", disabled: frame.loading ? "Checking credentials without any inference calls…" : "No matching models.", run: () => {} }];
@@ -361,6 +372,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "tools": return "Decisions › Tools";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
+      case "housekeeping-model": return "Decisions › Past Turn Summaries · Model [Lab]";
       case "edit": case "options": return `Decisions › ${stack[0]?.route.kind === "main" ? "Skills" : stack[0]?.route.kind === "tools" ? "Tools" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key, snap.settings)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "history": return "Decisions › History";

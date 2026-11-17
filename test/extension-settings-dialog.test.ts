@@ -140,6 +140,19 @@ test("Advanced constant-matrix lab toggles independently of skill filtering", as
   h.component.dispose();
 });
 
+test("Advanced lab toggles retain independent settings", async () => {
+  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  const matrix = ADVANCED_FIELDS.findIndex((field) => field.group === "relevance" && field.key === "constantMatrix");
+  toRow(h, 2 + matrix); h.press(KEY.enter); await tick();
+  assert.equal(f.settings.relevance.constantMatrix, true);
+  assert.equal(f.settings.history.enabled, false);
+  h.press(...Array(60).fill(KEY.down), KEY.up); h.press(KEY.enter); await tick();
+  assert.equal(f.settings.history.enabled, true);
+  assert.equal(f.settings.relevance.constantMatrix, true);
+  assert.equal(f.settings.relevance.enabled, true);
+  h.component.dispose();
+});
+
 test("a failed toggle shows a sanitized inline error and leaves the old value", async () => {
   const f = fakeOps(); f.ops.toggleEnabled = async () => { throw new Error("PRIVATE_PROVIDER_BODY"); };
   const h = mount(f); await h.until(/Always allowed · Project\s+3/);
@@ -197,6 +210,20 @@ test("None clears the model through selectModel(null)", async () => {
   h.press(KEY.down, KEY.down, KEY.enter); await tick(); assert.equal(f.settings.backend, null); h.component.dispose();
 });
 
+
+test("Advanced housekeeping picker lists and persists a selected model without enabling summaries", async () => {
+  const f = fakeOps();
+  f.ops.listHousekeepingModels = async () => ["provider/model-a", "provider/model-b"];
+  f.ops.selectHousekeepingModel = async (model) => { f.settings.history.model = model; };
+  const h = mount(f, { initialRoute: "advanced", rows: 50 });
+  h.press(...Array(50).fill(KEY.down), KEY.enter);
+  await h.until(/provider\/model-a/);
+  h.press(KEY.down, KEY.down, KEY.enter); await tick();
+  assert.equal(f.settings.history.model, "provider/model-b");
+  assert.equal(f.settings.history.enabled, false);
+  assert.match(h.text(120), /provider\/model-b/);
+  h.component.dispose();
+});
 test("Advanced lists every knob, edit is prefilled, invalid values stay inline and Esc saves nothing", async () => {
   const f = fakeOps(); const h = mount(f); h.press(KEY.shiftTab);
   assert.match(h.text(), /Decisions › Advanced/);

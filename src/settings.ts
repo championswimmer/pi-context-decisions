@@ -51,6 +51,7 @@ export interface ToolFilterSettings {
 /** Footer glyphs: Unicode needs no patched font; Nerd Font is explicitly opt-in. */
 export type IconStyle = "unicode" | "emoji" | "nerd";
 export const ICON_STYLES: readonly IconStyle[] = ["unicode", "emoji", "nerd"];
+export interface HistorySettings { enabled: boolean; model: string }
 export interface ContextDecisionsSettings {
   iconStyle: IconStyle;
   backend: BackendSelection | null;
@@ -58,6 +59,7 @@ export interface ContextDecisionsSettings {
   decision: DecisionSettings;
   relevance: RelevanceSettings;
   tools: ToolFilterSettings;
+  history: HistorySettings;
 }
 export function defaultDecisionSettings(): DecisionSettings {
   return { threshold: DEFAULT_RELEVANCE_THRESHOLD, failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000,
@@ -67,7 +69,7 @@ export function defaultToolSettings(): ToolFilterSettings {
   return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
 }
 export function defaultSettings(): ContextDecisionsSettings {
-  return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(),
+  return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(), history: { enabled: false, model: "" },
     relevance: { enabled: true, constantMatrix: false, maxSkills: 12, minCandidates: 8, pinned: [] } };
 }
 export class SettingsError extends Error {
@@ -175,7 +177,7 @@ function sharedValues(input: Record<string, unknown>, group: string, allowed = S
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);
   if (!object(value)) throw new SettingsError("Settings must be a JSON object");
-  keys(value, ["enabled", "iconStyle", "backend", "globalAllowlist", "decision", "relevance", "tools"], warnings);
+  keys(value, ["enabled", "iconStyle", "backend", "globalAllowlist", "decision", "relevance", "tools", "history"], warnings);
   const result = defaultSettings();
   if (value.iconStyle !== undefined) {
     if (typeof value.iconStyle !== "string" || !(ICON_STYLES as readonly string[]).includes(value.iconStyle)) throw new SettingsError("Invalid iconStyle");
@@ -196,6 +198,13 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
   keys(skill, [...Object.keys(result.relevance), ...SHARED_KEYS, ...LEGACY_RELEVANCE_KEYS, "cadence"], warnings);
   keys(tool, [...Object.keys(result.tools), ...LEGACY_TOOL_KEYS], warnings);
   keys(decision, SHARED_KEYS, warnings);
+  const history = block("history");
+  keys(history, ["enabled", "model"], warnings);
+  if (history.enabled !== undefined) result.history.enabled = boolean(history.enabled, "history.enabled");
+  if (history.model !== undefined) {
+    if (typeof history.model !== "string" || (history.model !== "" && (!/^[^\s/\p{Cc}\p{Cf}]+\/[^\s\p{Cc}\p{Cf}]+$/u.test(history.model) || history.model.length > 512))) throw new SettingsError("Invalid history.model");
+    result.history.model = history.model;
+  }
   if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
   if (skill.constantMatrix !== undefined) result.relevance.constantMatrix = boolean(skill.constantMatrix, "relevance.constantMatrix");
   if (tool.allowSubagentInheritedTools !== undefined) result.tools.allowSubagentInheritedTools = boolean(tool.allowSubagentInheritedTools, "tools.allowSubagentInheritedTools");
@@ -279,6 +288,7 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
   else if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; field = key.slice(9); }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
+  else if (key === "history.enabled") { target = next.history as unknown as Record<string, unknown>; field = "enabled"; }
   else throw new SettingsError("Use iconStyle, a decision, relevance or tools setting; choose a backend in the /decisions dialog");
   if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
     throw new SettingsError("Removed setting: skill picking is score-only. Use decision.threshold <0–1>");
