@@ -276,7 +276,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       label: field.label, value: advancedValueText(field, settings), description: field.hint, toggle: field.kind === "bool",
       ...(field.key === "failMode" && fieldValue(settings, field.group, field.key) === "open" ? { tone: "warn" as const } : {}),
       run: () => {
-        if (field.kind === "bool") mutate(frame, () => field.group === "relevance" ? ops.toggleEnabled() : ops.updateSetting(`${field.group}.${field.key}`, String(!fieldValue(settings, field.group, field.key))), () => ok(frame, "Saved"));
+        if (field.kind === "bool") mutate(frame, () => field.group === "relevance" && field.key === "enabled" ? ops.toggleEnabled() : ops.updateSetting(`${field.group}.${field.key}`, String(!fieldValue(settings, field.group, field.key))), () => ok(frame, "Saved"));
         else if (field.kind === "options") push({ kind: "options", group: field.group, key: field.key });
         else push({ kind: "edit", group: field.group, key: field.key });
       },

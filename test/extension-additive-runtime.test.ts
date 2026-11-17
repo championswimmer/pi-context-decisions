@@ -52,6 +52,37 @@ test("Pi skills section grows on later prompts, excluding committed skills from 
   assert.doesNotMatch(JSON.stringify(h.requests), /private|SKILL\.md|filePath|baseDir/);
 });
 
+test("constant matrix scores advertised and pinned skills in stable shards but caps only new picks", async (t) => {
+  const h = await setup(t, { pins: ["skill-5"], relevance: { constantMatrix: true, maxSkills: 1 }, decision: { chunkSize: 2, threshold: 0.9 } });
+  h.inventory.reverse();
+  const first = await h.start("first");
+  assert.deepEqual(first.sort(), ["skill-0", "skill-5"]);
+  const firstRequests = h.requests.map((r) => r.state.skills);
+  const before = h.requests.length;
+  const second = await h.start("second");
+  assert.deepEqual(second.sort(), ["skill-0", "skill-1", "skill-5"]);
+  assert.deepEqual(h.requests.slice(before).map((r) => r.state.skills), firstRequests);
+  assert.deepEqual(h.scored(before), ["skill-0", "skill-1", "skill-2", "skill-3", "skill-4", "skill-5"]);
+});
+
+test("constant matrix fail-open adds only remaining skills and never removes old ones", async (t) => {
+  const h = await setup(t, { relevance: { constantMatrix: true, maxSkills: 1 }, decision: { failMode: "open" } });
+  await h.start("first"); h.behavior.fail = true;
+  assert.equal((await h.start("second")).length, 6);
+});
+
+test("constant matrix cache is invalidated when the scored inventory shrinks", async (t) => {
+  const h = await setup(t, { relevance: { constantMatrix: true, maxSkills: 1 } });
+  await h.start("same");
+  const calls = h.requests.length;
+  await h.start("same");
+  assert.equal(h.requests.length, calls, "identical matrix may reuse scores");
+  // Removing an unadvertised skill changes the matrix even though every remaining skill was cached.
+  h.inventory.splice(h.inventory.findIndex((skill) => skill.name === "skill-5"), 1);
+  await h.start("same");
+  assert.equal(h.requests.length, calls + 1);
+});
+
 test("score metadata follows committed native sections across reload and branch navigation", async (t) => {
   const h = await setup(t, { pins: ["skill-5"], relevance: { maxSkills: 1 } });
   await h.start("first"); await turnEnd(h.sim, h.ctx);

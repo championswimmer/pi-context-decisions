@@ -62,6 +62,15 @@ test("RPC /decisions menu: direct toggle, provider, model; relevance tuning sits
   assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
   assert.equal(h.inputs.length, 0); assert.equal(h.inference(), 0);
 });
+
+test("RPC Advanced toggles and persists the constant-matrix lab setting", async (t) => {
+  const h = await fixture(t);
+  await h.set("relevance.constantMatrix");
+  assert.equal((await loadSettings(h.path)).settings.relevance.constantMatrix, true);
+  await h.set("relevance.constantMatrix");
+  assert.equal((await loadSettings(h.path)).settings.relevance.constantMatrix, false);
+  assert.equal(h.inference(), 0);
+});
 test("the setter subcommands are gone: each is rejected with the usage line, changes nothing and opens nothing", async (t) => {
   const h = await fixture(t);
   const before = JSON.stringify((await loadSettings(h.path)).settings);

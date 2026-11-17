@@ -76,6 +76,7 @@ Canonical settings shape (defaults):
     "maxDescriptionChars": 400
   },
   "relevance": {
+    "constantMatrix": false,
     "enabled": true,
     "maxSkills": 12,
     "minCandidates": 8,
@@ -133,7 +134,7 @@ History never sends task text or metadata to a decision model, and does not disp
 
 ### Global and project skill allowlists
 
-From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the Skills tab. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass relevance scoring, thresholds, and the per-round cap, join the selected system skills (so removing an entry never withdraws a skill already advertised on the branch) and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
+From `/decisions`, select **Always allowed · Global** or **Always allowed · Project**; the editor opens inside the same dialog and Esc returns to the Skills tab. Like the reference extension's **Always allowed** lists, these are **always-included skill advertisements, not restriction/permission lists**. Matching entries bypass thresholds and the per-round cap (and bypass scoring unless the constant-matrix lab is enabled), join the selected system skills (so removing an entry never withdraws a skill already advertised on the branch) and remain advertised on fail-closed decision/configuration errors. A global entry matches only user/temporary/global skills; a project entry matches only project-scoped skills. Legacy `pin` names still apply across scopes. Manual-only skills remain unchanged.
 
 - **Global** names are stored as `globalAllowlist` in the user settings file.
 - **Project** names are stored in `<cwd>/.pi/pi-context-decisions.json` as `{ "alwaysAllowed": ["skill-name"] }`. It can be shared in the repository; this is scoped to Pi's working directory, so starting in different subdirectories uses different lists. A malformed project list is warned about and treated as empty, not a full-inventory fallback.

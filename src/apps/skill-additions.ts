@@ -2,8 +2,8 @@ import { rankSkills, type RelevanceClient, type RelevanceItem, type RelevanceOpt
 import { DEFAULT_RELEVANCE_THRESHOLD, pickMap, safeCode, selectRelevant, validItems, validThreshold, type AdditionPick, type AdvertisedSkill } from "./skill-filter.ts";
 
 /**
- * Additive skill picking: skills that are already advertised are never scored here, and nothing in
- * this module ever removes an advertisement. Pure (no Pi imports): the extension owns the ledger.
+ * Additive skill picking; nothing in this module removes an advertisement. The caller can include
+ * advertised skills for experimental stable scoring, excluding them from new selections.
  */
 export interface SkillAdditionOptions extends RelevanceOptions {
   /** Normalized 0–1, inclusive. */
@@ -12,13 +12,15 @@ export interface SkillAdditionOptions extends RelevanceOptions {
   maxSkills?: number;
   /** Open adds every remaining candidate when scoring fails; closed (default) adds none. */
   failMode?: "open" | "closed";
+  /** Already advertised names may be scored, but cannot be added or consume the cap. */
+  advertised?: ReadonlySet<string>;
 }
 export interface SkillAdditionResult<T> {
   /** Newly added skills, best score first (inventory order breaks ties). */
   added: T[];
   /** Candidates that met the threshold before the per-round cap. */
   eligible: number;
-  /** Candidates considered this round (never already-advertised skills). */
+  /** Candidates considered this round. */
   candidates: number;
   /** Scores were reused for an identical task; the decision backend was not called. */
   cached: boolean;
@@ -36,7 +38,7 @@ export interface SkillAdditionResult<T> {
 /**
  * Scores keyed by task/backend/limits so a later round for the SAME task can add the next-best
  * remaining skills without another decision call. Rejected skills may be re-scored when the key
- * or their description changes; skills that were already added are simply absent from candidates.
+ * or their description changes. Callers decide whether advertised skills enter the candidate list.
  */
 export class RelevanceScoreCache {
   #key: string | undefined;
@@ -103,11 +105,11 @@ export async function scoreAdditions<T extends AdvertisedSkill>(
     }
   } catch (error) { errorCode = safeCode(error); items = undefined; }
   if (!items) {
-    if (options.failMode === "open" && errorCode !== "aborted" && errorCode !== "config") return done({ added: [...candidates], eligible: candidates.length, cached: false, failedOpen: true, errorCode });
+    if (options.failMode === "open" && errorCode !== "aborted" && errorCode !== "config") { const remaining = candidates.filter((skill) => !options.advertised?.has(skill.name)); return done({ added: remaining, eligible: remaining.length, cached: false, failedOpen: true, errorCode }); }
     return done({ added: [], eligible: 0, cached: false, ...(errorCode ? { errorCode } : {}) });
   }
   if (options.signal?.aborted) return cancelled();
-  const { chosen, eligible } = selectRelevant(items, threshold, maxSkills);
+  const { chosen, eligible } = selectRelevant(items.filter((item) => !options.advertised?.has(item.name)), threshold, maxSkills);
   const byName = new Map(candidates.map((skill) => [skill.name, skill]));
   return done({ added: chosen.map((item) => byName.get(item.name)!), eligible, cached, items, picks: pickMap(chosen, threshold) });
 }
