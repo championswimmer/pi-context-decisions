@@ -178,6 +178,20 @@ test("None clears the model through selectModel(null)", async () => {
   h.press(KEY.down, KEY.down, KEY.enter); await tick(); assert.equal(f.settings.backend, null); h.component.dispose();
 });
 
+
+test("Advanced housekeeping picker lists and persists a selected model without enabling summaries", async () => {
+  const f = fakeOps();
+  f.ops.listHousekeepingModels = async () => ["provider/model-a", "provider/model-b"];
+  f.ops.selectHousekeepingModel = async (model) => { f.settings.history.model = model; };
+  const h = mount(f, { initialRoute: "advanced", rows: 50 });
+  h.press(...Array(50).fill(KEY.down), KEY.enter);
+  await h.until(/provider\/model-a/);
+  h.press(KEY.down, KEY.down, KEY.enter); await tick();
+  assert.equal(f.settings.history.model, "provider/model-b");
+  assert.equal(f.settings.history.enabled, false);
+  assert.match(h.text(120), /provider\/model-b/);
+  h.component.dispose();
+});
 test("Advanced lists every knob, edit is prefilled, invalid values stay inline and Esc saves nothing", async () => {
   const f = fakeOps(); const h = mount(f); h.press(KEY.shiftTab);
   assert.match(h.text(), /Decisions › Advanced/);

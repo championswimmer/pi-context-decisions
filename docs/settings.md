@@ -22,6 +22,14 @@ Dialog keys: **↑/↓/PgUp/PgDn** move, **Enter** selects, **Space** toggles on
 
 **No backend is selected by default**, so startup and prompts make no decision calls until you configure one. Selection persists across sessions and opts in to sending bounded task/skill metadata on eligible prompts. Choosing a provider/model does not change either feature switch. Providers and models are labelled **configured** or **missing key**; unavailable selections are rejected without changing settings. Configure the relevant `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `TYPESAFE_API_KEY` in the environment, or use `/login <provider>` in Pi. Credentials remain Pi-first/environment-second; OpenAI requires its API key, not Codex/ChatGPT OAuth.
 
+### Past Turn Summaries [Lab]
+
+Off by default. In **Advanced**, select an available, authenticated Pi model under **Past Turn Summaries · Model [Lab]**, then enable **Past Turn Summaries [Lab]**. There is no implicit chat or decision model fallback. With no usable model, no summarization calls are made; `/decisions status` reports the condition. In JSON the settings are `"history": { "enabled": false, "model": "provider/model-id" }`.
+
+The selected model receives up to 8,000 characters of each visible user prompt after the decision, and of each completed final assistant reply. Thinking, tool outputs, and images are excluded. Each call can cost money and may send sensitive text to that model's provider. Summaries (up to 240 characters each) are stored as branch-local non-context session entries; they survive reloads. Skill and tool/MCP decisions receive up to the latest 12 summaries (2,000 characters), subject to the request size limit, so the selected decision provider also receives this potentially sensitive data. They are not injected into the coding model's chat context. Avoid enabling this for material you do not want sent to either provider.
+
+Summarization is best-effort and asynchronous: decisions use only summaries already available and never wait for pending jobs. A serial queue holds at most eight waiting jobs and drops the oldest waiting job on overflow; requests time out after 20 seconds. Branch/session changes and settings saves cancel pending jobs. Because jobs may finish after another prompt or fail, history can be incomplete and is not guaranteed to improve decisions.
+
 
 ## Settings and relevance policy
 

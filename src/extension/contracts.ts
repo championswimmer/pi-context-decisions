@@ -12,6 +12,8 @@ export type ExtensionHost = Pick<ExtensionAPI, "on" | "registerCommand" | "appen
   & Partial<Pick<ExtensionAPI, "getCommands" | "getAllTools" | "setActiveTools" | "events">>;
 export interface ExtensionRegistry extends RegistryLike {
   getProviderAuthStatus?(provider: string): { configured: boolean };
+  getAvailable?: ExtensionContext["modelRegistry"]["getAvailable"];
+  hasConfiguredAuth?: ExtensionContext["modelRegistry"]["hasConfiguredAuth"];
 }
 export interface CommandContext {
   hasUI: boolean;

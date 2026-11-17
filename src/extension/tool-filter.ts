@@ -36,6 +36,7 @@ export interface ToolFilterDeps {
   beginOperation(): { signal: AbortSignal; close(): void };
   /** Builds a decision client for TOOL filtering (gated only by the master switch, tool settings and a selected backend). */
   resolveClient(ctx: ExtensionContext, settings: ContextDecisionsSettings, responses: DecisionResponse[]): { client: RelevanceClient | null; error?: string };
+  history?(ctx: ExtensionContext): import("./past-turn-summaries.ts").HistoryItem[];
   loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad>;
   sumUsage(responses: DecisionResponse[]): DecisionUsage | undefined;
   /** Called after every round and boundary so the extension can refresh the status line. */
@@ -81,6 +82,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
   let pend = fresh();
   let runTask: string | undefined;
   let runPreviousReply: { text: string } | undefined;
+  let runHistory: import("./past-turn-summaries.ts").HistoryItem[] = [];
   let failedKey: string | undefined;
   let last: LastToolDecision | undefined;
   let counts: { available: number; external: number; withheld: number; mode: ToolFilterMode } | undefined;
@@ -177,7 +179,8 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     JSON.stringify([settings.tools.mode, task, settings.backend, settings.decision.maxPromptChars, settings.decision.maxDescriptionChars]);
   const scoringKey = (task: string, settings: ContextDecisionsSettings, activity?: import("../decision/types.ts").JsonValue[]) => {
     const context = activity?.length ? activity : settings.tools.cadence === "prompt" ? runPreviousReply : undefined;
-    return context ? JSON.stringify([cacheKey(task, settings), context]) : cacheKey(task, settings);
+    const history = settings.history.enabled ? runHistory : [];
+    return context || history.length ? JSON.stringify([cacheKey(task, settings), context, history]) : cacheKey(task, settings);
   };
   /** Cadence task for catch-up and lazy scoring: the first task for `initial`, the latest otherwise. */
   const cadenceTask = (settings: ContextDecisionsSettings, ledger: ToolLedgerState): string | undefined =>
@@ -219,7 +222,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     try {
       round = await scoreToolAdditions(task, candidates, client, {
         ...settings.decision, subject: mode === "mcp" ? "mcp_server" : "tool", maxAdded: settings.tools.maxAdded,
-        maxQuestions: 50, signal: options.signal, activity: options.activity, previousReply: settings.tools.cadence === "prompt" ? runPreviousReply : undefined,
+        maxQuestions: 50, signal: options.signal, activity: options.activity, history: settings.history.enabled ? runHistory : [], previousReply: settings.tools.cadence === "prompt" ? runPreviousReply : undefined,
       }, { store: cache, key });
     } catch (error2) {
       round = { added: [], eligible: 0, candidates: candidates.length, scored: 0, reused: 0, latencyMs: Date.now() - started, batchSizes: [], considered: [], picks: new Map(), errorCode: safeCode(error2) };
@@ -472,6 +475,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const task = event.messageType === "custom" || typeof event.prompt !== "string" ? "" : taskWithoutExpandedSkill(event.prompt).trim();
       runTask = task || undefined;
       runPreviousReply = task && settings.tools.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager) : undefined;
+      runHistory = deps.history?.(ctx) ?? [];
       failedKey = undefined;
       const ledger0 = readLedger(ctx);
       const state = stateOf(settings, error, ledger0);
@@ -580,7 +584,7 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       const newText = queued && !seenQueued.has(queued.id) ? queued : undefined;
       if (newText) seenQueued.add(newText.id);
       const tools = settings.tools;
-      if (newText && tools.cadence !== "initial") { runTask = newText.text; runPreviousReply = tools.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager, true) : undefined; failedKey = undefined; }
+      if (newText && tools.cadence !== "initial") { runHistory = deps.history?.(ctx) ?? []; runTask = newText.text; runPreviousReply = tools.cadence === "prompt" ? readPreviousFinalReply(ctx.sessionManager, true) : undefined; failedKey = undefined; }
       const operation = deps.beginOperation();
       const generation = deps.generation();
       const j = journal();
@@ -648,9 +652,9 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
     },
     reset(session = false) {
       if (session) { scopeEpoch++; scopeWarnings.clear(); snapshot = undefined; mcpOrigins = { scopes: new Map(), warnings: [] }; }
-      cacheEpoch++; pend = fresh(); runTask = undefined; runPreviousReply = undefined; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear();
+      cacheEpoch++; pend = fresh(); runTask = undefined; runPreviousReply = undefined; runHistory = []; failedKey = undefined; last = undefined; counts = undefined; projectCache = undefined; inflight = undefined; cache.clear(); seenQueued.clear();
     },
-    invalidate() { cacheEpoch++; projectCache = undefined; failedKey = undefined; last = undefined; inflight = undefined; cache.clear(); },
+    invalidate() { cacheEpoch++; runHistory = []; projectCache = undefined; failedKey = undefined; last = undefined; inflight = undefined; cache.clear(); },
     historyToolGroups: () => new Map((snapshot?.tools ?? []).flatMap((tool) => tool.group ? [[tool.name, tool.group] as const] : [])),
     last: () => last ? structuredClone(last) : undefined,
     status() {

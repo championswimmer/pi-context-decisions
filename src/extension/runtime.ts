@@ -1,3 +1,4 @@
+import { createPastTurnSummaries } from "./past-turn-summaries.ts";
 import { subagentManagerPresent } from "./subagent-manager.ts";
 
 import { MIN_SUBAGENT_MANAGER_DIAGNOSTICS_VERSION, MANAGER_DIAGNOSTICS_HELP, createManagerDiagnostics } from "./manager-diagnostics.ts";
@@ -51,11 +52,13 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   /** Full Pi skill objects from the latest prompt for inventory and status. */
   let skillRefs = new Map<string, Skill>();
   let toolsStatusShown = false;
+  const history = createPastTurnSummaries(pi, () => settings);
   const abortPending = () => { for (const controller of pending) controller.abort(); pending.clear(); };
   const toolFilter = createToolFilter({
     pi, agentDir: deps.agentDir, report: (ctx, message) => controller.report(ctx, message, "warning"), ensureLoaded: () => controller.ensureLoaded(), getSettings: () => settings, getSettingsError: () => settingsError, generation: () => generation,
     beginOperation: () => controller.beginOperation(),
     resolveClient: (ctx, current, responses) => resolveClient(ctx, current, responses, "tools"),
+    history: (ctx) => history.read(ctx),
     loadProjectAllowlist: (cwd) => controller.loadProjectAllowlist(cwd), sumUsage,
     changed: (ctx) => { try { controller.setStatus(ctx as unknown as Parameters<Controller["setStatus"]>[0]); } catch { /* cosmetic */ } },
   });
@@ -131,7 +134,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         await controller.ensureLoaded();
         const next = parseSettings(change(structuredClone(settings)));
         await (deps.save ?? saveSettings)(next, deps.settingsPath);
-        abortPending(); generation++;
+        history.reset(); abortPending(); generation++;
         settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); toolFilter.invalidate();
       });
       writeQueue = operation.catch(() => {});
@@ -162,7 +165,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     managerDiagnostics.reset();
     managerNoticeShown = false;
     resetDecisionLoader(); // a reloaded extension must not touch the previous session's working row
-    pendingSkillScores = undefined; abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
+    pendingSkillScores = undefined; history.reset(); abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
     scoreCache.clear(); skillRefs = new Map(); toolFilter.reset(true);
     await projectWriteQueue;
     await writeQueue;
@@ -178,7 +181,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   pi.on("session_tree", () => {
     // Navigating the session tree changes the active branch: an in-flight pass was computed against the old one.
     // Everything branch-derived is re-read from the new branch at the next boundary; only transient state is dropped here.
-    pendingSkillScores = undefined; abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.reset();
+    pendingSkillScores = undefined; history.reset(); abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.reset();
   });
   pi.on("session_shutdown", (_event, ctx) => {
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
@@ -186,9 +189,13 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     commands.closeDialogs();
     managerDiagnostics.reset();
     resetDecisionLoader();
-    pendingSkillScores = undefined; abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
+    pendingSkillScores = undefined; history.reset(); abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.reset(true);
     if (ctx.hasUI) { ctx.ui.setStatus("context-decisions", undefined); if (toolsStatusShown) { ctx.ui.setStatus("context-decisions-tools", undefined); toolsStatusShown = false; } }
   });
+  // Pi commits the user message after turn_start; assistant message_start is the first
+  // verified public boundary where the committed prompt ID is available.
+  pi.on("message_start", (event, ctx) => { if (event.message.role === "assistant") history.enqueue(ctx, "prompt"); });
+  pi.on("agent_end", (_event, ctx) => { history.enqueue(ctx, "reply"); });
   const uniqueByName = <T extends { name: string }>(skills: readonly T[]): T[] => {
     const names = new Set<string>();
     return skills.filter((skill) => !names.has(skill.name) && !!names.add(skill.name));
@@ -257,6 +264,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const currentGeneration = generation;
     const current = structuredClone(settings);
     const previousReply = task.trim() ? readPreviousFinalReply(ctx.sessionManager) : undefined;
+    const historySnapshot = history.read(ctx);
     const abort = new AbortController();
     pending.add(abort);
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, abort.signal]) : abort.signal;
@@ -296,7 +304,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
         const remaining = invocable.filter((skill) => !advertised.has(skill.name));
         beginDecisionLoader(ctx);
         try {
-          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, previousReply }, { store: scoreCache, key: cacheKey(task, current, previousReply || undefined) });
+          round = await scoreAdditions(task, remaining, client, { ...current.relevance, ...current.decision, maxQuestions: 50, signal, previousReply, history: historySnapshot }, { store: scoreCache, key: cacheKey(task, current, [previousReply, historySnapshot]) });
         } finally { endDecisionLoader(); }
         reason = round.failedOpen ? "fail-open" : round.errorCode ? "fail-closed" : "filtered";
         errorCode = round.errorCode;

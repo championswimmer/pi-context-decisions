@@ -44,6 +44,22 @@ test("state budget splits escaped payload and refuses one oversized entry", () =
   assert.throws(() => buildRelevanceRequests("task", skills, { maxStateChars: 10 }), (e) => e instanceof RelevanceError && e.code === "invalid_request");
 });
 
+test("history by itself cannot make an otherwise valid state overflow", () => {
+  const base = JSON.stringify({ task: "task", skills: { s0: { name: "alpha", description: "alpha description" } } }).length;
+  const [batch] = buildRelevanceRequests("task", skills.slice(0, 1), { history: [{ kind: "reply", text: "x".repeat(2000) }], maxStateChars: base });
+  assert.equal(batch.request.state.history, undefined);
+});
+test("history precedes the task and sheds oldest entries before exceeding state budget", () => {
+  const history = [{ kind: "prompt" as const, text: "old".repeat(100) }, { kind: "reply" as const, text: "new summary" }];
+  const [full] = buildRelevanceRequests("task", skills.slice(0, 1), { history });
+  assert.deepEqual(Object.keys(full.request.state), ["history", "task", "skills"]);
+  const budget = JSON.stringify({ history: [history[1]], task: "task", skills: { s0: { name: "alpha", description: "alpha description" } } }).length;
+  const [bounded] = buildRelevanceRequests("task", skills.slice(0, 1), { history, maxStateChars: budget });
+  assert.deepEqual(bounded.request.state.history, [history[1]]);
+  assert.ok(JSON.stringify(bounded.request.state).length <= budget);
+  const [allowlist] = buildRelevanceRequests("task", skills.slice(0, 1), { history, rubric: "topic" });
+  assert.equal(allowlist.request.state.history, undefined);
+});
 test("invalid metadata, bounds, and inventory overflows reject without echoing data", () => {
   for (const options of [{ maxPromptChars: 0 }, { chunkSize: -1 }, { concurrency: Infinity }]) {
     assert.throws(() => buildRelevanceRequests("private prompt", skills, options), RelevanceError);

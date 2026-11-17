@@ -7,7 +7,8 @@ import { test } from "node:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCodemodeExtension, createMcpExtension, createToolSearchExtension, createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type ExtensionAPI, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { createCodemodeExtension, createMcpExtension, createToolSearchExtension, createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type ExtensionAPI, type ExtensionContext, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { readPastTurnSummaries } from "../src/extension/past-turn-summaries.ts";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
@@ -30,6 +31,7 @@ const TOOL_CALL = (name: string, args: Record<string, unknown> = {}) => fauxTool
 interface Request { declared: string[]; system: { toolsAdded: string[]; toolsRemoved: string[] }[]; text: string[] }
 interface Options {
   tools?: Partial<ToolFilterSettings>;
+  history?: { enabled: boolean; model: string };
   scores?: Record<string, number>;
   scoreRequest?: (name: string, request: import("../src/decision/types.ts").DecisionRequest) => number;
   /** Extensions loaded BEFORE ours (registration order is handler order). */
@@ -58,7 +60,7 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
   const settingsPath = join(root, "settings.json");
   const base = defaultSettings();
   await saveSettings({ ...base, backend: { backend: "typesafe", model: "jev-latest" }, relevance: { ...base.relevance, enabled: false },
-    tools: { ...defaultToolSettings(), enabled: true, ...options.tools } }, settingsPath);
+    tools: { ...defaultToolSettings(), enabled: true, ...options.tools }, history: options.history ?? base.history }, settingsPath);
   const faux = createFauxCore({ provider: "fauxprov", models: [{ id: "faux-1" }] });
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false } as never);
   runtime.registerProvider("fauxprov", { baseUrl: "http://faux.invalid", apiKey: "x", api: faux.api, streamSimple: faux.streamSimple,
@@ -98,6 +100,74 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
   return h;
 }
 type H = Awaited<ReturnType<typeof realPi>>;
+test("real Pi all-queue summarizes every committed queued prompt exactly once in order", async (t) => {
+  const mock = (pi: ExtensionAPI) => pi.on("session_start", (_event, ctx) => {
+    Object.assign(ctx.modelRegistry, {
+      hasConfiguredAuth: () => true,
+      streamSimple: (_model: unknown, prompt: { messages: { content: { text: string }[] }[] }) => ({ result: async () => ({ stopReason: "stop", content: [{ type: "text", text: `summary: ${prompt.messages[0].content[0].text}` }] }) }),
+    });
+  });
+  const h = await realPi(t, (h) => [
+    h.step(() => { void h.session.steer("queued first"); void h.session.steer("queued second"); return fauxAssistantMessage([TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }),
+    finish(h),
+  ], { earlier: [mock], history: { enabled: true, model: "fauxprov/faux-1" }, files: { "a.txt": "result" } });
+  h.session.setSteeringMode("all");
+  await h.session.prompt("initial task");
+  await new Promise((resolve) => setImmediate(resolve));
+  const branch = h.sessionManager.getBranch();
+  const users = branch.filter((entry) => entry.type === "message" && entry.message.role === "user");
+  const records = branch.flatMap((entry) => entry.type === "custom" && entry.customType === "context-decisions-past-turn-summary" ? [entry.data as { sourceId: string; kind: string; text: string }] : []);
+  assert.equal(users.length, 3);
+  assert.deepEqual(users.map((entry) => records.filter((record) => record.kind === "prompt" && record.sourceId === entry.id).map((record) => record.text)), [["summary: initial task"], ["summary: queued first"], ["summary: queued second"]]);
+  const log = readPastTurnSummaries({ sessionManager: h.sessionManager } as unknown as ExtensionContext).filter((item) => item.kind === "prompt");
+  assert.deepEqual(log.map((item) => item.text), ["summary: initial task", "summary: queued first", "summary: queued second"]);
+});
+test("real Pi does not wait for a stuck housekeeping call before the next decision", async (t) => {
+  let calls = 0, complete = false; let release: (() => void) | undefined;
+  const mock = (pi: ExtensionAPI) => pi.on("session_start", (_event, ctx) => {
+    Object.assign(ctx.modelRegistry, {
+      hasConfiguredAuth: () => true,
+      streamSimple: () => { calls++; return { result: () => new Promise((resolve) => { const done = () => resolve({ stopReason: "stop", content: [{ type: "text", text: "summary" }] }); if (complete) done(); else release = done; }) }; },
+    });
+  });
+  const h = await realPi(t, (h) => [finish(h), finish(h)], { earlier: [mock, toolsExtension([{ name: "ext_a" }])], scores: { ext_a: 0 }, history: { enabled: true, model: "fauxprov/faux-1" }, tools: { cadence: "prompt" } });
+  await h.session.prompt("first task");
+  assert.equal(calls, 1);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([h.session.prompt("second task"), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("decision waited for housekeeping")), 1000); })]);
+  } finally { if (timer) clearTimeout(timer); }
+  assert.equal(h.decisions.length, 2); complete = true; release?.(); await new Promise((resolve) => setImmediate(resolve));
+  const records = h.sessionManager.getBranch().filter((entry) => entry.type === "custom" && entry.customType === "context-decisions-past-turn-summary");
+  assert.equal(records.length, 4, "each committed prompt and final reply is summarized once");
+});
+test("real Pi invalidates tool score cache when history changes", async (t) => {
+  let runs = 0;
+  const writer = (pi: ExtensionAPI) => pi.on("agent_end", (_event, ctx) => {
+    if (++runs !== 2) return;
+    const source = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && entry.message.role === "assistant");
+    assert.ok(source);
+    pi.appendEntry("context-decisions-past-turn-summary", { sourceId: source.id, kind: "reply", text: "new context" });
+  });
+  const h = await realPi(t, (h) => [finish(h), finish(h), finish(h)], { earlier: [writer, toolsExtension([{ name: "ext_a" }])], scores: { ext_a: 0 }, history: { enabled: true, model: "" }, tools: { cadence: "prompt" } });
+  await h.session.prompt("same task"); await h.session.prompt("same task"); await h.session.prompt("same task");
+  assert.equal(h.decisions.length, 3);
+  assert.ok(h.decisions[2].raw.includes("new context"));
+});
+test("real Pi keeps stored summaries out of chat while using them in decisions", async (t) => {
+  let wrote = false;
+  const writer = (pi: ExtensionAPI) => pi.on("agent_end", (_event, ctx) => {
+    if (wrote) return;
+    const source = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && entry.message.role === "assistant");
+    assert.ok(source); wrote = true;
+    pi.appendEntry("context-decisions-past-turn-summary", { sourceId: source.id, kind: "reply", text: "PRIOR_PRIVATE_SUMMARY" });
+  });
+  const h = await realPi(t, (h) => [finish(h), finish(h)], { earlier: [writer, toolsExtension([{ name: "ext_a" }])], scores: { ext_a: 0 }, history: { enabled: true, model: "" }, tools: { cadence: "prompt" } });
+  await h.session.prompt("first task");
+  await h.session.prompt("second task");
+  assert.ok(h.decisions[1].raw.includes("PRIOR_PRIVATE_SUMMARY"));
+  assert.ok(!JSON.stringify(h.requests[1]).includes("PRIOR_PRIVATE_SUMMARY"));
+});
 const finish = (h: H) => h.step();
 const call = (h: H, name: string, args: Record<string, unknown> = {}) => h.step(() => fauxAssistantMessage([TOOL_CALL(name, args)], { stopReason: "toolUse" }));
 
@@ -429,6 +499,33 @@ test("real Pi prompt cadence uses the previous final reply for tool scoring and 
   const blocked = await h.session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "ext_other", toolCallId: "gate", input: {} } as never);
   assert.equal(blocked?.block, true);
   assert.equal(h.decisions.length, 2, "lazy gate uses the contextual score cache");
+});
+test("real Pi exposes committed prompt IDs at assistant message_start, including queued prompts", async (t) => {
+  const snapshots: { event: string; messages: { id: string; role: string }[] }[] = [];
+  const recorder = (pi: ExtensionAPI) => {
+    pi.on("message_start", (event, ctx) => {
+      const messages = ctx.sessionManager.getBranch().filter((entry) => entry.type === "message")
+        .map((entry) => ({ id: entry.id, role: entry.message.role }));
+      snapshots.push({ event: `message_start:${event.message.role}`, messages });
+    });
+    pi.on("agent_end", (_event, ctx) => {
+      const messages = ctx.sessionManager.getBranch().filter((entry) => entry.type === "message")
+        .map((entry) => ({ id: entry.id, role: entry.message.role }));
+      snapshots.push({ event: "agent_end", messages });
+    });
+  };
+  const h = await realPi(t, (h) => [
+    h.step(() => { void h.session.steer("queued goal"); return fauxAssistantMessage([TOOL_CALL("read", { path: "a.txt" })], { stopReason: "toolUse" }); }),
+    finish(h),
+  ], { earlier: [recorder], files: { "a.txt": "result" } });
+  await h.session.prompt("initial goal");
+  const starts = snapshots.filter((snapshot) => snapshot.event === "message_start:assistant");
+  assert.equal(starts.length, 2);
+  assert.deepEqual(starts.map((snapshot) => snapshot.messages.filter((message) => message.role === "user").length), [1, 2]);
+  const users = starts[1].messages.filter((message) => message.role === "user");
+  assert.notEqual(users[0].id, users[1].id);
+  const end = [...snapshots].reverse().find((snapshot) => snapshot.event === "agent_end")!;
+  assert.equal(end.messages.at(-1)?.role, "assistant");
 });
 test("real Pi queued tool decision retains the prior final and excludes the current intermediate", async (t) => {
   const h = await realPi(t, (h) => [
