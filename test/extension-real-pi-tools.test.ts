@@ -60,7 +60,7 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
   const settingsPath = join(root, "settings.json");
   const base = defaultSettings();
   await saveSettings({ ...base, backend: { backend: "typesafe", model: "jev-latest" }, relevance: { ...base.relevance, enabled: false },
-    tools: { ...defaultToolSettings(), enabled: true, ...options.tools }, history: options.history ?? base.history }, settingsPath);
+    tools: { ...defaultToolSettings(), enabled: true, ...options.tools }, history: { ...base.history, ...options.history } }, settingsPath);
   const faux = createFauxCore({ provider: "fauxprov", models: [{ id: "faux-1" }] });
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false } as never);
   runtime.registerProvider("fauxprov", { baseUrl: "http://faux.invalid", apiKey: "x", api: faux.api, streamSimple: faux.streamSimple,

@@ -51,7 +51,9 @@ export interface ToolFilterSettings {
 /** Footer glyphs: Unicode needs no patched font; Nerd Font is explicitly opt-in. */
 export type IconStyle = "unicode" | "emoji" | "nerd";
 export const ICON_STYLES: readonly IconStyle[] = ["unicode", "emoji", "nerd"];
-export interface HistorySettings { enabled: boolean; model: string }
+export const HISTORY_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type HistoryThinkingLevel = (typeof HISTORY_THINKING_LEVELS)[number];
+export interface HistorySettings { enabled: boolean; model: string; thinkingLevel: HistoryThinkingLevel }
 export interface ContextDecisionsSettings {
   iconStyle: IconStyle;
   backend: BackendSelection | null;
@@ -69,7 +71,7 @@ export function defaultToolSettings(): ToolFilterSettings {
   return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
 }
 export function defaultSettings(): ContextDecisionsSettings {
-  return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(), history: { enabled: false, model: "" },
+  return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(), history: { enabled: false, model: "", thinkingLevel: "off" },
     relevance: { enabled: true, constantMatrix: false, maxSkills: 12, minCandidates: 8, pinned: [] } };
 }
 export class SettingsError extends Error {
@@ -199,12 +201,13 @@ export function parseSettings(value: unknown, warnings?: string[]): ContextDecis
   keys(tool, [...Object.keys(result.tools), ...LEGACY_TOOL_KEYS], warnings);
   keys(decision, SHARED_KEYS, warnings);
   const history = block("history");
-  keys(history, ["enabled", "model"], warnings);
+  keys(history, ["enabled", "model", "thinkingLevel"], warnings);
   if (history.enabled !== undefined) result.history.enabled = boolean(history.enabled, "history.enabled");
   if (history.model !== undefined) {
     if (typeof history.model !== "string" || (history.model !== "" && (!/^[^\s/\p{Cc}\p{Cf}]+\/[^\s\p{Cc}\p{Cf}]+$/u.test(history.model) || history.model.length > 512))) throw new SettingsError("Invalid history.model");
     result.history.model = history.model;
   }
+  if (history.thinkingLevel !== undefined) result.history.thinkingLevel = enumValue(history.thinkingLevel, HISTORY_THINKING_LEVELS, "history.thinkingLevel") as HistoryThinkingLevel;
   if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
   if (skill.constantMatrix !== undefined) result.relevance.constantMatrix = boolean(skill.constantMatrix, "relevance.constantMatrix");
   if (tool.allowSubagentInheritedTools !== undefined) result.tools.allowSubagentInheritedTools = boolean(tool.allowSubagentInheritedTools, "tools.allowSubagentInheritedTools");
@@ -288,7 +291,7 @@ export function updateSetting(settings: ContextDecisionsSettings, key: string, t
   else if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; field = key.slice(9); }
   else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
   else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
-  else if (key === "history.enabled") { target = next.history as unknown as Record<string, unknown>; field = "enabled"; }
+  else if (key === "history.enabled" || key === "history.thinkingLevel") { target = next.history as unknown as Record<string, unknown>; field = key.slice(8); }
   else throw new SettingsError("Use iconStyle, a decision, relevance or tools setting; choose a backend in the /decisions dialog");
   if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
     throw new SettingsError("Removed setting: skill picking is score-only. Use decision.threshold <0–1>");

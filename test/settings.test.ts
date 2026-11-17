@@ -18,9 +18,12 @@ test("defaults are independent, disabled until a backend is chosen, fail closed,
   assert.deepEqual((await loadSettings(join(await directory(t), "missing.json"))).settings, b);
 });
 test("housekeeping settings default off, validate identity, and persist", async (t) => {
-  assert.deepEqual(defaultSettings().history, { enabled: false, model: "" });
+  assert.deepEqual(defaultSettings().history, { enabled: false, model: "", thinkingLevel: "off" });
   for (const model of ["model", "/model", "provider/", "provider/ bad", "provider/evil\nmodel"]) assert.throws(() => parseSettings({ history: { enabled: true, model } }), SettingsError);
   assert.throws(() => parseSettings({ history: { enabled: "true" } }), SettingsError);
+  assert.throws(() => updateSetting(defaultSettings(), "history.thinkingLevel", "absurd"), SettingsError);
+  assert.equal(updateSetting(defaultSettings(), "history.thinkingLevel", "high").history.thinkingLevel, "high");
+  assert.equal(parseSettings({ history: { enabled: true, model: "" } }).history.enabled, true);
   const path = join(await directory(t), "history.json");
   const settings = parseSettings({ history: { enabled: true, model: "provider/nested/model" } });
   await saveSettings(settings, path);
