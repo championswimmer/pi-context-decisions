@@ -352,3 +352,12 @@ test("inherited-tools setting defaults off, validates and roundtrips", async (t)
   await saveSettings(settings, path);
   assert.equal((await loadSettings(path)).settings.tools.allowSubagentInheritedTools, true);
 });
+
+test("constant scoring matrix defaults off, validates and persists", async (t) => {
+  assert.equal(parseSettings({}).relevance.constantMatrix, false);
+  assert.throws(() => parseSettings({ relevance: { constantMatrix: "true" } }));
+  const path = join(await directory(t), "settings.json");
+  const settings = updateSetting(defaultSettings(), "relevance.constantMatrix", "true");
+  await saveSettings(settings, path);
+  assert.equal((await loadSettings(path)).settings.relevance.constantMatrix, true);
+});
