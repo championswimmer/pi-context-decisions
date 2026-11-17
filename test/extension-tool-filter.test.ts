@@ -241,7 +241,7 @@ test("cadence initial: a failed initial pick records nothing, so the next user p
   assert.equal(await h.gate("ext_a"), undefined);
 });
 test("disabling history during a run removes it from tool-round and lazy scoring", async (t) => {
-  const h = await toolSetup(t, { settings: { history: { enabled: true, model: "" } }, tools: { cadence: "tool-round", maxAdded: 1 }, extra: [A, B, C], scores: { ext_a: 2, ext_b: 0, ext_c: 0 } });
+  const h = await toolSetup(t, { settings: { history: { enabled: true, model: "", thinkingLevel: "off" } }, tools: { cadence: "tool-round", maxAdded: 1 }, extra: [A, B, C], scores: { ext_a: 2, ext_b: 0, ext_c: 0 } });
   await h.start("earlier prompt");
   const source = h.sim.session.getBranch().find((entry) => entry.message?.role === "user")!;
   h.sim.session.appendCustom("context-decisions-past-turn-summary", { sourceId: source.id, kind: "prompt", text: "prior work" });
@@ -250,7 +250,8 @@ test("disabling history during a run removes it from tool-round and lazy scoring
   let entered = false, toggled = false;
   const ctx = rpcContext(h.ctx, { async select(title: string, options: string[]) {
     if (title === "Decisions · settings") { if (entered) return "Done"; entered = true; return "Advanced"; }
-    if (!toggled) { toggled = true; return options.find((item) => item.startsWith("Past Turn Summaries [Lab]:")); }
+    if (title === "Decisions · Advanced settings") return toggled ? "Back" : "[lab] Past Turn Summaries";
+    if (title === "[lab] Past Turn Summaries" && !toggled) { toggled = true; return options.find((item) => item.startsWith("Enabled:")); }
     return "Back";
   } });
   await h.sim.command("", ctx);

@@ -5,7 +5,7 @@ import { resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey, type Creden
 import { createDeadline } from "../core/control.ts";
 import type { BackendSelection } from "../core/backends/factory.ts";
 import { DecisionError } from "../decision/errors.ts";
-import { SettingsError, updateSetting, validateBackendSelection } from "../settings.ts";
+import { HISTORY_THINKING_LEVELS, SettingsError, updateSetting, validateBackendSelection } from "../settings.ts";
 import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist, type AllowlistScope, type ScopedSkill } from "../apps/allowlist.ts";
 import { rankSkills } from "../apps/relevance.ts";
 import { canonicalServerKey } from "../apps/tool-inventory.ts";
@@ -191,7 +191,7 @@ async function statusLines(controller: Controller, ctx: CommandContext, env?: Re
     `  Timeout: ${d.timeoutMs}ms`,
     `  Text limits: prompt ${d.maxPromptChars} · description ${d.maxDescriptionChars} chars`,
     "",
-    `Past Turn Summaries [Lab]: ${!settings.history.enabled ? "off" : !settings.history.model ? "on (no housekeeping model selected)" : availableHousekeepingModels(ctx).includes(settings.history.model) ? `on · ${sanitizeTerminalText(settings.history.model, 160)}` : "on (model unavailable or unauthenticated)"}`,
+    `[lab] Past Turn Summaries: ${!settings.history.enabled ? "off" : !settings.history.model ? "on (no housekeeping model selected)" : availableHousekeepingModels(ctx).includes(settings.history.model) ? `on · ${sanitizeTerminalText(settings.history.model, 160)}` : "on (model unavailable or unauthenticated)"}`,
     "",
     `Subagents · Allow inherited tools: ${settings.tools.allowSubagentInheritedTools ? controller.subagentManagerPresent?.() ? "on (bridged child tools)" : "on (ineffective: pi-subagent-manager not detected)" : "off"}`,
     ...(managerStatus ? [managerStatus] : []),
@@ -353,17 +353,45 @@ function availableHousekeepingModels(ctx: CommandContext): string[] {
 }
 async function saveHousekeepingModel(controller: Controller, ctx: CommandContext, model: string): Promise<void> {
   if (model && !availableHousekeepingModels(ctx).includes(model)) throw new SettingsError("Housekeeping model is unavailable or not authenticated");
-  await controller.update((current) => ({ ...current, history: { ...current.history, model } }));
+  await controller.update((current) => ({ ...current, history: { ...current.history, model, enabled: model ? current.history.enabled : false } }));
   statusSafely(controller, ctx);
 }
 async function chooseHousekeepingModel(controller: Controller, ctx: CommandContext): Promise<void> {
   const models = availableHousekeepingModels(ctx);
-  const labels = models.map((model, index) => `${index + 1}. ${sanitizeTerminalText(model, 160)}`);
-  const picked = await ctx.ui.select("Past Turn Summaries · Model [Lab]", ["None", ...labels, "Back"], { signal: ctx.signal });
+  const query = await ctx.ui.input("Search housekeeping models (leave empty for all)", "", { signal: ctx.signal });
+  if (query === undefined) return;
+  const filtered = models.filter((model) => model.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const labels = filtered.map((model, index) => `${index + 1}. ${sanitizeTerminalText(model, 160)}`);
+  const picked = await ctx.ui.select("[lab] Past Turn Summaries · Model", ["None", ...labels, "Back"], { signal: ctx.signal });
   if (!picked || picked === "Back") return;
   const index = labels.indexOf(picked);
   if (picked !== "None" && index < 0) throw new SettingsError("Invalid housekeeping model selection");
-  await saveHousekeepingModel(controller, ctx, picked === "None" ? "" : models[index]);
+  await saveHousekeepingModel(controller, ctx, picked === "None" ? "" : filtered[index]);
+}
+function requireHousekeepingModel(ctx: CommandContext, model: string): void {
+  if (!model || !availableHousekeepingModels(ctx).includes(model)) throw new SettingsError("Choose an available, authenticated housekeeping model first");
+}
+
+async function historySettingsMenu(controller: Controller, ctx: CommandContext): Promise<void> {
+  for (;;) {
+    const history = controller.getSettings().history;
+    const model = `Model: ${history.model || "Not selected"}`;
+    const enabled = `Enabled: ${history.enabled ? "On" : "Off"}`;
+    const thinking = `Thinking level: ${history.thinkingLevel}`;
+    const picked = await ctx.ui.select("[lab] Past Turn Summaries", [model, enabled, thinking, "Back"], { signal: ctx.signal });
+    if (!picked || picked === "Back") return;
+    try {
+      if (picked === model) await chooseHousekeepingModel(controller, ctx);
+      else if (picked === enabled) {
+        if (!history.enabled) requireHousekeepingModel(ctx, history.model);
+        await controller.update((current) => updateSetting(current, "history.enabled", String(!current.history.enabled)));
+        statusSafely(controller, ctx);
+      } else if (picked === thinking) {
+        const level = await ctx.ui.select("Past Turn Summaries · Thinking level", [...HISTORY_THINKING_LEVELS, "Back"], { signal: ctx.signal });
+        if (level && level !== "Back") await controller.update((current) => updateSetting(current, "history.thinkingLevel", level));
+      }
+    } catch (error) { controller.report(ctx, safeError(error), "error"); }
+  }
 }
 async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Skills" | "Tools" | "Advanced", env?: Record<string, string | undefined>) {
   const definitions: readonly AdvancedField[] = tab === "Tools" ? TOOL_FIELDS : tab === "Skills" ? SKILL_FIELDS : ADVANCED_FIELDS;
@@ -377,7 +405,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
     const icons = `Footer icons: ${iconStyleText(settings)}`;
     const extras = tab === "Advanced" ? [provider, model] : tab === "Skills" ? ["Allow list (Global)", "Allow list (Project)", "Status"]
       : ["Always allowed tools · Global", "Always allowed tools · Project", "Always allowed MCP servers & extensions · Global", "Always allowed MCP servers & extensions · Project"];
-    const pick = await ctx.ui.select(title, [...(tab === "Advanced" ? extras : []), ...labels, ...(tab === "Advanced" ? [icons, `Past Turn Summaries [Lab]: ${settings.history.enabled ? "On" : "Off"}`, `Past Turn Summaries · Model [Lab]: ${settings.history.model || "Not selected"}`] : []), ...(tab !== "Advanced" ? extras : []), "Back"], { signal: ctx.signal });
+    const pick = await ctx.ui.select(title, [...(tab === "Advanced" ? extras : []), ...labels, ...(tab === "Advanced" ? [icons, "[lab] Past Turn Summaries"] : []), ...(tab !== "Advanced" ? extras : []), "Back"], { signal: ctx.signal });
     if (!pick || pick === "Back") return;
     try {
       if (pick === provider) { await chooseProvider(controller, ctx, env); continue; }
@@ -386,8 +414,7 @@ async function fieldsMenu(controller: Controller, ctx: CommandContext, tab: "Ski
         await chooseModel(controller, ctx, env, backend ? (entry) => entry.selection.backend === backend.backend && (entry.selection.backend !== "pi" || (backend.backend === "pi" && entry.selection.provider === backend.provider)) : undefined);
         continue;
       }
-      if (tab === "Advanced" && pick === `Past Turn Summaries [Lab]: ${settings.history.enabled ? "On" : "Off"}`) { await controller.update((current) => updateSetting(current, "history.enabled", String(!current.history.enabled))); statusSafely(controller, ctx); continue; }
-      if (tab === "Advanced" && pick === `Past Turn Summaries · Model [Lab]: ${settings.history.model || "Not selected"}`) { await chooseHousekeepingModel(controller, ctx); continue; }
+      if (tab === "Advanced" && pick === "[lab] Past Turn Summaries") { await historySettingsMenu(controller, ctx); continue; }
       if (tab === "Advanced" && pick === icons) { await iconStyleMenu(controller, ctx); continue; }
       if (pick === "Status") { await status(controller, ctx, env); continue; }
       if (extras.includes(pick)) throw new SettingsError(EDITOR_UNAVAILABLE);
@@ -450,7 +477,7 @@ function buildDialogOps(controller: Controller, ctx: CommandContext, env: Record
       return { count: result.names.length, tools: result.tools.length, mcpServers: result.mcpServers.length, ...(warning ? { warning: sanitizeTerminalText(warning, 300) } : {}) };
     },
     async toggleEnabled() { await controller.update((current) => ({ ...current, relevance: { ...current.relevance, enabled: !current.relevance.enabled } })); refreshStatus(); },
-    async updateSetting(key, text) { if (key === "tools.allowSubagentInheritedTools" && text === "true" && !controller.subagentManagerPresent?.()) throw new SettingsError(SUBAGENT_HELP); await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
+    async updateSetting(key, text) { if (key === "tools.allowSubagentInheritedTools" && text === "true" && !controller.subagentManagerPresent?.()) throw new SettingsError(SUBAGENT_HELP); if (key === "history.enabled" && text === "true") requireHousekeepingModel(scoped(), controller.getSettings().history.model); await controller.update((current) => updateSetting(current, key, text)); refreshStatus(); },
     async listProviders(signal): Promise<ProviderRow[]> {
       const choices = await providerChoices(scoped(signal), env);
       return choices.map((choice) => ({

@@ -126,11 +126,11 @@ test("Advanced constant-matrix lab toggles independently of skill filtering", as
   const index = ADVANCED_FIELDS.findIndex((field) => field.group === "relevance" && field.key === "constantMatrix");
   assert.ok(index >= 0);
   toRow(h, 2 + index); // Provider and model precede Advanced fields.
-  assert.match(h.text(), /❯ Skills · Constant scoring matrix \[lab\]\s+Off/);
+  assert.match(h.text(), /❯ \[lab\] Skills · Constant scoring matrix\s+Off/);
   h.press(KEY.enter); await tick();
   assert.equal(f.settings.relevance.enabled, true);
   assert.equal(f.settings.relevance.constantMatrix, true);
-  assert.match(h.text(), /❯ Skills · Constant scoring matrix \[lab\]\s+On/);
+  assert.match(h.text(), /❯ \[lab\] Skills · Constant scoring matrix\s+On/);
   h.press(KEY.space); await tick();
   assert.equal(f.settings.relevance.enabled, true);
   assert.equal(f.settings.relevance.constantMatrix, false);
@@ -141,12 +141,20 @@ test("Advanced constant-matrix lab toggles independently of skill filtering", as
 });
 
 test("Advanced lab toggles retain independent settings", async () => {
-  const f = fakeOps(); const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  const f = fakeOps();
+  f.ops.listHousekeepingModels = async () => ["provider/model-a"];
+  f.ops.selectHousekeepingModel = async (model) => { f.settings.history.model = model; };
+  const h = mount(f, { initialRoute: "advanced", rows: 60 });
   const matrix = ADVANCED_FIELDS.findIndex((field) => field.group === "relevance" && field.key === "constantMatrix");
   toRow(h, 2 + matrix); h.press(KEY.enter); await tick();
   assert.equal(f.settings.relevance.constantMatrix, true);
-  assert.equal(f.settings.history.enabled, false);
-  h.press(...Array(60).fill(KEY.down), KEY.up); h.press(KEY.enter); await tick();
+  h.press(...Array(60).fill(KEY.down), KEY.enter); await tick();
+  h.press(KEY.down, KEY.enter); await tick();
+  assert.equal(f.settings.history.enabled, false, "cannot enable without a selected model");
+  h.press(KEY.up, KEY.enter); await h.until(/provider\/model-a/);
+  h.press(KEY.down, KEY.enter); await tick(); await tick();
+  assert.equal(f.settings.history.enabled, false, "model selection does not enable");
+  h.press(KEY.down, KEY.enter); await tick();
   assert.equal(f.settings.history.enabled, true);
   assert.equal(f.settings.relevance.constantMatrix, true);
   assert.equal(f.settings.relevance.enabled, true);
@@ -211,17 +219,49 @@ test("None clears the model through selectModel(null)", async () => {
 });
 
 
-test("Advanced housekeeping picker lists and persists a selected model without enabling summaries", async () => {
-  const f = fakeOps();
-  f.ops.listHousekeepingModels = async () => ["provider/model-a", "provider/model-b"];
+test("Past Turn Summaries submenu gates enable and searches models locally", async () => {
+  const f = fakeOps(); let loads = 0;
+  f.ops.listHousekeepingModels = async () => { loads++; return ["provider/model-a", "other/Model-B"]; };
   f.ops.selectHousekeepingModel = async (model) => { f.settings.history.model = model; };
-  const h = mount(f, { initialRoute: "advanced", rows: 50 });
-  h.press(...Array(50).fill(KEY.down), KEY.enter);
-  await h.until(/provider\/model-a/);
-  h.press(KEY.down, KEY.down, KEY.enter); await tick();
-  assert.equal(f.settings.history.model, "provider/model-b");
-  assert.equal(f.settings.history.enabled, false);
-  assert.match(h.text(120), /provider\/model-b/);
+  const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  assert.equal((h.text().match(/\[lab\] Past Turn Summaries/g) ?? []).length, 1);
+  h.press(...Array(60).fill(KEY.down), KEY.enter); await tick();
+  const menu = h.text();
+  assert.ok(menu.indexOf("❯ Model") < menu.indexOf("Enabled"));
+  assert.ok(menu.indexOf("Enabled") < menu.indexOf("Thinking level"));
+  h.press(KEY.down, KEY.space); assert.match(h.text(), /Select an available housekeeping model first/);
+  h.press(KEY.up, KEY.enter); await h.until(/other\/Model-B/);
+  const before = loads;
+  h.press(..."MODEL-b");
+  assert.match(h.text(), /other\/Model-B/); assert.doesNotMatch(h.text(), /provider\/model-a/); assert.equal(loads, before);
+  h.press(..."-missing"); assert.match(h.text(), /No matching models/); assert.equal(loads, before);
+  h.press("\x15", ..."model-b"); assert.match(h.text(), /other\/Model-B/);
+  h.press(KEY.enter); await tick(); await tick();
+  assert.equal(f.settings.history.model, "other/Model-B"); assert.equal(f.settings.history.enabled, false);
+  assert.match(h.text(), /Decisions › \[lab\] Past Turn Summaries/);
+  h.press(KEY.down, KEY.space); await tick(); assert.equal(f.settings.history.enabled, true);
+  h.press(KEY.down, KEY.enter); assert.match(h.text(), /Thinking level/);
+  h.press(KEY.down, KEY.enter); await tick();
+  assert.ok(f.calls.includes("updateSetting:history.thinkingLevel=minimal"));
+  h.press(KEY.esc); assert.match(h.text(), /Decisions › Advanced/);
+  h.component.dispose();
+});
+test("housekeeping model search strips pasted terminal control sequences before rendering and filtering", async () => {
+  const f = fakeOps(); let loads = 0;
+  f.ops.listHousekeepingModels = async () => { loads++; return ["provider/éclair", "provider/other"]; };
+  const h = mount(f, { initialRoute: "advanced", rows: 60 });
+  h.press(...Array(60).fill(KEY.down), KEY.enter); await tick();
+  h.press(KEY.enter); await h.until(/provider\/éclair/);
+  const before = loads;
+  h.press("\x1b[200~é\x1b]52;c;SGVsbG8=\x07\x1b[31mcl\x01air\x1b[201~");
+  const rendered = h.text();
+  assert.doesNotMatch(rendered, /\x1b\]52|\x1b\[31m|\x01/);
+  assert.doesNotMatch(rendered, /SGVsbG8=/);
+  assert.match(stripTerminalSequences(rendered), /provider\/éclair/);
+  assert.doesNotMatch(rendered, /provider\/other/);
+  assert.ok(rendered.includes(CURSOR_MARKER), "focused Input cursor marker remains intact");
+  assert.equal(loads, before, "typing and pasting do not load providers");
+  h.press(KEY.esc); assert.match(h.text(), /\[lab\] Past Turn Summaries/);
   h.component.dispose();
 });
 test("Advanced lists every knob, edit is prefilled, invalid values stay inline and Esc saves nothing", async () => {

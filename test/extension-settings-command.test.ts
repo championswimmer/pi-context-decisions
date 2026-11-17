@@ -190,13 +190,15 @@ test("Advanced housekeeping picker persists only an available authenticated mode
   dialog.handleInput!("\x1b[Z"); // Advanced
   for (let i = 0; i < 40; i++) dialog.handleInput!(KEY.down);
   dialog.handleInput!(KEY.enter);
+  await h.until(dialog, /Thinking level/);
+  dialog.handleInput!(KEY.enter);
   await h.until(dialog, /good\/model/);
   assert.doesNotMatch(h.text(dialog), /bad\/model/);
   dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter);
   await h.until(dialog, /Saved/);
-  assert.deepEqual((await loadSettings(h.path)).settings.history, { enabled: false, model: "good/model" });
+  assert.deepEqual((await loadSettings(h.path)).settings.history, { enabled: false, model: "good/model", thinkingLevel: "off" });
   assert.equal(h.requests.length, 0);
-  dialog.handleInput!(KEY.esc); await run;
+  dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
 });
 test("missing keys are labelled, guide to env or /login, and are never persisted; OpenAI OAuth cannot substitute", async (t) => {
   const h = await harness(t, { openaiOAuth: true, env: {} });
@@ -224,7 +226,7 @@ test("printed status has short, separated sections and the dialog uses the same 
   assert.match(sections[1]!, /^Skills: on · picker prompt\n  Limits:/);
   assert.match(sections[2]!, /^Tool filtering: off \(opt-in\)/);
   assert.match(sections[3]!, /^Decision settings \(Advanced\)\n  Threshold:/);
-  assert.match(sections[4]!, /^Past Turn Summaries \[Lab\]: off$/);
+  assert.match(sections[4]!, /^\[lab\] Past Turn Summaries: off$/);
   assert.match(sections[5]!, /^Subagents · Allow inherited tools: off$/);
   assert.ok(report.split("\n").every((line) => line.length <= 90), "default report should not need long lines");
   assert.doesNotMatch(report, /\{"|Top models|token window/);

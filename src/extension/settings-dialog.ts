@@ -4,11 +4,11 @@ import { SUBAGENT_HELP } from "./subagent-manager.ts";
 // Never opens nested ctx.ui.select/input/custom: Pi's custom `done` removes the TOPMOST overlay,
 // so stacked dialogs could close the wrong one. Close only through `done`, exactly once.
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Input, getKeybindings, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type OverlayHandle, type OverlayOptions } from "@earendil-works/pi-tui";
+import { Input, getKeybindings, matchesKey, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type OverlayHandle, type OverlayOptions } from "@earendil-works/pi-tui";
 import type { AllowlistScope } from "../apps/allowlist.ts";
 import type { AuthStatus } from "../catalog/picker-models.ts";
 import type { BackendSelection } from "../core/backends/factory.ts";
-import type { ContextDecisionsSettings } from "../settings.ts";
+import { HISTORY_THINKING_LEVELS, type ContextDecisionsSettings } from "../settings.ts";
 import { createAllowlistComponent, type AllowlistPickerDeps } from "./allowlist-picker.ts";
 import type { CommandContext } from "./contracts.ts";
 import { HISTORY_NOTE, historyTurnLines, historyTurnSummary, historyTurnTitle, type DecisionsHistory, type HistoryTurn } from "./decisions-history.ts";
@@ -28,6 +28,7 @@ export type AllowlistKind = "skills" | "tools" | "mcp";
 export type SettingsRoute =
   | { kind: "main" } | { kind: "advanced" } | { kind: "tools" } | { kind: "provider" }
   | { kind: "model"; filter?: { backend: BackendSelection["backend"]; provider?: string } }
+  | { kind: "past-turn-summaries" } | { kind: "housekeeping-thinking" }
   | { kind: "housekeeping-model" }
   | { kind: "edit"; key: string; group?: SettingsGroup } | { kind: "options"; key: string; group?: SettingsGroup }
   | { kind: "status" } | { kind: "history" } | { kind: "history-batch"; turn: HistoryTurn }
@@ -187,7 +188,10 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
     if (route.kind === "main" || route.kind === "tools") loadProject();
     else if (route.kind === "provider") load(frame, (signal) => ops.listProviders(signal), (rows) => { frame.providers = rows; frame.selected = 0; });
     else if (route.kind === "model") load(frame, (signal) => ops.listModels(route.filter, signal), (rows) => { frame.models = rows; frame.selected = 0; });
-    else if (route.kind === "housekeeping-model") load(frame, (signal) => ops.listHousekeepingModels?.(signal) ?? Promise.resolve([]), (models) => { frame.housekeepingModels = models; frame.selected = 0; });
+    else if (route.kind === "past-turn-summaries" || route.kind === "housekeeping-model") {
+      if (route.kind === "housekeeping-model" && !frame.input) frame.input = new Input({ prompt: "Search: " });
+      load(frame, (signal) => ops.listHousekeepingModels?.(signal) ?? Promise.resolve([]), (models) => { frame.housekeepingModels = models; frame.selected = 0; });
+    }
     else if (route.kind === "status") load(frame, (signal) => ops.statusLines(signal), (lines) => { frame.lines = lines.map((line) => sanitizeTerminalText(line, 800)); frame.scroll = 0; });
     else if (route.kind === "history") load(frame, (signal) => ops.history ? ops.history(signal) : Promise.reject(new Error("Session history is unavailable")), (history) => { frame.history = history; frame.selected = 0; frame.offset = 0; });
     else if (route.kind === "history-batch") { frame.lines = historyTurnLines(route.turn); frame.scroll = 0; }
@@ -317,9 +321,20 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       { label: "Model", value: modelLabel(settings.backend), description: "Shared decision model. Choosing one never enables filtering.", run: () => push({ kind: "model", filter: backendFilter(settings.backend) }) },
       ...fields(ADVANCED_FIELDS),
       footerIconsItem(),
-      { label: "Past Turn Summaries [Lab]", value: settings.history.enabled ? "On" : "Off", toggle: true, description: "Off by default. Sends visible prompts and final replies to the selected housekeeping model and summaries to the decision provider.", run: () => mutate(frame, () => ops.updateSetting("history.enabled", String(!settings.history.enabled)), () => ok(frame, "Saved")) },
-      { label: "Past Turn Summaries · Model [Lab]", value: sanitizeTerminalText(settings.history.model || "Not selected", 160), description: "Choose an available Pi housekeeping model; sends visible prompts and final replies to its provider.", run: () => push({ kind: "housekeeping-model" }) },
+      { label: "[lab] Past Turn Summaries", value: settings.history.enabled ? "On" : "Off", description: "Configure the housekeeping model and past turn summaries.", run: () => push({ kind: "past-turn-summaries" }) },
     ];
+    if (route.kind === "past-turn-summaries") {
+      const usable = !!settings.history.model && !!frame.housekeepingModels?.includes(settings.history.model);
+      return [
+        { label: "Model", value: sanitizeTerminalText(settings.history.model || "Not selected", 160), description: "Choose an available Pi housekeeping model; selection does not enable summaries.", run: () => push({ kind: "housekeeping-model" }) },
+        { label: "Enabled", value: settings.history.enabled ? "On" : "Off", toggle: true, description: "Sends visible prompts and final replies to the selected housekeeping model and summaries to the decision provider.", ...(!settings.history.enabled && !usable ? { disabled: frame.loading ? "Checking available models…" : "Select an available housekeeping model first." } : {}), run: () => mutate(frame, () => ops.updateSetting("history.enabled", String(!settings.history.enabled)), () => ok(frame, "Saved")) },
+        { label: "Thinking level", value: settings.history.thinkingLevel, description: "Reasoning effort for the housekeeping model.", run: () => push({ kind: "housekeeping-thinking" }) },
+      ];
+    }
+    if (route.kind === "housekeeping-thinking") return HISTORY_THINKING_LEVELS.map((level) => ({
+      label: level, value: settings.history.thinkingLevel === level ? "current" : "", description: "Choose reasoning effort for the selected housekeeping model.",
+      run: () => mutate(frame, () => ops.updateSetting("history.thinkingLevel", level), (_value, current) => { if (!current) { ok(frame, "Saved"); return; } pop(); const parent = top(); if (parent) ok(parent, "Saved"); }),
+    }));
     if (route.kind === "provider") {
       if (!frame.providers) return [{ label: frame.loading ? "Checking credentials…" : "No providers available", disabled: frame.loading ? "Checking credentials without any inference calls…" : "No providers available.", run: () => {} }];
       return frame.providers.map((row) => ({
@@ -332,8 +347,11 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       }));
     }
     if (route.kind === "housekeeping-model") {
-      if (!frame.housekeepingModels) return [{ label: "Loading available models…", disabled: "Loading", run: () => {} }];
-      return ["", ...frame.housekeepingModels].map((model) => ({ label: model ? sanitizeTerminalText(model, 160) : "None", description: "Select housekeeping model without enabling summaries.", run: () => mutate(frame, () => ops.selectHousekeepingModel?.(model, lifetime.signal) ?? Promise.reject(new Error("Unavailable")), (_value, current) => { if (!current) return; unwind(); const root = top(); if (root) root.banner = { text: "Saved", tone: "success" }; }) }));
+      if (!frame.housekeepingModels) return [{ label: frame.loading ? "Loading available models…" : "Models unavailable", disabled: "No available models.", run: () => {} }];
+      const query = (frame.input?.getValue() ?? "").toLocaleLowerCase();
+      const models = ["", ...frame.housekeepingModels].filter((model) => (model || "None").toLocaleLowerCase().includes(query));
+      if (!models.length) return [{ label: "No matching models", disabled: "Change or clear the search to see models.", run: () => {} }];
+      return models.map((model) => ({ label: model ? sanitizeTerminalText(model, 160) : "None", value: model === settings.history.model ? "current" : "", description: "Select housekeeping model without enabling summaries.", run: () => mutate(frame, () => ops.selectHousekeepingModel?.(model, lifetime.signal) ?? Promise.reject(new Error("Unavailable")), (_value, current) => { if (!current) return; pop(); const parent = top(); if (parent) { enter(parent); ok(parent, "Saved"); } }) }));
     }
     if (route.kind === "model") {
       if (!frame.models) return [{ label: frame.loading ? "Checking credentials…" : "No models available", disabled: frame.loading ? "Checking credentials without any inference calls…" : "No matching models.", run: () => {} }];
@@ -372,7 +390,9 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       case "tools": return "Decisions › Tools";
       case "provider": return "Decisions › Provider";
       case "model": return "Decisions › Model";
-      case "housekeeping-model": return "Decisions › Past Turn Summaries · Model [Lab]";
+      case "past-turn-summaries": return "Decisions › [lab] Past Turn Summaries";
+      case "housekeeping-thinking": return "Decisions › Past Turn Summaries › Thinking level";
+      case "housekeeping-model": return "Decisions › [lab] Past Turn Summaries · Model";
       case "edit": case "options": return `Decisions › ${stack[0]?.route.kind === "main" ? "Skills" : stack[0]?.route.kind === "tools" ? "Tools" : "Advanced"} › ${sanitizeTerminalText(fieldFor(route.group ?? "relevance", route.key, snap.settings)?.label ?? route.key, 80)}`;
       case "status": return "Decisions › Status";
       case "history": return "Decisions › History";
@@ -383,6 +403,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
   const hint = (frame: Frame): string => {
     switch (frame.route.kind) {
       case "main": case "tools": case "advanced": return "Tab switch · ↑↓ move · Enter select · Space toggle · Esc close";
+      case "housekeeping-model": return "Type to search · ↑↓ move · Enter select · Esc back";
       case "edit": return "Enter save · Esc cancel";
       case "status": return "↑↓ scroll · Enter refresh · Esc back";
       case "history": return "↑↓ turn · Enter expand · Ctrl+R refresh · Esc back";
@@ -491,6 +512,10 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       const route = frame.route;
       if (route.kind === "allowlist" && frame.child) body = frame.child.render(inner).slice(0, bodyBudget);
       else if (route.kind === "allowlist") body = fit(bodyBudget, [{ lines: [theme.fg("muted", frame.loading ? "Loading skill inventory…" : "Nothing to show")], min: 1 }, { lines: bannerLines(frame, inner), min: 1 }]);
+      else if (route.kind === "housekeeping-model" && frame.input) body = [
+        ...frame.input.render(inner).slice(0, 1),
+        ...(bodyBudget > 1 ? listBody(frame, inner, bodyBudget - 1) : []),
+      ];
       else if (route.kind === "edit" && frame.input) {
         const field = fieldFor(route.group ?? "relevance", route.key, snap.settings);
         body = fit(bodyBudget, [
@@ -518,7 +543,7 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
       if (!frame) return;
       const keys = kb();
       if (frame.child) { frame.child.handleInput?.(data); return; }
-      if (frame.input) {
+      if (frame.input && frame.route.kind !== "housekeeping-model") {
         if (keys.matches(data, "tui.select.cancel")) { pop(); return; }
         if (keys.matches(data, "tui.select.confirm") || matchesKey(data, "return")) {
           const route = frame.route;
@@ -533,6 +558,18 @@ export function createSettingsDialogComponent(tui: DialogTui, theme: DialogTheme
         return;
       }
       if (keys.matches(data, "tui.select.cancel")) { if (stack.length > 1) pop(); else close("closed"); return; }
+      if (frame.route.kind === "housekeeping-model" && frame.input
+        && !keys.matches(data, "tui.select.up") && !keys.matches(data, "tui.select.down")
+        && !keys.matches(data, "tui.select.pageUp") && !keys.matches(data, "tui.select.pageDown")
+        && !keys.matches(data, "tui.select.confirm") && !matchesKey(data, "return")) {
+        frame.input.handleInput(data);
+        const value = frame.input.getValue();
+        // Treat pasted content as untrusted: do not let terminal controls reach Input.render().
+        // Keep Input's own cursor marker intact by sanitizing its value, not its rendered output.
+        const safe = stripTerminalSequences(value).replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, 256);
+        if (safe !== value) frame.input.setValue(safe);
+        frame.selected = 0; frame.offset = 0; frame.banner = undefined; redraw(); return;
+      }
       if (stack.length === 1 && isTab(frame.route.kind)) {
         if (matchesKey(data, "tab") || matchesKey(data, "right")) { selectTab(1); return; }
         if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) { selectTab(-1); return; }

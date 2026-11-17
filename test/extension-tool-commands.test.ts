@@ -112,6 +112,29 @@ test("RPC tool-limit labels and input help follow mode changes while edits keep 
   assert.deepEqual((await saved(h)).tools, { ...defaultSettings().tools, maxAdded: 5, minCandidates: 4 });
   assert.equal(h.requests.length, 0, "settings edits never score candidates");
 });
+test("RPC summaries submenu requires a model before enabling and persists thinking", async (t) => {
+  const h = await toolSetup(t, { tools: { enabled: false } });
+  Object.assign(h.ctx.modelRegistry, { getAvailable: () => [{ provider: "good", id: "model" }], hasConfiguredAuth: () => true });
+  const actions = ["Advanced", "[lab] Past Turn Summaries", "Enabled: Off", "Model: Not selected", "1. good/model", "Thinking level: off", "high", "Enabled: Off", "Back", "Back", "Done"];
+  await h.sim.command("", rpcContext(h.ctx, {
+    async select(title: string, options: string[]) {
+      if (title === "[lab] Past Turn Summaries") {
+        assert.match(options[0], /^Model:/); assert.match(options[1], /^Enabled:/); assert.match(options[2], /^Thinking level:/);
+      }
+      const next = actions.shift(); assert.ok(next && options.includes(next), `${title}: ${next}`); return next;
+    },
+    async input(title: string) { assert.match(title, /Search housekeeping/); return "MODEL"; },
+  }));
+  assert.deepEqual((await saved(h)).history, { enabled: true, model: "good/model", thinkingLevel: "high" });
+  assert.equal(actions.length, 0); assert.equal(h.requests.length, 0);
+  const clear = ["Advanced", "[lab] Past Turn Summaries", "Model: good/model", "None", "Back", "Back", "Done"];
+  await h.sim.command("", rpcContext(h.ctx, {
+    async select(_title: string, options: string[]) { const next = clear.shift(); assert.ok(next && options.includes(next)); return next; },
+    async input() { return ""; },
+  }));
+  assert.deepEqual((await saved(h)).history, { enabled: false, model: "", thinkingLevel: "high" });
+  assert.equal(clear.length, 0);
+});
 
 test("RPC mode keeps select/input menus for the tools group and never calls custom overlays", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
