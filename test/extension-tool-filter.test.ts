@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { projectAllowlistPath } from "../src/project-allowlist.ts";
+import { projectAllowlistPath, saveGlobalAllowlist } from "../src/project-allowlist.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
 import { CORE, extTool, mcpTool, resourceTools, toolSetup } from "./helpers/tool-fixture.ts";
 import { toolRecords } from "../src/extension/tool-ledger.ts";
@@ -141,6 +141,7 @@ for (const grant of ["tool pins", "group pins"] as const) test(`mcp history: ${g
   await h.end();
   const settings = (await loadSettings(h.path)).settings;
   await saveSettings({ ...settings, tools: { ...settings.tools, mode: "tools", alwaysAllowedTools: [], alwaysAllowedMcpServers: [] } }, h.path);
+  await saveGlobalAllowlist(h.path, { tools: [], mcpServers: [] });
   await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
   h.sim.registerTool(plug("plug_late")); h.sim.registerTool(mcpTool("docs", "late", "direct"));
   await h.start("now in tools mode without pins");
@@ -247,14 +248,7 @@ test("disabling history during a run removes it from tool-round and lazy scoring
   h.sim.session.appendCustom("context-decisions-past-turn-summary", { sourceId: source.id, kind: "prompt", text: "prior work" });
   await h.start("current task");
   assert.deepEqual(h.requests.at(-1)!.state.history, [{ kind: "prompt", text: "prior work" }]);
-  let entered = false, toggled = false;
-  const ctx = rpcContext(h.ctx, { async select(title: string, options: string[]) {
-    if (title === "Decisions · settings") { if (entered) return "Done"; entered = true; return "Advanced"; }
-    if (title === "Decisions · Advanced settings") return toggled ? "Back" : "[lab] Past Turn Summaries";
-    if (title === "[lab] Past Turn Summaries" && !toggled) { toggled = true; return options.find((item) => item.startsWith("Enabled:")); }
-    return "Back";
-  } });
-  await h.sim.command("", ctx);
+  await h.set("history.enabled", "false");
   assert.equal((await loadSettings(h.path)).settings.history.enabled, false);
   const beforeRound = h.requests.length;
   await h.end({ toolResults: [{}] });
@@ -429,8 +423,19 @@ test("unconfigured or below the minimum: nothing is scored, everything stays ava
 // Lifecycle
 // ---------------------------------------------------------------------------------------------------------------------------------
 const reload = async (h: Awaited<ReturnType<typeof toolSetup>>, change: (settings: typeof h.settings) => void) => {
-  const next = structuredClone((await loadSettings(h.path)).settings); change(next);
+  const before = (await loadSettings(h.path)).settings;
+  const next = structuredClone(before); change(next);
   await saveSettings(next, h.path);
+  if (
+    JSON.stringify([before.globalAllowlist, before.tools.alwaysAllowedTools, before.tools.alwaysAllowedMcpServers]) !==
+    JSON.stringify([next.globalAllowlist, next.tools.alwaysAllowedTools, next.tools.alwaysAllowedMcpServers])
+  ) {
+    await saveGlobalAllowlist(h.path, {
+      skills: next.globalAllowlist,
+      tools: next.tools.alwaysAllowedTools,
+      mcpServers: next.tools.alwaysAllowedMcpServers,
+    });
+  }
   await h.sim.emit("session_start", { type: "session_start", reason: "reload" }, h.ctx);
 };
 const until = async (condition: () => boolean, what: string) => {

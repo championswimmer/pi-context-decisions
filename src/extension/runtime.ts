@@ -6,14 +6,15 @@ import type { BeforeAgentStartEvent, ExtensionContext, Skill } from "@earendil-w
 import { RelevanceScoreCache, scoreAdditions, type SkillAdditionResult } from "../apps/skill-additions.ts";
 import { taskWithoutExpandedSkill } from "../apps/skill-filter.ts";
 import type { RelevanceClient } from "../apps/relevance.ts";
-import { allowlistedNames, toScopedSkills, type ScopedSkill } from "../apps/allowlist.ts";
-import { loadProjectAllowlist, saveProjectAllowlist, type ProjectAllowlistLists } from "../project-allowlist.ts";
+import { allowlistedNames, normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist, toScopedSkills, type ScopedSkill } from "../apps/allowlist.ts";
+import { loadGlobalAllowlist, loadProjectAllowlist, saveGlobalAllowlist, saveProjectAllowlist, type ProjectAllowlistLists } from "../project-allowlist.ts";
 import { createBackend } from "../core/backends/factory.ts";
 import { createDecisionClient } from "../decision/api.ts";
 import { DecisionError } from "../decision/errors.ts";
 import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
-import type { ContextDecisionsSettings } from "../settings.ts";
-import { defaultSettings, loadSettings, parseSettings, saveSettings } from "../settings.ts";
+import { createJsonFileStorageAdapter, createSettingsStore, ConcurrencyConflictError, type StorageAdapter } from "pi-extension-settings-tui";
+import type { ContextDecisionsSettings, ContextDecisionsSettingsSchema, FlatContextDecisionsSettings } from "../settings.ts";
+import { contextSettingsToFlat, createDecisionsSettingsStore, defaultSettings, flatToContextSettings, loadSettings, parseSettings, saveSettings, SettingsError } from "../settings.ts";
 import { SKILL_SCORE_ENTRY } from "./skill-state.ts";
 import { registerCommands } from "./commands.ts";
 import { advertisedSkillNames, skillNamesFromSection } from "./skill-state.ts";
@@ -22,6 +23,7 @@ import { readPreviousFinalReply } from "./decision-activity.ts";
 import { createToolFilter } from "./tool-filter.ts";
 import { beginDecisionLoader, endDecisionLoader, resetDecisionLoader } from "./decision-loader.ts";
 import { skillFooter } from "./footer-status.ts";
+import { describeError } from "./settings-model.ts";
 
 function sumUsage(responses: DecisionResponse[]): DecisionUsage | undefined {
   if (!responses.length) return undefined;
@@ -41,7 +43,10 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
   let last: LastDecision | undefined;
   let generation = 0;
   const pending = new Set<AbortController>();
+  const store = createDecisionsSettingsStore(deps.settingsPath);
   let writeQueue = Promise.resolve();
+  let internalUpdateEpoch = 0;
+  let globalAllowlistWriteQueue = Promise.resolve();
   let projectWriteQueue = Promise.resolve();
   let inventorySnapshot: ScopedSkill[] | undefined;
   const projectWarnings = new Set<string>();
@@ -63,7 +68,9 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     changed: (ctx) => { try { controller.setStatus(ctx as unknown as Parameters<Controller["setStatus"]>[0]); } catch { /* cosmetic */ } },
   });
   const load = async () => {
-    const result = await (deps.load ?? loadSettings)(deps.settingsPath);
+    const result = deps.load
+      ? await deps.load(deps.settingsPath)
+      : await loadSettings(deps.settingsPath, { persistMigration: true });
     settings = result.settings; settingsError = result.error; warnings = result.warnings; loaded = true;
   };
   // Only a live versioned host capability can redirect headless reports. Persisted ownership
@@ -92,10 +99,119 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     }
   };
   const controller: Controller = {
+    settingsPath: deps.settingsPath,
     async ensureLoaded() {
       if (loaded) return;
       loading ??= load().finally(() => { loading = undefined; });
       await loading;
+    },
+    getStore: () => store,
+    createDialogStore(schema: ContextDecisionsSettingsSchema) {
+      let repairMode = settingsError !== undefined;
+      let seenUpdateEpoch = internalUpdateEpoch;
+      const useCustomSeams = deps.load !== undefined || deps.save !== undefined;
+      let adapter: StorageAdapter;
+      if (useCustomSeams) {
+        adapter = {
+          getPaths: () => ({ global: deps.settingsPath }),
+          async readLayer(scope) {
+            if (scope !== "global" || repairMode) return { data: null, hash: null, exists: false };
+            const flat = contextSettingsToFlat(settings);
+            return {
+              data: flat as unknown as Record<string, unknown>,
+              hash: JSON.stringify(flat),
+              exists: true,
+            };
+          },
+          async writeLayer(scope, data) {
+            if (scope !== "global") return { hash: null, deleted: false };
+            const nextFlat = schema.resolveEffective(
+              { global: data as Partial<FlatContextDecisionsSettings>, project: {} },
+              { includeProject: false },
+            );
+            try {
+              await controller.update((current) =>
+                flatToContextSettings(
+                  { ...nextFlat, pinnedSkills: [...current.relevance.pinned] },
+                  {
+                    names: current.globalAllowlist,
+                    tools: current.tools.alwaysAllowedTools,
+                    mcpServers: current.tools.alwaysAllowedMcpServers,
+                  },
+                ),
+              );
+            } catch (error) {
+              throw new SettingsError(describeError(error));
+            }
+            repairMode = false;
+            return { hash: JSON.stringify(contextSettingsToFlat(settings)), deleted: false };
+          },
+        };
+      } else {
+        const baseAdapter = createJsonFileStorageAdapter(schema, {
+          globalPath: deps.settingsPath,
+          deleteWhenEmpty: false,
+        });
+        adapter = {
+          getPaths: () => baseAdapter.getPaths?.() ?? { global: deps.settingsPath },
+          async readLayer(scope) {
+            if (scope !== "global") return { data: null, hash: null, exists: false };
+            if (repairMode) return { data: null, hash: null, exists: false };
+            try {
+              const res = await baseAdapter.readLayer("global");
+              if (res.exists && res.data && schema.config.migrate) {
+                schema.config.migrate(structuredClone(res.data), "global");
+              }
+              return res;
+            } catch {
+              repairMode = true;
+              return { data: null, hash: null, exists: false };
+            }
+          },
+          async writeLayer(scope, data, writeOptions) {
+            if (scope !== "global") return { hash: null, deleted: false };
+            try {
+              const res = await baseAdapter.writeLayer("global", data, repairMode ? undefined : writeOptions);
+              repairMode = false;
+              return res;
+            } catch (error) {
+              if (error instanceof ConcurrencyConflictError) throw error;
+              throw new SettingsError(describeError(error));
+            }
+          },
+        };
+      }
+      const dialogStore = createSettingsStore(schema, { adapter });
+      const origLoad = dialogStore.load.bind(dialogStore);
+      const origSave = dialogStore.save.bind(dialogStore);
+      dialogStore.load = async (loadOptions) => {
+        seenUpdateEpoch = internalUpdateEpoch;
+        const loadedResult = await origLoad(loadOptions);
+        if (repairMode && settingsError) {
+          const banner = `Settings error: ${settingsError}. Repair the settings file, or choose a model in /decisions.`;
+          return { ...loadedResult, warnings: [banner, ...loadedResult.warnings] };
+        }
+        return loadedResult;
+      };
+      if (!useCustomSeams) {
+        dialogStore.save = async (nextValues, saveOptions) => {
+          const run = writeQueue.then(async () => {
+            const internalChanged = seenUpdateEpoch !== internalUpdateEpoch;
+            const mergedValues = internalChanged
+              ? { ...nextValues, pinnedSkills: [...settings.relevance.pinned] }
+              : nextValues;
+            const res = await origSave(
+              mergedValues,
+              internalChanged ? { ...saveOptions, expectedSnapshot: undefined, force: true } : saveOptions,
+            );
+            seenUpdateEpoch = internalUpdateEpoch;
+            return res;
+          });
+          writeQueue = run.then(() => undefined, () => undefined);
+          return run;
+        };
+      }
+      return dialogStore;
     },
     subagentManagerPresent: () => {
       // Parent manager registers /agents with public sourceInfo. Command provenance avoids
@@ -117,6 +233,28 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       if (inventorySnapshot) return structuredClone(inventorySnapshot);
       return toScopedSkills((pi.getCommands?.() ?? []).filter((command) => command.source === "skill" && command.name.startsWith("skill:")).map((command) => ({ name: command.name.slice(6), description: command.description ?? "", sourceInfo: { scope: command.sourceInfo?.scope } })));
     },
+    loadGlobalAllowlist: () => (deps.loadGlobalAllowlist ?? loadGlobalAllowlist)(deps.settingsPath),
+    async saveGlobalAllowlist(lists) {
+      // Copy now: the caller's iterables must not change under a queued write.
+      const draft: ProjectAllowlistLists = Symbol.iterator in Object(lists) ? { skills: [...(lists as Iterable<string>)] }
+        : Object.fromEntries(Object.entries(lists as ProjectAllowlistLists).map(([key, value]) => [key, [...(value as Iterable<string>)]]));
+      const operation = globalAllowlistWriteQueue.then(async () => {
+        await controller.ensureLoaded();
+        await (deps.saveGlobalAllowlist ?? saveGlobalAllowlist)(deps.settingsPath, draft);
+        settings = {
+          ...settings,
+          globalAllowlist: draft.skills === undefined ? settings.globalAllowlist : normalizeAllowlist(draft.skills),
+          tools: {
+            ...settings.tools,
+            alwaysAllowedTools: draft.tools === undefined ? settings.tools.alwaysAllowedTools : normalizeToolAllowlist(draft.tools),
+            alwaysAllowedMcpServers: draft.mcpServers === undefined ? settings.tools.alwaysAllowedMcpServers : normalizeServerAllowlist(draft.mcpServers),
+          },
+        };
+        abortPending(); generation++; last = undefined; scoreCache.clear(); toolFilter.invalidate();
+      });
+      globalAllowlistWriteQueue = operation.catch(() => {});
+      await operation;
+    },
     loadProjectAllowlist: (cwd) => (deps.loadProjectAllowlist ?? loadProjectAllowlist)(cwd),
     async saveProjectAllowlist(cwd, lists) {
       // Copy now: the caller's iterables must not change under a queued write.
@@ -129,11 +267,21 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
       projectWriteQueue = operation.catch(() => {});
       await operation;
     },
+    applyFlatSettings(flat) {
+      const next = flatToContextSettings(flat, {
+        names: settings.globalAllowlist,
+        tools: settings.tools.alwaysAllowedTools,
+        mcpServers: settings.tools.alwaysAllowedMcpServers,
+      });
+      history.reset(); abortPending(); generation++;
+      settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); toolFilter.invalidate();
+    },
     async update(change) {
       const operation = writeQueue.then(async () => {
         await controller.ensureLoaded();
         const next = parseSettings(change(structuredClone(settings)));
         await (deps.save ?? saveSettings)(next, deps.settingsPath);
+        internalUpdateEpoch++;
         history.reset(); abortPending(); generation++;
         settings = next; settingsError = undefined; warnings = []; last = undefined; scoreCache.clear(); toolFilter.invalidate();
       });
@@ -168,6 +316,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     pendingSkillScores = undefined; history.reset(); abortPending(); generation++; last = undefined; inventorySnapshot = undefined; projectWarnings.clear();
     scoreCache.clear(); skillRefs = new Map(); toolFilter.reset(true);
     await projectWriteQueue;
+    await globalAllowlistWriteQueue;
     await writeQueue;
     await loading;
     loaded = false;
@@ -178,10 +327,10 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     warnManagerCapability(ctx);
     controller.setStatus(ctx);
   });
-  pi.on("session_tree", () => {
+  pi.on("session_tree", (_event, ctx) => {
     // Navigating the session tree changes the active branch: an in-flight pass was computed against the old one.
     // Everything branch-derived is re-read from the new branch at the next boundary; only transient state is dropped here.
-    pendingSkillScores = undefined; history.reset(); abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.reset();
+    pendingSkillScores = undefined; history.reset(); abortPending(); generation++; last = undefined; scoreCache.clear(); skillRefs = new Map(); toolFilter.sessionTree(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => {
     // First and synchronous: resolves the pending /decisions handler before ctx is invalidated.
@@ -260,7 +409,7 @@ export function registerContextDecisions(pi: ExtensionHost, deps: ExtensionDepen
     const retained = [...skillRefs.values()].filter((skill) => committed.has(skill.name));
     const inventory = uniqueByName([...retained, ...available]);
     skillRefs = new Map(inventory.map((skill) => [skill.name, structuredClone(skill)]));
-    const task = (event as { messageType?: unknown }).messageType === "custom" || typeof event.prompt !== "string" ? "" : taskWithoutExpandedSkill(event.prompt);
+    const task = (event as { messageType?: unknown }).messageType === "custom" || !("prompt" in event) || typeof event.prompt !== "string" ? "" : taskWithoutExpandedSkill(event.prompt);
     const currentGeneration = generation;
     const current = structuredClone(settings);
     const previousReply = task.trim() ? readPreviousFinalReply(ctx.sessionManager) : undefined;

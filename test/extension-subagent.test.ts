@@ -10,6 +10,7 @@ import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, getCurren
 import { createAgentSession, createSyntheticSourceInfo, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ExtensionAPI, type ExtensionContext, type ExtensionEvent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { classifyTools } from "../src/apps/tool-inventory.ts";
 import { defaultSettings, saveSettings } from "../src/settings.ts";
+import { saveGlobalAllowlist } from "../src/project-allowlist.ts";
 
 const managerNames = ["agent_types", "agent_spawn", "agent_wait", "agent_steer", "agent_status", "agent_update", "agent_pause", "agent_stop", "agent_output"];
 for (const mode of ["tools", "mcp"] as const) for (const pinBridge of [false, true]) {
@@ -19,13 +20,16 @@ for (const mode of ["tools", "mcp"] as const) for (const pinBridge of [false, tr
     const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = agentDir;
     t.after(async () => { if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; await rm(root, { recursive: true, force: true }); });
     const settings = defaultSettings();
+    const settingsPath = join(agentDir, "pi-context-decisions", "settings.json");
     await saveSettings({ ...settings, backend: { backend: "pi", provider: "child-fixture", id: "decider" },
-      tools: { ...settings.tools, enabled: true, mode, allowSubagentInheritedTools: pinBridge, alwaysAllowedTools: managerNames.filter((name) => name !== "agent_wait"),
-        alwaysAllowedMcpServers: ["ext__agent_wait"] } }, join(agentDir, "pi-context-decisions", "settings.json"));
+      tools: { ...settings.tools, enabled: true, mode, allowSubagentInheritedTools: pinBridge } }, settingsPath);
+    await saveGlobalAllowlist(settingsPath, {
+      tools: managerNames.filter((name) => name !== "agent_wait"),
+      mcpServers: ["ext__agent_wait"],
+    });
     // A startup warning in a real embedded SDK child must remain visible: historical ownership
     // cannot justify suppression. The same warning is deduplicated if startup is repeated.
-    const settingsPath = join(agentDir, "pi-context-decisions", "settings.json");
-    const legacy = JSON.parse(await readFile(settingsPath, "utf8")); legacy.relevance.mode = "choice";
+    const legacy = JSON.parse(await readFile(settingsPath, "utf8")); legacy.relevance = { mode: "choice" };
     await writeFile(settingsPath, JSON.stringify(legacy));
     const stderr: string[] = []; t.mock.method(console, "error", (...args: unknown[]) => stderr.push(args.join(" ")));
     const decisions: ClassifierContext[] = [], executed: string[] = [], events: string[] = [];

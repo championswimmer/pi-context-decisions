@@ -4,11 +4,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
+import { getKeybindings, type Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
-import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
+import { globalAllowlistPath, loadProjectAllowlist, projectAllowlistPath, saveGlobalAllowlist, saveProjectAllowlist } from "../src/project-allowlist.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -23,8 +23,8 @@ async function until(component: Component, pattern: RegExp, width = 120): Promis
   }
 }
 function openAllowlistRow(component: Component, row: "global" | "project") {
-  const selected = new RegExp(`❯\\s+Always allowed · ${row === "global" ? "Global" : "Project"}`);
-  for (let i = 0; i < 10; i++) {
+  const selected = new RegExp(`❯\\s+${row === "global" ? "Global" : "Project"} always-allowed skills`);
+  for (let i = 0; i < 15; i++) {
     if (selected.test(component.render(120).join("\n"))) {
       component.handleInput!(keys.enter);
       return;
@@ -67,8 +67,13 @@ async function harness(t: { after(fn: () => Promise<void>): void }, configured =
       async custom(factory) {
         let settle!: (value: unknown) => void;
         const result = new Promise((resolve) => { settle = resolve; });
-        const component = await factory({ requestRender() {}, terminal: { rows: 40 } } as Parameters<typeof factory>[0], { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], (value) => settle(value));
-        overlays.push(component); await customDriver?.(component); component.dispose?.(); settle("closed"); return result as never;
+        const component = await factory(
+          { requestRender() {}, terminal: { rows: 40 } } as Parameters<typeof factory>[0],
+          { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value, bold: (value: string) => value } as Parameters<typeof factory>[1],
+          getKeybindings() as unknown as Parameters<typeof factory>[2],
+          (value) => settle(value),
+        );
+        overlays.push(component); await customDriver?.(component); component.dispose?.(); settle({ saved: false, values: {}, scope: "global", dirty: false, closedBy: "escape" }); return result as never;
       },
     },
   };
@@ -86,7 +91,7 @@ async function harness(t: { after(fn: () => Promise<void>): void }, configured =
 }
 test("headless status shows allowlist counts; the removed allow/allowlist subcommands change nothing", async (t) => {
   const h = await harness(t);
-  await saveSettings({ ...defaultSettings(), globalAllowlist: ["alpha", "unseen"] }, h.path); await saveProjectAllowlist(h.root, ["project-only"]);
+  await saveGlobalAllowlist(h.path, { skills: ["alpha", "unseen"] }); await saveProjectAllowlist(h.root, ["project-only"]);
   await h.emitReload();
   await h.command("status"); assert.match(h.messages.at(-1)!, /global 2, project 1/);
   for (const args of ["allow global add x", "allow project clear", "allow global list", "allowlist global"]) { await h.command(args); assert.match(h.messages.at(-1)!, /^Use \/decisions status\|history\|test\|tools\|mcp\|pin\|unpin/, args); }
@@ -94,16 +99,17 @@ test("headless status shows allowlist counts; the removed allow/allowlist subcom
   assert.deepEqual((await loadProjectAllowlist(h.root)).names, ["project-only"]); assert.equal(h.overlays.length, 0); assert.deepEqual(h.requests, []);
   const projectFile = JSON.parse(await readFile(projectAllowlistPath(h.root), "utf8")); assert.deepEqual(projectFile, { alwaysAllowed: ["project-only"] });
 });
-test("global edits refuse to overwrite invalid settings; a missing cwd disables the project editor; nothing private leaks", async (t) => {
+test("global allowlist edits leave invalid settings.json untouched; missing cwd shows n/a; nothing private leaks", async (t) => {
   const h = await harness(t); await writeFile(h.path, "invalid PRIVATE_CONTENT"); h.ctx.hasUI = true; h.ctx.mode = "tui";
   h.driver(async (component) => {
     openAllowlistRow(component, "global");
     await until(component, /Search:/); component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13");
-    await until(component, /Could not save allowlist/);
+    await saved(component);
   });
-  await h.command(""); assert.equal(await readFile(h.path, "utf8"), "invalid PRIVATE_CONTENT");
+  await h.command(""); assert.equal(await readFile(h.path, "utf8"), "invalid PRIVATE_CONTENT", "allowlists.json saves never touch settings.json");
+  assert.deepEqual(JSON.parse(await readFile(globalAllowlistPath(h.path), "utf8")), { alwaysAllowed: ["alpha"] });
   h.ctx.cwd = undefined;
-  h.driver(async (component) => { assert.match(await until(component, /Always allowed · Project\s+n\/a/), /Always allowed · Project/); });
+  h.driver(async (component) => { assert.match(await until(component, /Project always-allowed skills\s+n\/a/), /Project always-allowed skills/); });
   await h.command("");
   assert.ok(h.messages.every((message) => !message.includes("PRIVATE_CONTENT"))); assert.deepEqual(h.requests, []);
 });
@@ -111,8 +117,8 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "tui";
   h.driver(async (component) => {
     const main = component.render(100).join("\n");
-    assert.match(main, /Always allowed · Global/); assert.match(main, /Always allowed · Project/); assert.match(main, /Advanced/);
-    assert.doesNotMatch(main, /relatedThreshold|chunkSize|Batch size/, "relevance knobs live under Advanced");
+    assert.match(main, /Global always-allowed skills/); assert.match(main, /Project always-allowed skills/); assert.match(main, /Decision/);
+    assert.doesNotMatch(main, /relatedThreshold|chunkSize|Shard size/, "decision tuning lives under the Decision tab");
     openAllowlistRow(component, "global");
     assert.match(await until(component, /\[ \] alpha/), /Global/); assert.doesNotMatch(component.render(120).join("\n"), /\[ \] project-only/);
     component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
@@ -120,7 +126,7 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
   });
   await h.command(""); assert.equal(h.overlays.length, 1); assert.deepEqual((await loadSettings(h.path)).settings.globalAllowlist, ["alpha"]);
   h.driver(async (component) => {
-    await until(component, /Always allowed · Project\s+[1-9?…]/);
+    await until(component, /Project always-allowed skills\s+0/);
     openAllowlistRow(component, "project");
     await until(component, /project-only/); component.handleInput!(keys.down); component.handleInput!(" "); component.handleInput!("\x13"); await saved(component);
   });
@@ -130,8 +136,8 @@ test("/decisions opens ONE floating dialog hosting Global and Project editors; s
 });
 test("RPC cannot open the allowlist editors: the menu says so, opens no overlay and no allow subcommand exists", async (t) => {
   const h = await harness(t); h.ctx.hasUI = true; h.ctx.mode = "rpc";
-  h.choices.push(() => "Skills", (options) => options.find((option) => option.startsWith("Allow list (Global)")), () => "Back", () => "Done");
-  await h.command(""); assert.match(h.messages.at(-1)!, /allow list editors need the terminal UI.*globalAllowlist.*alwaysAllowed/s); assert.equal(h.overlays.length, 0);
+  h.choices.push((options) => options.find((option) => option.includes("Global always-allowed skills")), () => "Done");
+  await h.command(""); assert.match(h.messages.at(-1)!, /allowlist editors need the interactive terminal UI.*allowlists\.json.*pi-context-decisions\.json/s); assert.equal(h.overlays.length, 0);
   assert.equal((await h.commands.get("decisions")!.getArgumentCompletions!("allow")), null);
 });
 test("explicit topic ranking uses configured decision client even when auto filtering is off; metadata only", async (t) => {

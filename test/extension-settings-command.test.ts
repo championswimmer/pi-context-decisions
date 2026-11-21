@@ -5,19 +5,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
+import { getKeybindings, type Component } from "@earendil-works/pi-tui";
 import { buildToolNotice, toolRecords } from "../src/extension/tool-ledger.ts";
 import { simHost } from "./helpers/pi-sim.ts";
 import { rpcContext } from "./helpers/settings-ui.ts";
-import type { Component } from "@earendil-works/pi-tui";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
 import type { CommandContext, ExtensionHost, ExtensionRegistry } from "../src/extension/contracts.ts";
-import { SETTINGS_OVERLAY_OPTIONS } from "../src/extension/settings-dialog.ts";
+import { HISTORY_OVERLAY_OPTIONS } from "../src/extension/history-dialog.ts";
 import { defaultSettings, loadSettings, saveSettings } from "../src/settings.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 
-const KEY = { down: "\x1b[B", enter: "\r", esc: "\x1b", rank: "\x12", space: " " };
-const theme = { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value };
+const KEY = { down: "\x1b[B", up: "\x1b[A", tab: "\t", shiftTab: "\x1b[Z", enter: "\r", esc: "\x1b", rank: "\x12", space: " " };
+const theme = {
+  fg: (_token: unknown, value: string) => value,
+  bg: (_token: unknown, value: string) => value,
+  bold: (value: string) => value,
+};
 const waitFor = async <T,>(read: () => T | undefined | false, label: string): Promise<T> => {
   const deadline = Date.now() + 2000;
   for (;;) {
@@ -72,7 +76,7 @@ async function harness(t: { after(fn: () => Promise<void>): void }, options: {
       if (options.rejectCustom) throw new Error("PRIVATE custom failure");
       return new Promise((resolve) => {
         finish = resolve;
-        components.push(factory({ requestRender() {}, terminal: { rows: 30 } }, theme, {}, resolve) as Component);
+        components.push(factory({ requestRender() {}, terminal: { rows: 30 } }, theme, getKeybindings(), resolve) as Component);
         (opts as { onHandle?(handle: unknown): void }).onHandle?.({ focus() { calls.focus++; } });
       });
     },
@@ -93,75 +97,102 @@ async function harness(t: { after(fn: () => Promise<void>): void }, options: {
   });
   const command = (args: string) => commands.get("decisions")!.handler(args, ctx as ExtensionCommandContext);
   const emit = async (name: string, event: unknown = {}) => { await sim.emit(name, event, ctx); };
+  t.after(async () => {
+    try { await emit("session_shutdown"); } catch { /* best-effort cleanup */ }
+  });
   const dialog = async (index = 0) => waitFor(() => components[index], "settings dialog component");
   const text = (component: Component, width = 100) => component.render(width).join("\n");
-  const until = async (component: Component, pattern: RegExp) => waitFor(() => pattern.test(text(component)) && text(component), `${pattern}`);
-  return { root, path, sim, commands, messages, requests, decisionSignals, state, reads, calls, customOptions, components, ctx, command, emit, dialog, text, until,
+  const until = async (component: Component, pattern: RegExp, width = 100) => waitFor(() => pattern.test(text(component, width)) && text(component, width), `${pattern}`);
+  const selectRow = (component: Component, label: RegExp, width = 120) => {
+    for (let i = 0; i < 30; i++) {
+      if (text(component, width).split("\n").some((line) => line.includes("❯") && label.test(line))) return;
+      component.handleInput!(KEY.down);
+    }
+    assert.fail(`Could not select row ${label}\n${text(component, width)}`);
+  };
+  return { root, path, sim, commands, messages, requests, decisionSignals, state, reads, calls, customOptions, components, ctx, command, emit, dialog, text, until, selectRow,
     get finish() { return finish!; } };
 }
 
-test("terminal /decisions opens ONE floating overlay with the shared options and never uses select/input", async (t) => {
+test("terminal /decisions opens ONE floating overlay via pi-extension-settings-tui and never uses select/input", async (t) => {
   const h = await harness(t);
   const run = h.command("");
   const dialog = await h.dialog();
   assert.equal(h.calls.custom, 1);
-  assert.deepEqual(h.customOptions[0] && { ...(h.customOptions[0] as object), onHandle: undefined }, { overlay: true, overlayOptions: SETTINGS_OVERLAY_OPTIONS, onHandle: undefined });
+  const opts = h.customOptions[0] as { overlay?: boolean; overlayOptions?: Record<string, unknown> };
+  assert.equal(opts.overlay, true);
+  assert.equal(opts.overlayOptions?.anchor, "center");
+  assert.match(h.text(dialog), /Context Decisions Settings/);
   assert.match(h.text(dialog), /Skill filtering/);
   dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.calls.select + h.calls.input, 0); assert.deepEqual(h.messages, []);
 });
 
-test("RPC mode keeps the select menus with Advanced… and never calls custom", async (t) => {
+test("RPC mode uses select menus and never calls custom", async (t) => {
   const h = await harness(t, { mode: "rpc" }); await h.command("");
   assert.equal(h.calls.custom, 0); assert.equal(h.calls.select, 1);
 });
 
-test("RPC Advanced menu has a Footer icons entry (not on Skills or Tools): same three choices, persists iconStyle and refreshes the footer status; Back changes nothing", async (t) => {
+test("RPC menu exposes Footer icons on the Decision tab: persists iconStyle and refreshes footer status; cancelling changes nothing", async (t) => {
   const h = await harness(t, { mode: "rpc" });
-  const status: [string, unknown][] = []; const titles: string[] = []; let advanced: string[] = []; let top: string[] = []; let other: string[] = [];
-  let visits = 0; let advancedVisits = 0; let choice: (options: string[]) => string | undefined = () => undefined;
+  const status: [string, unknown][] = []; const titles: string[] = []; let mainMenu: string[] = [];
+  let picked = false; let choice: (options: string[]) => string | undefined = () => undefined;
   const ctx = rpcContext(h.ctx, {
     setStatus: (key: string, text: unknown) => status.push([key, text]),
     async select(title: string, options: string[]) {
       titles.push(title);
-      if (title === "Decisions · settings") { top = options; return visits++ === 0 ? "Skills" : visits === 2 ? "Tools" : visits === 3 ? "Advanced" : "Done"; }
-      if (title === "Decisions · Skills settings" || title === "Decisions · Tools settings") { other.push(...options); return "Back"; }
-      if (title === "Decisions · Advanced settings") { if (advancedVisits === 0) advanced = options; return advancedVisits++ === 0 ? options.find((option) => option.startsWith("Footer icons:")) : "Back"; }
+      if (title === "Context Decisions Settings") {
+        if (!picked) { mainMenu = options; picked = true; return options.find((o) => o.includes("[Decision] Footer icons:")); }
+        return "Done";
+      }
       return choice(options);
     },
   });
-  choice = (options) => options.find((option) => option.startsWith("emoji ·"));
+  choice = (options) => options.find((option) => option.startsWith("Emoji"));
   await h.commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
-  assert.deepEqual(top, ["Skills", "Tools", "Advanced", "Done"]);
-  assert.ok(!other.some((option) => option.startsWith("Footer icons")), "not on Skills or Tools");
-  assert.ok(advanced.includes("Footer icons: ASCII / Unicode"), "the Advanced menu shows the current set by plain name");
-  assert.ok(titles.includes("Footer icons (currently unicode)"));
+  assert.ok(mainMenu.some((o) => o.startsWith("[Decision] Footer icons: ASCII / Unicode")));
+  assert.ok(!mainMenu.some((o) => o.startsWith("[Skills] Footer icons") || o.startsWith("[Tools] Footer icons")));
+  assert.ok(titles.includes("Footer icons"));
   assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji");
   assert.ok(status.some(([key]) => key === "context-decisions"), "status refreshed right after the save");
-  visits = 2; advancedVisits = 0; titles.length = 0; status.length = 0; advanced = [];
+
+  picked = false; titles.length = 0; status.length = 0; mainMenu = [];
   let offered: string[] = [];
-  choice = (options) => { offered = options; return "Back"; };
+  choice = (options) => { offered = options; return undefined; };
   const again = rpcContext(h.ctx, { setStatus: (key: string, text: unknown) => status.push([key, text]), select: (title: string, options: string[]) => ctx.ui.select(title, options) });
   await h.commands.get("decisions")!.handler("", again as ExtensionCommandContext);
-  assert.ok(advanced.includes("Footer icons: Emoji")); assert.ok(titles.includes("Footer icons (currently emoji)"));
-  assert.deepEqual(offered.slice(0, 3).map((option) => option.split(" · ")[0]), ["unicode", "emoji", "nerd"]);
-  assert.match(offered[2], /Requires a Nerd Font/); assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji"); assert.deepEqual(status, []);
+  assert.ok(mainMenu.some((o) => o.startsWith("[Decision] Footer icons: Emoji")));
+  assert.deepEqual(offered.slice(0, 3).map((option) => option.split("  ")[0]), ["ASCII / Unicode", "Emoji", "Nerd Font"]);
+  assert.match(offered[2], /Requires a Nerd Font/);
+  assert.equal((await loadSettings(h.path)).settings.iconStyle, "emoji");
+  assert.deepEqual(status, []);
 });
 
 test("a second /decisions while the first dialog is open does not open another; it focuses the first", async (t) => {
   const h = await harness(t); const first = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!("\x1b[Z"); await h.until(dialog, /Decisions › Advanced/);
+  dialog.handleInput!(KEY.shiftTab); await h.until(dialog, /Constant scoring matrix/);
   await h.command("");
-  assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1); assert.doesNotMatch(h.text(dialog), /Decisions › Advanced/, "re-running /decisions focuses the existing dialog on its main screen");
+  assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1);
   dialog.handleInput!(KEY.esc); await first;
 });
 
-test("saves inside the dialog persist, do not close it, and later settle without touching a closed ctx", async (t) => {
+const waitForAsync = async <T,>(read: () => Promise<T | undefined | false>, label: string): Promise<T> => {
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    const value = await read();
+    if (value) return value;
+    if (Date.now() > deadline) assert.fail(`Timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+};
+
+test("saves inside the dialog persist immediately, do not close it, and later settle cleanly", async (t) => {
   const h = await harness(t, { configured: true }); let resolved = false;
   const run = h.command("").then(() => { resolved = true; }); const dialog = await h.dialog();
-  dialog.handleInput!(KEY.enter); // toggle enabled
-  await h.until(dialog, /Skill filtering\s+Off/);
-  assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false); assert.equal(resolved, false, "saving must not close the dialog");
+  dialog.handleInput!(KEY.enter); // toggle Skill filtering
+  await h.until(dialog, /Skill filtering\s+(Off|Disabled)/);
+  await waitForAsync(async () => (await loadSettings(h.path)).settings.relevance.enabled === false, "persisted skillFilteringEnabled=false");
+  assert.equal(resolved, false, "saving must not close the dialog");
   dialog.handleInput!(KEY.esc); await run; assert.equal(resolved, true);
 });
 
@@ -169,45 +200,60 @@ test("choosing a model through the dialog persists it atomically and never enabl
   const h = await harness(t, { env: { TYPESAFE_API_KEY: "FIXTURE" } });
   await saveSettings({ ...defaultSettings(), relevance: { ...defaultSettings().relevance, enabled: false } }, h.path);
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
-  await h.until(dialog, /typesafe · direct API\s+configured/);
-  dialog.handleInput!(KEY.enter); await h.until(dialog, /Decisions › Model/);
-  await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.enter);
-  await h.until(dialog, /Decision model: typesafe direct jev-latest/);
-  const saved = (await loadSettings(h.path)).settings;
-  assert.deepEqual(saved.backend, { backend: "typesafe", model: "jev-latest" }); assert.equal(saved.relevance.enabled, false);
+  dialog.handleInput!(KEY.tab); dialog.handleInput!(KEY.tab); // Skills -> Tools -> Decision
+  await h.until(dialog, /Decision model/);
+  dialog.handleInput!(KEY.enter); // open async backend picker
+  await h.until(dialog, /jev-latest · TypeSafe direct/, 120);
+  h.selectRow(dialog, /jev-latest · TypeSafe direct/, 120);
+  dialog.handleInput!(KEY.enter);
+  await h.until(dialog, /typesafe direct jev-latest/, 120);
+  const saved = await waitForAsync(async () => {
+    const s = (await loadSettings(h.path)).settings;
+    return s.backend ? s : undefined;
+  }, "persisted backend selection");
+  assert.deepEqual(saved.backend, { backend: "typesafe", model: "jev-latest" });
+  assert.equal(saved.relevance.enabled, false);
   assert.equal(h.requests.length, 0, "choosing a model makes no inference call");
   dialog.handleInput!(KEY.esc); await run;
 });
 
-test("Advanced housekeeping picker persists only an available authenticated model", async (t) => {
+test("Lab housekeeping picker persists only an available authenticated model", async (t) => {
   const h = await harness(t);
   Object.assign(h.ctx.modelRegistry, {
     getAvailable: () => [{ provider: "good", id: "model" }, { provider: "bad", id: "model" }],
     hasConfiguredAuth: (model: { provider: string }) => model.provider === "good",
   });
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!("\x1b[Z"); // Advanced
-  for (let i = 0; i < 40; i++) dialog.handleInput!(KEY.down);
+  dialog.handleInput!(KEY.shiftTab); // Skills -> Lab
+  await h.until(dialog, /Past turn summaries · Model/);
+  h.selectRow(dialog, /Past turn summaries · Model/);
   dialog.handleInput!(KEY.enter);
-  await h.until(dialog, /Thinking level/);
-  dialog.handleInput!(KEY.enter);
-  await h.until(dialog, /good\/model/);
-  assert.doesNotMatch(h.text(dialog), /bad\/model/);
-  dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter);
-  await h.until(dialog, /Saved/);
-  assert.deepEqual((await loadSettings(h.path)).settings.history, { enabled: false, model: "good/model", thinkingLevel: "off" });
+  await h.until(dialog, /model.*\[good\]/, 120);
+  assert.doesNotMatch(h.text(dialog, 120), /\[bad\]/);
+  h.selectRow(dialog, /model.*\[good\]/, 120);
+  dialog.handleInput!(KEY.enter); // Step 1 -> Step 2 (thinking level) or apply
+  await h.until(dialog, /Thinking|good\/model/, 120);
+  if (/Thinking/i.test(h.text(dialog, 120))) {
+    dialog.handleInput!(KEY.enter);
+  }
+  const saved = await waitForAsync(async () => {
+    const s = (await loadSettings(h.path)).settings;
+    return s.history.model === "good/model" ? s : undefined;
+  }, "persisted housekeeping model");
+  assert.deepEqual(saved.history, { enabled: false, model: "good/model", thinkingLevel: "off" });
   assert.equal(h.requests.length, 0);
-  dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
+  dialog.handleInput!(KEY.esc); await run;
 });
+
 test("missing keys are labelled, guide to env or /login, and are never persisted; OpenAI OAuth cannot substitute", async (t) => {
   const h = await harness(t, { openaiOAuth: true, env: {} });
   const run = h.command(""); const dialog = await h.dialog();
-  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.enter); // Provider / execution
-  await h.until(dialog, /openai · direct API\s+missing key/);
-  assert.match(h.text(dialog), /typesafe · direct API\s+missing key/); assert.match(h.text(dialog), /openrouter · direct API\s+missing key/);
-  // Move to the openai row and activate it.
-  for (let i = 0; i < 6; i++) { dialog.handleInput!(KEY.down); if (/❯ openai · direct API/.test(h.text(dialog))) break; }
+  dialog.handleInput!(KEY.tab); dialog.handleInput!(KEY.tab); // Decision tab
+  await h.until(dialog, /Decision model/);
+  dialog.handleInput!(KEY.enter);
+  await h.until(dialog, /gpt-6-luna · OpenAI direct/, 140);
+  assert.match(h.text(dialog, 140), /missing key/);
+  h.selectRow(dialog, /gpt-6-luna · OpenAI direct/, 140);
   dialog.handleInput!(KEY.enter);
   const text = h.text(dialog, 140);
   assert.match(text, /OPENAI_API_KEY/); assert.match(text, /\/login openai/); assert.match(text, /not openai-codex/i);
@@ -216,7 +262,7 @@ test("missing keys are labelled, guide to env or /login, and are never persisted
   dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
 });
 
-test("printed status has short, separated sections and the dialog uses the same report", async (t) => {
+test("printed status has short, separated sections and the dialog opens a refreshable Markdown Status view", async (t) => {
   const h = await harness(t);
   await h.command("status");
   const report = h.messages.at(-1)!;
@@ -232,20 +278,19 @@ test("printed status has short, separated sections and the dialog uses the same 
   assert.doesNotMatch(report, /\{"|Top models|token window/);
 
   const run = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down);
+  h.selectRow(dialog, /Status/);
   dialog.handleInput!(KEY.enter);
-  await h.until(dialog, /Credentials:/);
-  // Collect the scrollable view: status stays readable even in a narrow dialog.
+  await h.until(dialog, /Credentials/, 100);
   const screens: string[] = [];
-  for (let i = 0; i < 50; i++) {
-    screens.push(h.text(dialog, 64));
+  for (let i = 0; i < 40; i++) {
+    screens.push(h.text(dialog, 80));
     dialog.handleInput!(KEY.down);
   }
   const visible = screens.join("\n");
-  for (const heading of sections.map((section) => section.split("\n")[0]!)) assert.ok(visible.includes(heading), heading);
-  assert.match(visible, /Threshold: 0\.375/);
-  assert.match(visible, /Shard size: 50/);
-  assert.match(visible, /Credentials: not configured/);
+  assert.match(visible, /Context Decisions/);
+  assert.match(visible, /0\.375/);
+  assert.match(visible, /50/);
+  assert.match(visible, /not configured/);
   dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.requests.length, 0, "status never makes decision calls");
 });
@@ -253,16 +298,22 @@ test("printed status has short, separated sections and the dialog uses the same 
 test("dialog work never reads ctx.signal (the agent-run signal), even through status, models and ranking", async (t) => {
   const h = await harness(t, { configured: true, env: { TYPESAFE_API_KEY: "FIXTURE" } });
   const run = h.command(""); const dialog = await h.dialog();
-  for (let i = 0; i < 1; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  h.selectRow(dialog, /Global always-allowed skills/);
+  dialog.handleInput!(KEY.enter);
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
-  dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/);
+  dialog.handleInput!(KEY.rank); await h.until(dialog, /0\.90 relevance/, 120);
   assert.equal(h.requests.length, 1);
-  dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions\s/);
-  dialog.handleInput!("\x1b[Z"); dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Shared model
-  await h.until(dialog, /Decisions › Model/); await h.until(dialog, /jev-latest/); dialog.handleInput!(KEY.esc);
-  dialog.handleInput!("\t"); for (let i = 0; i < 3; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Status…
-  await h.until(dialog, /Credentials:/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
+  dialog.handleInput!(KEY.esc); await h.until(dialog, /Context Decisions Settings/);
+  dialog.handleInput!(KEY.tab); dialog.handleInput!(KEY.tab); // Decision tab
+  await h.until(dialog, /Decision model/);
+  dialog.handleInput!(KEY.enter);
+  await h.until(dialog, /jev-latest/, 120); dialog.handleInput!(KEY.esc);
+  dialog.handleInput!(KEY.tab); dialog.handleInput!(KEY.tab); // Lab -> Skills
+  await h.until(dialog, /Skill filtering/);
+  h.selectRow(dialog, /Status/);
+  dialog.handleInput!(KEY.enter);
+  await h.until(dialog, /Credentials/); dialog.handleInput!(KEY.esc); dialog.handleInput!(KEY.esc); await run;
   assert.equal(h.reads.signal, 0, "the dialog must own its signal");
 });
 
@@ -271,12 +322,13 @@ test("session_shutdown while open resolves the handler, aborts ranking and never
   let resolved = false;
   const run = h.command("").then(() => { resolved = true; });
   const dialog = await h.dialog();
-  for (let i = 0; i < 1; i++) dialog.handleInput!(KEY.down); dialog.handleInput!(KEY.enter); // Always allowed · Global
+  h.selectRow(dialog, /Global always-allowed skills/);
+  dialog.handleInput!(KEY.enter);
   await h.until(dialog, /Search:/);
   for (const char of "topic") dialog.handleInput!(char);
   dialog.handleInput!(KEY.rank); await waitFor(() => h.decisionSignals[0], "pending ranking request");
   const messagesBefore = h.messages.length;
-  await h.emit("session_shutdown"); h.state.valid = false; // Pi invalidates ctx right after shutdown handlers
+  await h.emit("session_shutdown"); h.state.valid = false;
   await Promise.race([run, new Promise((_, reject) => setTimeout(() => reject(new Error("handler still pending after session_shutdown")), 1000))]);
   assert.equal(resolved, true); assert.equal(h.decisionSignals[0].aborted, true);
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -292,7 +344,7 @@ test("a fresh session_start closes a dialog left over from the previous session"
 
 test("an open dialog does not block or swallow later hook activity", async (t) => {
   const h = await harness(t, { configured: true }); const run = h.command(""); const dialog = await h.dialog();
-  const event = { type: "before_agent_start", prompt: "task", systemPrompt: "s", systemPromptOptions: { cwd: h.root, skills: Array.from({ length: 3 }, (_, n) => ({ name: `s${n}`, description: "d", filePath: "/p", baseDir: "/b", sourceInfo: { path: "/p", source: "x", scope: "user", origin: "top-level" }, disableModelInvocation: false })), selectedTools: [], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: [], promptGuidelines: [], contextFiles: [] } };
+  const event = { type: "before_agent_start", messageType: "user", prompt: "task", systemPrompt: "s", systemPromptOptions: { cwd: h.root, skills: Array.from({ length: 3 }, (_, n) => ({ name: `s${n}`, description: "d", filePath: "/p", baseDir: "/b", sourceInfo: { path: "/p", source: "x", scope: "user", origin: "top-level" }, disableModelInvocation: false })), selectedTools: [], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: [], promptGuidelines: [], contextFiles: [] } };
   await h.emit("before_agent_start", event);
   assert.match(h.text(dialog), /Skill filtering/); dialog.handleInput!(KEY.esc); await run;
 });
@@ -312,18 +364,22 @@ test("headless commands keep their text output without a dialog", async (t) => {
   assert.equal(h.calls.custom + h.calls.select + h.calls.input, 0);
 });
 
-test("/decisions history reuses the settings overlay, shows committed additions and never scores or reads the agent signal", async (t) => {
+test("/decisions history opens the standalone history overlay, reuses it on repeat open, shows committed additions and never scores or reads agent signal", async (t) => {
   const h = await harness(t, { configured: true });
   const session = SessionManager.inMemory(h.root);
   h.ctx.sessionManager = session;
   session.appendCustomMessageEntry("context-decisions-skills", "PRIVATE description", false, { v: 1, added: ["alpha"], redelivered: [] });
-  const first = h.command(""); const dialog = await h.dialog();
-  await h.command("history"); await h.until(dialog, /Turn 1/);
+  const first = h.command("history"); const dialog = await h.dialog();
+  assert.deepEqual(
+    h.customOptions[0] && { ...(h.customOptions[0] as object), onHandle: undefined },
+    { overlay: true, overlayOptions: HISTORY_OVERLAY_OPTIONS, onHandle: undefined },
+  );
+  await h.until(dialog, /Turn 1/);
+  await h.command("history");
   assert.equal(h.calls.custom, 1); assert.equal(h.calls.focus, 1);
   dialog.handleInput!(KEY.enter); await h.until(dialog, /Skills advertised/);
   assert.match(h.text(dialog), /alpha/); assert.doesNotMatch(h.text(dialog), /PRIVATE/);
   dialog.handleInput!(KEY.esc); await h.until(dialog, /Decisions › History/);
-  dialog.handleInput!(KEY.esc); await h.until(dialog, /Skill filtering/);
   dialog.handleInput!(KEY.esc); await first;
   assert.equal(h.reads.signal, 0); assert.equal(h.requests.length, 0);
   assert.equal(h.calls.select + h.calls.input, 0);

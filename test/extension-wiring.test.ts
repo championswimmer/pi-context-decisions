@@ -50,7 +50,7 @@ function context(overrides: Partial<ExtensionRegistry> = {}, hasUI = false) {
 }
 function event(count = 8) {
   const skills = Array.from({ length: count }, (_, i) => ({ name: `skill-${i}`, description: `Description ${i}`, filePath: `/private/${i}/SKILL.md`, baseDir: `/private/${i}`, sourceInfo: { path: `/private/${i}/SKILL.md`, source: "fixture", scope: "project" as const, origin: "top-level" as const }, disableModelInvocation: false }));
-  return { type: "before_agent_start", prompt: "Fixture task", systemPrompt: "unchanged",
+  return { type: "before_agent_start", messageType: "user", prompt: "Fixture task", systemPrompt: "unchanged",
     systemPromptOptions: { cwd: "/fixture", skills, selectedTools: ["read", "bash"], sections: { mcp_servers: "untouched" }, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "append", contextFiles: [] },
   } satisfies BeforeAgentStartEvent;
 }
@@ -122,7 +122,7 @@ test("30-skill hook respects persisted decimal thresholds and batch settings via
   assert.equal((await loadSettings(h.path)).settings.decision.threshold, 0.625);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /Threshold: 0.625 \(0–1\).*Shard size: 5/s);
   await setSetting(h.command, c.ctx, "decision.threshold", "1.6");
-  assert.equal(h.messages.at(-1)!.level, "error");
+  assert.equal(h.messages.at(-1)!.level, "warning");
   assert.equal((await loadSettings(h.path)).settings.decision.threshold, 0.625);
 });
 test("disable, relevance-off, unconfigured, below-minimum and empty prompt make zero calls", async (t) => {
@@ -155,14 +155,14 @@ test("picker restricts router entries, preserves native classifiers, and marks a
   assert.doesNotMatch(JSON.stringify(entries), /FIXTURE/);
 });
 test("UI picker uses static entries, supports cancellation and None without writes/inference", async (t) => {
-  const h = await setup(t); const c = context({ async getApiKeyForProvider(provider) { return provider === "openrouter" ? "FIXTURE-ROUTER-KEY" : undefined; } }, true); c.selections.push(undefined);
-  const modelRow = (options: string[]) => options.find((option) => option.startsWith("Model:"))!;
-  c.selections.splice(0, 1, "Advanced", modelRow, undefined, "Back", "Done"); // open the model picker, cancel it
-  await h.command("", c.ctx); assert.equal(c.dialogs.length, 5); assert.equal(c.calls(), 0); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  c.selections.push("Advanced", modelRow, (options) => options.find((option) => option.includes("openrouter direct typesafe/jev-1.13"))!, "Done");
+  const h = await setup(t); const c = context({ async getApiKeyForProvider(provider) { return provider === "openrouter" ? "FIXTURE-ROUTER-KEY" : undefined; } }, true);
+  const modelRow = (options: string[]) => options.find((option) => option.includes("Decision model:"))!;
+  c.selections.push(modelRow, undefined, "Done"); // open the model picker, cancel it
+  await h.command("", c.ctx); assert.equal(c.dialogs.length, 3); assert.equal(c.calls(), 0); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  c.selections.push(modelRow, (options) => options.find((option) => option.includes("— openrouter direct typesafe/jev-1.13"))!, "Done");
   await h.command("", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" });
-  c.selections.push("Advanced", modelRow, "None (no decision calls)", "Back", "Done"); await h.command("", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  assert.ok(c.dialogs[2].options!.every((option) => !option.includes("respan")));
+  c.selections.push(modelRow, (options) => options.find((option) => option.startsWith("Not configured —"))!, "Done"); await h.command("", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
+  assert.ok(c.dialogs[1].options!.every((option) => !option.includes("respan")));
 });
 test("headless pins work and RPC settings updates persist or fail validation", async (t) => {
   const h = await setup(t); const c = context();
@@ -170,19 +170,25 @@ test("headless pins work and RPC settings updates persist or fail validation", a
   await h.command("pin skill-3", c.ctx); await h.command("pin skill-3", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.relevance.pinned, ["skill-3"]);
   await h.command("unpin skill-3", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.relevance.pinned, []);
   assert.equal((await loadSettings(h.path)).settings.relevance.maxSkills, 2); assert.equal((await loadSettings(h.path)).settings.decision.failMode, "open");
-  await setSetting(h.command, c.ctx, "decision.timeoutMs", "300001"); assert.equal(h.messages.at(-1)!.level, "error");
+  await setSetting(h.command, c.ctx, "decision.timeoutMs", "300001"); assert.equal(h.messages.at(-1)!.level, "warning");
 });
 test("UI settings dialog validation, cancellation and boolean edit share persisted config", async (t) => {
   const h = await setup(t); const c = context({}, true);
-  c.selections.push("Advanced", (options) => options.find((option) => option.startsWith("decision.chunkSize:"))!, "Back", "Skills", (options) => options.find((option) => option.startsWith("relevance.enabled:"))!, "Back", "Done");
-  c.inputs.push("999"); await h.command("", c.ctx);
-  assert.ok(h.messages.some((message) => message.level === "error")); assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
+  c.selections.push(
+    (options) => options.find((option) => option.includes("Shard size:"))!,
+    (options) => options.find((option) => option.includes("Skill filtering:"))!,
+    (options) => options[1],
+    "Done",
+  );
+  c.inputs.push("999", undefined); await h.command("", c.ctx);
+  assert.ok(h.messages.some((message) => message.level === "warning")); assert.equal((await loadSettings(h.path)).settings.relevance.enabled, false);
   c.selections.push(undefined); await h.command("", c.ctx); assert.equal(c.calls(), 0);
 });
 test("failed persistence does not change in-memory selection or behavior; queue recovers", async (t) => {
   let fail = true;
   const h = await setup(t, { async save(settings, path) { if (fail) throw new Error("SECRET-FIXTURE"); await saveSettings(settings, path); } }, true);
-  const c = context(); await setSetting(h.command, c.ctx, "enabled"); assert.equal(h.messages.at(-1)!.text, "Context-decisions operation failed");
+  const c = context(); await setSetting(h.command, c.ctx, "enabled"); assert.match(h.messages.at(-1)!.text, /Context-decisions operation failed/);
+  assert.doesNotMatch(h.messages.at(-1)!.text, /SECRET-FIXTURE/);
   await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 1);
   fail = false; await setSetting(h.command, c.ctx, "enabled"); await h.emit("before_agent_start", event(), c.ctx); assert.equal(c.calls(), 1);
 });

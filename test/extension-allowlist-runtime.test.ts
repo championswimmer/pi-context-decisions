@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BeforeAgentStartEvent, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { getKeybindings } from "@earendil-works/pi-tui";
 import { SimSession, simHost } from "./helpers/pi-sim.ts";
 import { saveAllowlist, setSetting } from "./helpers/settings-ui.ts";
 import { registerContextDecisions } from "../src/extension/runtime.ts";
@@ -19,8 +20,8 @@ const skills = () => [
   { name: "other", description: "Other metadata", sourceInfo: { path: "/private/other", source: "fixture", scope: "project" as const, origin: "top-level" as const }, filePath: "/private/other", baseDir: "/private", disableModelInvocation: false },
   { name: "manual", description: "Manual metadata", sourceInfo: { path: "/private/manual", source: "fixture", scope: "project" as const, origin: "top-level" as const }, filePath: "/private/manual", baseDir: "/private", disableModelInvocation: true },
 ];
-function event(): BeforeAgentStartEvent {
-  return { type: "before_agent_start", prompt: "task", systemPrompt: "untouched", systemPromptOptions: { cwd: "/fixture", skills: skills(), selectedTools: [], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] } };
+function event() {
+  return { type: "before_agent_start", messageType: "user", prompt: "task", systemPrompt: "untouched", systemPromptOptions: { cwd: "/fixture", skills: skills(), selectedTools: [], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] } } satisfies BeforeAgentStartEvent;
 }
 async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" | "failure" | "config" | "pending" = "ok") {
   const cwd = await mkdtemp(join(tmpdir(), "allowlist-runtime-")); t.after(() => rm(cwd, { recursive: true, force: true }));
@@ -54,13 +55,18 @@ async function setup(t: { after(fn: () => Promise<void>): void }, outcome: "ok" 
       let rendered = "";
       ctx.hasUI = true; ctx.mode = "tui";
       ctx.ui.custom = async (factory) => {
-        const component = await factory({ requestRender() {} } as Parameters<typeof factory>[0], { fg: (_token: unknown, text: string) => text, bg: (_token: unknown, text: string) => text } as Parameters<typeof factory>[1], {} as Parameters<typeof factory>[2], () => {});
-        // Open the editor from the Skills tab: rows are toggle, global, project.
-        for (let i = 0; i < (scope === "global" ? 1 : 2); i++) component.handleInput!("\x1b[B");
+        const component = await factory(
+          { requestRender() {}, terminal: { rows: 40 } } as Parameters<typeof factory>[0],
+          { fg: (_token: unknown, text: string) => text, bg: (_token: unknown, text: string) => text, bold: (text: string) => text } as Parameters<typeof factory>[1],
+          getKeybindings() as unknown as Parameters<typeof factory>[2],
+          () => {},
+        );
+        const rowPattern = scope === "global" ? /❯ Global always-allowed skills/ : /❯ Project always-allowed skills/;
+        for (let i = 0; i < 20 && !rowPattern.test(component.render(120).join("\n")); i++) component.handleInput!("\x1b[B");
         component.handleInput!("\r");
         // The dialog loads the embedded editor's inputs asynchronously.
         for (let i = 0; i < 500 && !/Search:/.test(component.render(120).join("\n")); i++) await new Promise((resolve) => setTimeout(resolve, 1));
-        rendered = component.render(120).join("\n"); component.dispose?.(); return "closed" as never;
+        rendered = component.render(120).join("\n"); component.dispose?.(); return { saved: false, values: {}, scope: "global", dirty: false, closedBy: "escape" } as never;
       };
       await commands.get("decisions")!.handler("", ctx as ExtensionCommandContext);
       return rendered;

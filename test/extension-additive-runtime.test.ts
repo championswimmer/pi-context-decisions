@@ -11,6 +11,7 @@ import { advertisedSkillNames } from "../src/extension/skill-state.ts";
 import { SKILL_SCORE_ENTRY } from "../src/extension/skill-state.ts";
 import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
 import { defaultSettings, saveSettings, type RelevanceSettings, type DecisionSettings } from "../src/settings.ts";
+import { saveGlobalAllowlist } from "../src/project-allowlist.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 import { SimSession, simHost, turnEnd } from "./helpers/pi-sim.ts";
@@ -23,6 +24,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, options: { rel
   const root = await mkdtemp(join(tmpdir(), "native-skill-")); t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, "settings.json"); const base = defaultSettings();
   await saveSettings({ ...base, history: { ...base.history, enabled: !!options.historyEnabled }, backend: options.unconfigured ? null : { backend: "pi", provider: "fixture", id: "classifier" }, globalAllowlist: options.pins ?? [], decision: { ...base.decision, ...options.decision }, relevance: { ...base.relevance, minCandidates: 0, maxSkills: 2, ...options.relevance } }, path);
+  if (options.pins?.length) await saveGlobalAllowlist(path, { skills: options.pins });
   const sim = simHost(new SimSession(), options.tools);
   const inventory = makeSkills(); const requests: DecisionRequest[] = []; const messages: string[] = [];
   const behavior: { fail: boolean; gate?: Promise<void>; allowlistGate?: Promise<void> } = { fail: !!options.fail };
@@ -35,7 +37,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }, options: { rel
       return { answers: Object.fromEntries(Object.entries(skills).map(([id, skill]) => [id, { type: "score", score: 2 - Number(skill.name.slice(6)) * 0.1 }])) };
     } }); } });
   const ctx: CommandContext = { hasUI: false, mode: "print", modelRegistry: { getModelsOfType() { return []; }, findOfType() { return { provider: "fixture", id: "classifier" }; }, async getApiKeyForProvider() { return undefined; }, async classify() { throw new Error("injected"); } }, ui: { async select() { return undefined; }, async input() { return undefined; }, notify() {}, setStatus() {} } };
-  const event = (prompt: string): BeforeAgentStartEvent => ({ type: "before_agent_start", prompt, systemPrompt: "unchanged", systemPromptOptions: { cwd: root, skills: [...inventory], selectedTools: [...sim.tools.active], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] } });
+  const event = (prompt: string): BeforeAgentStartEvent => ({ type: "before_agent_start", messageType: "user", prompt, systemPrompt: "unchanged", systemPromptOptions: { cwd: root, skills: [...inventory], selectedTools: [...sim.tools.active], sections: {}, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] } });
   await sim.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
   const start = async (prompt: string) => { const e = event(prompt); await sim.emit("before_agent_start", e, ctx); return e.systemPromptOptions.skills.map((s) => s.name); };
   const scored = (from = 0) => requests.slice(from).flatMap((request) => Object.values(request.state.skills as Record<string, { name: string }>).map((skill) => skill.name));

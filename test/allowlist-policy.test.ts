@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { allowlistedNames, isServerAllowlistName, isToolAllowlistName, normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist, scopeOf, toScopedSkills } from "../src/apps/allowlist.ts";
-import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
+import { loadGlobalAllowlist, loadProjectAllowlist, projectAllowlistPath, saveGlobalAllowlist, saveProjectAllowlist } from "../src/project-allowlist.ts";
 import { defaultSettings, loadSettings, parseSettings, saveSettings, updateSetting } from "../src/settings.ts";
 import { applySkillAdvertisementFilter, filterSkills } from "../src/apps/skill-filter.ts";
 import { buildRelevanceRequests, rankSkills, RELEVANCE_CRITERIA, TOPIC_RELEVANCE_CRITERIA } from "../src/apps/relevance.ts";
@@ -42,6 +42,8 @@ test("global lists migrate absent config, validate, normalize and roundtrip atom
   const path = join(await root(t), "settings.json");
   const settings = parseSettings({ ...defaultSettings(), globalAllowlist: ["z", "a", "z"] });
   await saveSettings(settings, path);
+  await saveGlobalAllowlist(path, { skills: ["z", "a", "z"] });
+  assert.deepEqual((await loadGlobalAllowlist(path)).names, ["a", "z"]);
   assert.deepEqual((await loadSettings(path)).settings.globalAllowlist, ["a", "z"]);
   for (const list of ["a", ["bad name"], Array(1001).fill("a")]) assert.throws(() => parseSettings({ globalAllowlist: list }));
   assert.throws(() => parseSettings({ globalAllowlist: { token: "SECRET_FIXTURE" } }), /Credentials/);

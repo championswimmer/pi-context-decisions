@@ -15,6 +15,7 @@ import { registerContextDecisions } from "../src/extension/runtime.ts";
 import { readDecisionsHistory } from "../src/extension/decisions-history.ts";
 import { createDecisionClient } from "../src/decision/api.ts";
 import { defaultSettings, defaultToolSettings, saveSettings, type ToolFilterSettings } from "../src/settings.ts";
+import { saveGlobalAllowlist } from "../src/project-allowlist.ts";
 
 const schema = { type: "object", properties: {}, additionalProperties: true } as never;
 type ToolSpec = { name: string; exposure?: "direct" | "model-only" | "codemode" | "deferred" | "hidden"; namespace?: { name: string; description?: string }; run?: () => string };
@@ -49,7 +50,7 @@ interface Options {
   reloadable?: boolean;
 }
 async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: Awaited<ReturnType<typeof realPi>>) => Parameters<ReturnType<typeof createFauxCore>["setResponses"]>[0], options: Options = {}) {
-  const root = await mkdtemp(join(tmpdir(), "real-pi-tools-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await mkdtemp(join(tmpdir(), "real-pi-tools-")); t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }));
   const agentDir = join(root, "agent"); await mkdir(agentDir, { recursive: true });
   const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = agentDir;
   t.after(async () => { if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; });
@@ -61,6 +62,12 @@ async function realPi(t: { after(fn: () => Promise<void>): void }, script: (h: A
   const base = defaultSettings();
   await saveSettings({ ...base, backend: { backend: "typesafe", model: "jev-latest" }, relevance: { ...base.relevance, enabled: false },
     tools: { ...defaultToolSettings(), enabled: true, ...options.tools }, history: { ...base.history, ...options.history } }, settingsPath);
+  if (options.tools?.alwaysAllowedTools?.length || options.tools?.alwaysAllowedMcpServers?.length) {
+    await saveGlobalAllowlist(settingsPath, {
+      tools: options.tools.alwaysAllowedTools ?? [],
+      mcpServers: options.tools.alwaysAllowedMcpServers ?? [],
+    });
+  }
   const faux = createFauxCore({ provider: "fauxprov", models: [{ id: "faux-1" }] });
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false } as never);
   runtime.registerProvider("fauxprov", { baseUrl: "http://faux.invalid", apiKey: "x", api: faux.api, streamSimple: faux.streamSimple,
@@ -303,10 +310,10 @@ test("R3 real Pi + REAL built-in MCP/codemode: provenance, namespace and exposur
   assert.equal(info.sourceInfo.source, "builtin");
   assert.equal(info.sourceInfo.scope, "temporary", "builtin MCP does not transfer its server config scope to public tool provenance");
   assert.equal(info.namespace?.name, "mcp__dev_radius", "hyphens fold to underscores in the canonical namespace");
-  // HOST FACT (contradicts the plan's assumption): an MCP server configured with the default `codemode` exposure registers its tools with
-  // ToolInfo.exposure "deferred" (the tools are only reachable from codemode scripts), and the public ToolNamespace has NO `aliases` field.
+  // HOST FACT (Pi 1.6.0): an MCP server configured with the default `codemode` exposure registers its tools with
+  // ToolInfo.exposure "deferred" (the tools are only reachable from codemode scripts), and `namespace.aliases` preserves the configured server name.
   assert.equal(info.exposure, "deferred");
-  assert.equal((info.namespace as { aliases?: unknown } | undefined)?.aliases, undefined);
+  assert.deepEqual((info.namespace as { aliases?: unknown } | undefined)?.aliases, ["dev-radius"]);
   const codemode = p.box.pi!.getAllTools().find((tool) => tool.name === "codemode");
   assert.equal(codemode?.sourceInfo.path, "builtin:codemode", "codemode itself is internal by provenance");
   await h.session.prompt("find things with the radar");
@@ -336,8 +343,8 @@ return JSON.stringify(out);`;
   await blocked.session.prompt("find things");
   const result = lastToolText(blocked.requests[1]);
   assert.match(result, /Script completed/);
-  // The namespace carries no alias, so the server label is the canonical key tail (`dev_radius`); `-`/`_` fold for allowlists.
-  assert.match(result, /MCP server .{1,8}dev_radius.{1,8} is unavailable: pi-context-decisions tool filtering has not enabled it/, "the script sees our block reason (names the server)");
+  // The namespace alias carries the configured server name (`dev-radius`); `-`/`_` fold for allowlists.
+  assert.match(result, /MCP server .{1,8}dev[-_]radius.{1,8} is unavailable: pi-context-decisions tool filtering has not enabled it/, "the script sees our block reason (names the server)");
   assert.match(result, /FILE-CONTENTS/, "an internal tool called from the same script still works");
   assert.deepEqual(blockedMcp.calls, [], "the MCP server never received the call");
   // Allowlisted (global settings, with `-`/`_` folding; builtin MCP has temporary provenance): the same script's nested call goes through and the server runs it.

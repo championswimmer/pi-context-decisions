@@ -68,7 +68,7 @@ test("tools list and mcp list are local, names-only and make no decision calls; 
   await h.command("mcp list");
   assert.match(last(h), /MCP servers and extensions \(3, filtering on · mode tools\)/); assert.match(last(h), /MCP dev-radius \(mcp__dev_radius\) · 1 tools · unavailable/);
   assert.match(last(h), /extension ext_a \(ext__ext_a\) · 1 tools/, "extensions are listed beside servers, by their canonical key");
-  assert.match(last(h), /Tools tab cannot add them/); assert.match(last(h), /tools\.alwaysAllowedMcpServers/); assert.match(last(h), /\.pi\/pi-context-decisions\.json/); assert.match(last(h), /\/reload/);
+  assert.match(last(h), /Tools tab cannot add them/); assert.match(last(h), /allowlists\.json alwaysAllowedMcpServers/); assert.match(last(h), /\.pi\/pi-context-decisions\.json/); assert.match(last(h), /\/reload/);
   assert.equal(h.requests.length, calls, "listing never calls the decision model");
 });
 test("status shows tool filtering lines and the not-a-sandbox sentence; off says opt-in", async (t) => {
@@ -81,65 +81,89 @@ test("status shows tool filtering lines and the not-a-sandbox sentence; off says
   assert.match(text, /Not a sandbox/); assert.match(text, /discovery listings/); assert.match(text, /mid-session keeps tools already registered available/);
   assert.doesNotMatch(text, /ext_a/, "status carries counts, never tool names");
 });
-test("RPC tool-limit labels and input help follow mode changes while edits keep their original keys", async (t) => {
+test("RPC tool-limit labels and input prompts follow mode changes while persisting under the same keys", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
   type Select = (title: string, options: string[]) => string | undefined;
-  const pick = (prefix: string): Select => (_title, options) => { const option = options.find((value) => value.startsWith(prefix)); assert.ok(option, `missing ${prefix}`); return option; };
-  const limit = (key: string, noun: string, max: number, min: number): Select => (title, options) => {
-    assert.equal(title, "Decisions · Advanced settings");
-    assert.ok(options.includes(`tools.maxAdded: ${max} · ${noun} · Max added per round`));
-    assert.ok(options.includes(`tools.minCandidates: ${min} · ${noun} · Minimum candidates`));
-    return key === "Back" ? "Back" : pick(`tools.${key}:`)(title, options);
+  const pick = (needle: string): Select => (_title, options) => {
+    const option = options.find((value) => value.includes(needle));
+    assert.ok(option, `missing ${needle} in ${JSON.stringify(options)}`);
+    return option;
+  };
+  const limit = (which: "maxAdded" | "minCandidates" | "Done", noun: string, max: number, min: number): Select => (title, options) => {
+    assert.equal(title, "Context Decisions Settings");
+    assert.ok(options.some((o) => o.startsWith(`[Tools] ${noun} · Max added per round: ${max} `)), `missing max ${noun} ${max}: ${options.join(" | ")}`);
+    assert.ok(options.some((o) => o.startsWith(`[Tools] ${noun} · Minimum candidates: ${min} `)), `missing min ${noun} ${min}: ${options.join(" | ")}`);
+    if (which === "Done") return "Done";
+    return pick(`[Tools] ${noun} · ${which === "maxAdded" ? "Max added per round" : "Minimum candidates"}:`)(title, options);
   };
   const actions: Select[] = [
-    () => "Advanced", limit("maxAdded", "Tools", 8, 0), limit("minCandidates", "Tools", 3, 0), () => "Back",
-    () => "Tools", pick("tools.mode:"), pick("mcp ·"), () => "Back",
-    () => "Advanced", limit("maxAdded", "MCP/exts", 3, 2), limit("minCandidates", "MCP/exts", 5, 2), () => "Back",
-    () => "Tools", pick("tools.mode:"), pick("tools ·"), () => "Back",
-    () => "Advanced", limit("Back", "Tools", 5, 4), () => "Done",
+    limit("maxAdded", "Tools", 8, 0),
+    limit("minCandidates", "Tools", 3, 0),
+    pick("[Tools] Mode:"), pick("mcp —"),
+    limit("maxAdded", "MCP/exts", 3, 2),
+    limit("minCandidates", "MCP/exts", 5, 2),
+    pick("[Tools] Mode:"), pick("tools —"),
+    limit("Done", "Tools", 5, 4),
   ];
   const titles: string[] = []; const inputs = ["3", "2", "5", "4"];
   await h.sim.command("", rpcContext(h.ctx, {
-    async select(title: string, options: string[]) { assert.ok(actions.length, "unexpected menu"); return actions.shift()!(title, options); },
+    async select(title: string, options: string[]) { assert.ok(actions.length, `unexpected menu: ${title}`); return actions.shift()!(title, options); },
     async input(title: string) { titles.push(title); return inputs.shift(); },
     custom() { throw new Error("custom overlay in rpc"); },
   }));
   assert.equal(actions.length, 0); assert.equal(inputs.length, 0);
-  assert.match(titles[0], /tools\.maxAdded.*Tools · Max added per round/);
-  assert.match(titles[1], /tools\.minCandidates.*Tools · Minimum candidates/);
-  assert.match(titles[2], /tools\.maxAdded.*MCP\/exts · Max added per round.*whole group counts once/);
-  assert.match(titles[3], /tools\.minCandidates.*MCP\/exts · Minimum candidates.*Below this many groups/);
+  assert.match(titles[0], /Tools · Max added per round/);
+  assert.match(titles[1], /Tools · Minimum candidates/);
+  assert.match(titles[2], /MCP\/exts · Max added per round/);
+  assert.match(titles[3], /MCP\/exts · Minimum candidates/);
   assert.deepEqual((await saved(h)).tools, { ...defaultSettings().tools, maxAdded: 5, minCandidates: 4 });
   assert.equal(h.requests.length, 0, "settings edits never score candidates");
 });
-test("RPC summaries submenu requires a model before enabling and persists thinking", async (t) => {
+test("RPC summaries flow requires a model before enabling, persists thinking, and clearing disables summaries", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
-  Object.assign(h.ctx.modelRegistry, { getAvailable: () => [{ provider: "good", id: "model" }], hasConfiguredAuth: () => true });
-  const actions = ["Advanced", "[lab] Past Turn Summaries", "Enabled: Off", "Model: Not selected", "1. good/model", "Thinking level: off", "high", "Enabled: Off", "Back", "Back", "Done"];
+  Object.assign(h.ctx.modelRegistry, { getAvailable: () => [{ provider: "good", id: "model", reasoning: true }], hasConfiguredAuth: () => true });
+  const pick = (needle: string) => (options: string[]) => {
+    const found = options.find((o) => o.includes(needle));
+    assert.ok(found, `missing ${needle} in ${JSON.stringify(options)}`);
+    return found;
+  };
+  const steps: ((options: string[]) => string | undefined)[] = [
+    // Attempting to enable without a model is rejected as unavailable.
+    pick("[Lab] Past turn summaries · Enabled:"),
+    // Pick housekeeping model + thinking level via 2-step field.model.
+    pick("[Lab] Past turn summaries · Model:"),
+    pick("good/model"),
+    pick("high —"),
+    // Now enable summaries.
+    pick("[Lab] Past turn summaries · Enabled:"),
+    (options) => options[0],
+    () => "Done",
+  ];
   await h.sim.command("", rpcContext(h.ctx, {
-    async select(title: string, options: string[]) {
-      if (title === "[lab] Past Turn Summaries") {
-        assert.match(options[0], /^Model:/); assert.match(options[1], /^Enabled:/); assert.match(options[2], /^Thinking level:/);
-      }
-      const next = actions.shift(); assert.ok(next && options.includes(next), `${title}: ${next}`); return next;
+    async select(_title: string, options: string[]) {
+      const next = steps.shift(); assert.ok(next, "unexpected select"); return next(options);
     },
-    async input(title: string) { assert.match(title, /Search housekeeping/); return "MODEL"; },
   }));
   assert.deepEqual((await saved(h)).history, { enabled: true, model: "good/model", thinkingLevel: "high" });
-  assert.equal(actions.length, 0); assert.equal(h.requests.length, 0);
-  const clear = ["Advanced", "[lab] Past Turn Summaries", "Model: good/model", "None", "Back", "Back", "Done"];
+  assert.equal(steps.length, 0); assert.equal(h.requests.length, 0);
+  // Clearing the housekeeping model automatically disables summaries via normalizeDraft.
+  const clearSteps: ((options: string[]) => string | undefined)[] = [
+    pick("[Lab] Past turn summaries · Model:"),
+    pick("Not selected —"),
+    () => "Done",
+  ];
   await h.sim.command("", rpcContext(h.ctx, {
-    async select(_title: string, options: string[]) { const next = clear.shift(); assert.ok(next && options.includes(next)); return next; },
-    async input() { return ""; },
+    async select(_title: string, options: string[]) {
+      const next = clearSteps.shift(); assert.ok(next, "unexpected select"); return next(options);
+    },
   }));
-  assert.deepEqual((await saved(h)).history, { enabled: false, model: "", thinkingLevel: "high" });
-  assert.equal(clear.length, 0);
+  assert.deepEqual((await saved(h)).history, { enabled: false, model: "", thinkingLevel: "off" });
+  assert.equal(clearSteps.length, 0);
 });
 
 test("RPC mode keeps select/input menus for the tools group and never calls custom overlays", async (t) => {
   const h = await toolSetup(t, { tools: { enabled: false } });
   const picks: string[] = [];
-  const answers = ["Tools", "tools.enabled", "tools.mode", (o: string[]) => o.find((x) => x.startsWith("mcp"))!, "decision.threshold", "Back", "Done"];
   const inputs = ["0.6"]; let step = 0;
   const ctx = h.ctx as unknown as { hasUI: boolean; mode: string; ui: Record<string, unknown> };
   ctx.hasUI = true; ctx.mode = "rpc";
@@ -147,13 +171,18 @@ test("RPC mode keeps select/input menus for the tools group and never calls cust
   ctx.ui.select = async (title: string, options: string[]) => {
     picks.push(title);
     const want = [
-      (o: string[]) => o.find((x) => x.startsWith("Tools"))!, (o: string[]) => o.find((x) => x.startsWith("tools.enabled"))!, (o: string[]) => o.find((x) => x.startsWith("tools.mode"))!,
-      (o: string[]) => o.find((x) => x.startsWith("mcp"))!, () => "Back", () => "Advanced", (o: string[]) => o.find((x) => x.startsWith("decision.threshold"))!, () => "Back", () => "Done"][step++];
-    void answers; return want(options);
+      (o: string[]) => o.find((x) => x.includes("[Tools] Tool filtering:"))!,
+      (o: string[]) => o[0],
+      (o: string[]) => o.find((x) => x.includes("[Tools] Mode:"))!,
+      (o: string[]) => o.find((x) => x.startsWith("mcp —"))!,
+      (o: string[]) => o.find((x) => x.includes("[Decision] Relevance threshold:"))!,
+      () => "Done",
+    ][step++];
+    return want(options);
   };
   ctx.ui.input = async () => inputs.shift();
   await h.command("");
   const s = await saved(h);
   assert.deepEqual([s.tools.enabled, s.tools.mode, s.decision.threshold], [true, "mcp", 0.6]);
-  assert.ok(picks.some((title) => /Tools settings/.test(title)));
+  assert.ok(picks.includes("Context Decisions Settings"));
 });

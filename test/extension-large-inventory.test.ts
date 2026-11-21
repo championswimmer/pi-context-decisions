@@ -10,7 +10,7 @@ import type { DecisionRequest } from "../src/decision/types.ts";
 
 function inventory(count: number): BeforeAgentStartEvent {
   const skills = Array.from({ length: count }, (_, i) => ({ name: `skill-${i}`, description: `Skill metadata ${i}`, filePath: `/private/${i}/SKILL.md`, baseDir: `/private/${i}`, sourceInfo: { path: `/private/${i}/SKILL.md`, source: "fixture", scope: "project" as const, origin: "top-level" as const }, disableModelInvocation: false }));
-  return { type: "before_agent_start", prompt: "Review fixture metadata", systemPrompt: "unchanged", systemPromptOptions: { cwd: "/fixture", skills, selectedTools: ["read"], sections: { mcp_servers: "unchanged" }, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] } };
+  return { type: "before_agent_start", messageType: "user", prompt: "Review fixture metadata", systemPrompt: "unchanged", systemPromptOptions: { cwd: "/fixture", skills, selectedTools: ["read"], sections: { mcp_servers: "unchanged" }, hiddenTools: [], toolSnippets: {}, toolGuidelines: {}, promptGuidelines: [], appendSystemPrompt: "", contextFiles: [] } };
 }
 for (const [count, maxQuestions, expected] of [[400, undefined, [50, 50, 50, 50, 50, 50, 50, 50]], [30, 7, [7, 7, 7, 7, 2]]] as const) {
   test(`actual hook evaluates ${count} skills in parallel, preserving declared client limit ${maxQuestions ?? 50}`, async () => {

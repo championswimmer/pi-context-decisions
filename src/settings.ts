@@ -1,310 +1,349 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import type { BackendSelection } from "./core/backends/factory.ts";
-import { isAllowedOpenRouterModel } from "./catalog/openrouter-models.ts";
-import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist } from "./apps/allowlist.ts";
-import { DEFAULT_RELEVANCE_THRESHOLD, validThreshold } from "./apps/skill-filter.ts";
+import { lstat } from "node:fs/promises";
+import {
+  createSettingsStore,
+  readJsonFileHardened,
+  SettingsSecurityError,
+  type SettingsStore,
+} from "pi-extension-settings-tui";
+import { globalAllowlistPath, loadGlobalAllowlist, saveGlobalAllowlist } from "./project-allowlist.ts";
+import { SettingsError } from "./settings-error.ts";
+import {
+  contextDecisionsSettingsSchema,
+  contextSettingsToFlat,
+  createContextDecisionsSettingsSchema,
+  defaultDecisionSettings,
+  defaultSettings,
+  defaultToolSettings,
+  extractLegacyGlobalAllowlists,
+  flatToContextSettings,
+  formatBackendSelection,
+  hasLegacyShape,
+  HISTORY_THINKING_LEVELS,
+  ICON_STYLE_LABELS,
+  ICON_STYLES,
+  isValidHistoryModelString,
+  LEGACY_RELEVANCE_KEYS,
+  LEGACY_TOOL_KEYS,
+  migrateLegacySettings,
+  parseLegacySettingsObject,
+  rejectSecrets,
+  SHARED_KEYS,
+  TOOL_CADENCES,
+  TOOL_FILTER_MODES,
+  validateBackendSelection,
+  type AllowlistCategory,
+  type AllowlistScopeKind,
+  type ContextDecisionsSettings,
+  type ContextDecisionsSettingsSchema,
+  type DecisionSettings,
+  type ExtractedLegacyAllowlists,
+  type FlatContextDecisionsSettings,
+  type HistorySettings,
+  type HistoryThinkingLevel,
+  type IconStyle,
+  type RelevanceSettings,
+  type SettingsUiHooks,
+  type ToolCadence,
+  type ToolFilterMode,
+  type ToolFilterSettings,
+} from "./settings-schema.ts";
 
-/** Framework-wide tuning used by skill/tool picking and explicit allowlist ranking. */
-export interface DecisionSettings {
-  threshold: number;
-  failMode: "open" | "closed";
-  timeoutMs: number;
-  maxPromptChars: number;
-  maxDescriptionChars: number;
-  chunkSize: number;
-  /** 0 dispatches every shard in parallel; positive values cap concurrent shards. */
-  concurrency: number;
+export {
+  contextDecisionsSettingsSchema,
+  contextSettingsToFlat,
+  createContextDecisionsSettingsSchema,
+  defaultDecisionSettings,
+  defaultSettings,
+  defaultToolSettings,
+  extractLegacyGlobalAllowlists,
+  flatToContextSettings,
+  formatBackendSelection,
+  HISTORY_THINKING_LEVELS,
+  ICON_STYLE_LABELS,
+  ICON_STYLES,
+  migrateLegacySettings,
+  SettingsError,
+  TOOL_CADENCES,
+  TOOL_FILTER_MODES,
+  validateBackendSelection,
+};
+export type {
+  AllowlistCategory,
+  AllowlistScopeKind,
+  ContextDecisionsSettings,
+  ContextDecisionsSettingsSchema,
+  DecisionSettings,
+  ExtractedLegacyAllowlists,
+  FlatContextDecisionsSettings,
+  HistorySettings,
+  HistoryThinkingLevel,
+  IconStyle,
+  RelevanceSettings,
+  SettingsUiHooks,
+  ToolCadence,
+  ToolFilterMode,
+  ToolFilterSettings,
+};
+
+export type DecisionsSettingsStore = SettingsStore<ContextDecisionsSettingsSchema["fields"]>;
+
+const MAX_BYTES = 65536;
+
+export function createDecisionsSettingsStore(
+  settingsPath: string,
+  schema: ContextDecisionsSettingsSchema = contextDecisionsSettingsSchema,
+): DecisionsSettingsStore {
+  return createSettingsStore(schema, { globalPath: settingsPath, deleteWhenEmpty: false });
 }
-export interface RelevanceSettings {
-  /** Experimental: score the entire invocable inventory, including advertised skills. */
-  constantMatrix: boolean;
-  enabled: boolean;
-  /** Cap on newly advertised skills, not tools or entire tool groups. */
-  maxSkills: number;
-  /** Automatic skill picking starts at eight skills by default (tool gating starts at zero). */
-  minCandidates: number;
-  pinned: string[];
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
-/** `tools`: every external tool is its own candidate. `mcp` (group mode): every MCP namespace and every extension (grouped by Pi's public `sourceInfo`) is on or off as a whole; only extension tools without public provenance are never filtered. */
-export type ToolFilterMode = "tools" | "mcp";
-export const TOOL_FILTER_MODES: readonly ToolFilterMode[] = ["tools", "mcp"];
-/** `initial`: pick once from the first user prompt. `prompt`: every new user prompt. `tool-round`: also after completed tool rounds. */
-export type ToolCadence = "initial" | "prompt" | "tool-round";
-export const TOOL_CADENCES: readonly ToolCadence[] = ["initial", "prompt", "tool-round"];
-/** Opt-in tool/MCP/extension filtering, independent of the skill switch. */
-export interface ToolFilterSettings {
-  enabled: boolean;
-  mode: ToolFilterMode;
-  cadence: ToolCadence;
-  /** New tools (or whole servers/extensions in group mode) per round; not a skill cap. */
-  maxAdded: number;
-  minCandidates: number;
-  /** Opt-in pin for the manager’s observable child bridge; never creates inherited tools. */
-  allowSubagentInheritedTools: boolean;
-  /** Global-source tools only (public user/temporary/missing scope); project-source pins live in the project file. */
-  alwaysAllowedTools: string[];
-  /** Global-source MCP names/namespace keys and canonical extension keys; retains its original setting name. */
-  alwaysAllowedMcpServers: string[];
-}
-/** Footer glyphs: Unicode needs no patched font; Nerd Font is explicitly opt-in. */
-export type IconStyle = "unicode" | "emoji" | "nerd";
-export const ICON_STYLES: readonly IconStyle[] = ["unicode", "emoji", "nerd"];
-export const HISTORY_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type HistoryThinkingLevel = (typeof HISTORY_THINKING_LEVELS)[number];
-export interface HistorySettings { enabled: boolean; model: string; thinkingLevel: HistoryThinkingLevel }
-export interface ContextDecisionsSettings {
-  iconStyle: IconStyle;
-  backend: BackendSelection | null;
-  globalAllowlist: string[];
-  decision: DecisionSettings;
-  relevance: RelevanceSettings;
-  tools: ToolFilterSettings;
-  history: HistorySettings;
-}
-export function defaultDecisionSettings(): DecisionSettings {
-  return { threshold: DEFAULT_RELEVANCE_THRESHOLD, failMode: "closed", timeoutMs: 8000, maxPromptChars: 4000,
-    maxDescriptionChars: 400, chunkSize: 50, concurrency: 0 };
-}
-export function defaultToolSettings(): ToolFilterSettings {
-  return { enabled: false, mode: "tools", cadence: "prompt", maxAdded: 8, minCandidates: 0, allowSubagentInheritedTools: false, alwaysAllowedTools: [], alwaysAllowedMcpServers: [] };
-}
-export function defaultSettings(): ContextDecisionsSettings {
-  return { iconStyle: "unicode", backend: null, globalAllowlist: [], decision: defaultDecisionSettings(), tools: defaultToolSettings(), history: { enabled: false, model: "", thinkingLevel: "off" },
-    relevance: { enabled: true, constantMatrix: false, maxSkills: 12, minCandidates: 8, pinned: [] } };
-}
-export class SettingsError extends Error {
-  readonly code = "config";
-  constructor(message: string) { super(message); this.name = "SettingsError"; }
-}
-function object(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
-}
-function identifier(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\s\p{Cc}]/u.test(value);
-}
-function keys(value: Record<string, unknown>, allowed: string[], warnings?: string[]): void {
-  const extra = Object.keys(value).filter((key) => !allowed.includes(key));
-  if (!extra.length) return;
-  if (!warnings) throw new SettingsError("Unknown settings fields are not allowed");
-  warnings.push("Unknown settings fields were ignored");
-}
-function rejectSecrets(value: unknown, depth = 0): void {
-  if (depth > 20) throw new SettingsError("Settings nesting exceeds the allowed bound");
-  if (!value || typeof value !== "object") return;
-  for (const [key, entry] of Object.entries(value)) {
-    if (/api.?key|token|secret|password|authorization|credential/iu.test(key)) throw new SettingsError("Credentials must not be stored in context-decisions settings");
-    rejectSecrets(entry, depth + 1);
+
+const PERSISTED_KEY_SET = new Set<string>(contextDecisionsSettingsSchema.persistedFieldKeys);
+
+function assertStrictFlatHistoryModel(raw: Record<string, unknown>): void {
+  if (raw.historyModel === undefined || raw.historyModel === null) return;
+  if (!isPlainObject(raw.historyModel) || !isValidHistoryModelString(raw.historyModel.model)) {
+    throw new SettingsError("Invalid historyModel");
   }
 }
-/** Validates both direct and Pi OpenRouter selections against the checked-in ten. */
-export function validateBackendSelection(value: unknown): BackendSelection | null {
-  if (value === null) return null;
-  if (!object(value)) throw new SettingsError("Invalid decision backend selection");
-  if (value.backend === "pi") {
-    keys(value, ["backend", "provider", "id"]);
-    if (!identifier(value.provider) || !identifier(value.id)) throw new SettingsError("Pi selection requires provider and classifier ID");
-    if (value.provider === "openrouter" && !isAllowedOpenRouterModel(value.id)) throw new SettingsError("OpenRouter model is outside the checked-in top ten; select a listed model");
-    return { backend: "pi", provider: value.provider, id: value.id };
+
+function parseFlatSettingsObject(value: Record<string, unknown>, warnings?: string[]): ContextDecisionsSettings {
+  rejectSecrets(value);
+  assertStrictFlatHistoryModel(value);
+  const extra = Object.keys(value).filter((key) => !PERSISTED_KEY_SET.has(key));
+  if (extra.length > 0) {
+    if (!warnings) throw new SettingsError("Unknown settings fields are not allowed");
+    warnings.push("Unknown settings fields were ignored");
   }
-  if (value.backend === "openrouter") {
-    keys(value, ["backend", "model"]);
-    if (!identifier(value.model) || !isAllowedOpenRouterModel(value.model)) throw new SettingsError("OpenRouter model is outside the checked-in top ten; select a listed model");
-    return { backend: "openrouter", model: value.model };
-  }
-  if (value.backend === "typesafe" || value.backend === "openai") {
-    keys(value, ["backend", "model"]);
-    const model = value.model ?? (value.backend === "typesafe" ? "jev-latest" : "gpt-6-luna");
-    if (!identifier(model) || !(value.backend === "typesafe" ? ["jev-latest", "jev-1.13.0"] : ["gpt-6-luna"]).includes(model)) throw new SettingsError("Select a supported direct decision model");
-    return { backend: value.backend, model };
-  }
-  throw new SettingsError("Unknown decision backend");
-}
-/** Pre-0.3 keys. Read on load only; the next save writes normalized `decision.threshold` instead. */
-const LEGACY_RELEVANCE_KEYS = ["mode", "minLabel", "relatedThreshold", "directThreshold"] as const;
-/**
- * Validates the legacy keys with their ORIGINAL rules (an invalid file stays a visible settings error and
- * fails closed), then maps them losslessly: threshold = (direct or related raw 0–2 threshold) / 2.
- */
-function migrateLegacyThreshold(input: Record<string, unknown>, warnings?: string[]): number | undefined {
-  if (!LEGACY_RELEVANCE_KEYS.some((key) => input[key] !== undefined)) return undefined;
-  if (input.mode !== undefined && input.mode !== "score" && input.mode !== "choice") throw new SettingsError("Invalid relevance.mode");
-  if (input.minLabel !== undefined && input.minLabel !== "related" && input.minLabel !== "directly_relevant") throw new SettingsError("Invalid relevance.minLabel");
-  const raw = { relatedThreshold: 0.75, directThreshold: 1.5 };
-  for (const key of ["relatedThreshold", "directThreshold"] as const) {
-    const number = input[key];
-    if (number === undefined) continue;
-    if (typeof number !== "number" || !Number.isFinite(number) || number < 0 || number > 2) throw new SettingsError(`relevance.${key} must be finite in [0, 2]`);
-    raw[key] = number;
-  }
-  if (raw.relatedThreshold > raw.directThreshold) throw new SettingsError("Relevance thresholds must be ordered: relatedThreshold <= directThreshold");
-  if (input.threshold !== undefined) warnings?.push("Legacy relevance settings were ignored because relevance.threshold is set");
-  else if (input.mode === "choice") warnings?.push("Choice scoring was removed; skill picking now uses relevance scores with the migrated threshold");
-  return (input.minLabel === "directly_relevant" ? raw.directThreshold : raw.relatedThreshold) / 2;
-}
-const DECISION_BOUNDS = { timeoutMs: [1, 300000], maxPromptChars: [1, 4000], maxDescriptionChars: [1, 400], chunkSize: [1, 50], concurrency: [0, 32] } as const;
-const SHARED_KEYS = Object.keys(defaultDecisionSettings());
-const LEGACY_TOOL_KEYS = ["threshold", "failMode", "maxDescriptionChars"];
-function integer(value: unknown, path: string, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new SettingsError(`${path} must be an integer in [${min}, ${max}]`);
-  return value;
-}
-function boolean(value: unknown, path: string): boolean {
-  if (typeof value !== "boolean") throw new SettingsError(`${path} must be a boolean`);
-  return value;
-}
-function enumValue(value: unknown, values: readonly string[], path: string): string {
-  if (typeof value !== "string" || !values.includes(value)) throw new SettingsError(`Invalid ${path}`);
-  return value;
-}
-/** Validate even shadowed legacy fields: explicit shared values never hide a corrupt configuration. */
-function sharedValues(input: Record<string, unknown>, group: string, allowed = SHARED_KEYS): Partial<DecisionSettings> {
-  const result: Partial<DecisionSettings> = {};
-  for (const key of allowed) {
-    const value = input[key];
-    if (value === undefined) continue;
-    const path = `${group}.${key}`;
-    if (key === "threshold") {
-      if (!validThreshold(value)) throw new SettingsError(`${path} must be finite in [0, 1]`);
-      result.threshold = value;
-    } else if (key === "failMode") result.failMode = enumValue(value, ["open", "closed"], path) as DecisionSettings["failMode"];
-    else {
-      const [min, max] = DECISION_BOUNDS[key as keyof typeof DECISION_BOUNDS];
-      Object.assign(result, { [key]: integer(value, path, min, max) });
+  const layer: Partial<FlatContextDecisionsSettings> = {};
+  for (const key of contextDecisionsSettingsSchema.persistedFieldKeys) {
+    if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === undefined) continue;
+    const validation = contextDecisionsSettingsSchema.validateField(key, value[key]);
+    if (!validation.ok) {
+      throw new SettingsError(key === "iconStyle" ? "Invalid iconStyle" : validation.error);
     }
+    (layer as Record<string, unknown>)[key] = validation.value;
   }
-  return result;
+  const effective = contextDecisionsSettingsSchema.resolveEffective({ global: layer, project: {} }, { includeProject: false });
+  return flatToContextSettings(effective);
 }
+
 export function parseSettings(value: unknown, warnings?: string[]): ContextDecisionsSettings {
   rejectSecrets(value);
-  if (!object(value)) throw new SettingsError("Settings must be a JSON object");
-  keys(value, ["enabled", "iconStyle", "backend", "globalAllowlist", "decision", "relevance", "tools", "history"], warnings);
-  const result = defaultSettings();
-  if (value.iconStyle !== undefined) {
-    if (typeof value.iconStyle !== "string" || !(ICON_STYLES as readonly string[]).includes(value.iconStyle)) throw new SettingsError("Invalid iconStyle");
-    result.iconStyle = value.iconStyle as IconStyle;
+  if (!isPlainObject(value)) throw new SettingsError("Settings must be a JSON object");
+  if (hasLegacyShape(value)) {
+    return parseLegacySettingsObject(value, warnings);
   }
-  if (value.backend !== undefined) result.backend = validateBackendSelection(value.backend);
-  if (value.globalAllowlist !== undefined) {
-    if (!Array.isArray(value.globalAllowlist)) throw new SettingsError("Global allowlist must be an array of skill names");
-    try { result.globalAllowlist = normalizeAllowlist(value.globalAllowlist); }
-    catch { throw new SettingsError("Global allowlist names must be bounded, nonempty identifiers"); }
-  }
-  const block = (name: string): Record<string, unknown> => {
-    if (value[name] === undefined) return {};
-    if (!object(value[name])) throw new SettingsError(`${name} must be an object`);
-    return value[name];
-  };
-  const skill = block("relevance"), tool = block("tools"), decision = block("decision");
-  keys(skill, [...Object.keys(result.relevance), ...SHARED_KEYS, ...LEGACY_RELEVANCE_KEYS, "cadence"], warnings);
-  keys(tool, [...Object.keys(result.tools), ...LEGACY_TOOL_KEYS], warnings);
-  keys(decision, SHARED_KEYS, warnings);
-  const history = block("history");
-  keys(history, ["enabled", "model", "thinkingLevel"], warnings);
-  if (history.enabled !== undefined) result.history.enabled = boolean(history.enabled, "history.enabled");
-  if (history.model !== undefined) {
-    if (typeof history.model !== "string" || (history.model !== "" && (!/^[^\s/\p{Cc}\p{Cf}]+\/[^\s\p{Cc}\p{Cf}]+$/u.test(history.model) || history.model.length > 512))) throw new SettingsError("Invalid history.model");
-    result.history.model = history.model;
-  }
-  if (history.thinkingLevel !== undefined) result.history.thinkingLevel = enumValue(history.thinkingLevel, HISTORY_THINKING_LEVELS, "history.thinkingLevel") as HistoryThinkingLevel;
-  if (skill.enabled !== undefined) result.relevance.enabled = boolean(skill.enabled, "relevance.enabled");
-  if (skill.constantMatrix !== undefined) result.relevance.constantMatrix = boolean(skill.constantMatrix, "relevance.constantMatrix");
-  if (tool.allowSubagentInheritedTools !== undefined) result.tools.allowSubagentInheritedTools = boolean(tool.allowSubagentInheritedTools, "tools.allowSubagentInheritedTools");
-  if (tool.enabled !== undefined) result.tools.enabled = boolean(tool.enabled, "tools.enabled");
-  // Accept and validate the retired skill cadence, but never persist it in the normalized settings.
-  if (skill.cadence !== undefined) enumValue(skill.cadence, ["prompt", "tool-round"], "relevance.cadence");
-  if (tool.cadence !== undefined) result.tools.cadence = enumValue(tool.cadence, TOOL_CADENCES, "tools.cadence") as ToolCadence;
-  if (tool.mode !== undefined) result.tools.mode = enumValue(tool.mode, TOOL_FILTER_MODES, "tools.mode") as ToolFilterMode;
-  for (const [input, output, group, cap] of [[skill, result.relevance, "relevance", "maxSkills"], [tool, result.tools, "tools", "maxAdded"]] as const) {
-    for (const key of [cap, "minCandidates"]) if (input[key] !== undefined) Object.assign(output, { [key]: integer(input[key], `${group}.${key}`, 0, 1000) });
-  }
-  if (skill.pinned !== undefined) {
-    if (!Array.isArray(skill.pinned) || skill.pinned.length > 1000 || skill.pinned.some((name) => !identifier(name) || name.length > 64)) throw new SettingsError("Pinned skill names must be nonempty, bounded identifiers");
-    result.relevance.pinned = [...new Set(skill.pinned as string[])];
-  }
-  for (const key of ["alwaysAllowedTools", "alwaysAllowedMcpServers"] as const) {
-    if (tool[key] === undefined) continue;
-    if (!Array.isArray(tool[key])) throw new SettingsError(`tools.${key} must be an array of names`);
-    try { result.tools[key] = (key === "alwaysAllowedTools" ? normalizeToolAllowlist : normalizeServerAllowlist)(tool[key]); }
-    catch { throw new SettingsError(key === "alwaysAllowedTools" ? "Tool allowlist names must be 1-128 characters without whitespace or control characters (at most 1000)"
-      : "MCP server / extension allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix (at most 1000)"); }
-  }
-  const migrationWarnings: string[] = [];
-  const rawThreshold = migrateLegacyThreshold(skill, migrationWarnings);
-  const skills = sharedValues(skill, "relevance"), tools = sharedValues(tool, "tools", LEGACY_TOOL_KEYS), shared = sharedValues(decision, "decision");
-  if (skills.threshold === undefined && rawThreshold !== undefined) skills.threshold = rawThreshold;
-  // Conflicting old values cannot both survive unification. Prefer the stricter legacy policy;
-  // a new explicit decision.* value is deliberate and always wins, including fail-open.
-  Object.assign(result.decision, skills, tools);
-  if (skills.threshold !== undefined && tools.threshold !== undefined) result.decision.threshold = Math.max(skills.threshold, tools.threshold);
-  if (skills.maxDescriptionChars !== undefined && tools.maxDescriptionChars !== undefined) result.decision.maxDescriptionChars = Math.min(skills.maxDescriptionChars, tools.maxDescriptionChars);
-  if (skills.failMode !== undefined && tools.failMode !== undefined) result.decision.failMode = skills.failMode === "closed" || tools.failMode === "closed" ? "closed" : "open";
-  Object.assign(result.decision, shared);
-  if (value.enabled !== undefined) {
-    const enabled = boolean(value.enabled, "enabled");
-    result.relevance.enabled &&= enabled;
-    result.tools.enabled &&= enabled;
-  }
-  const migrated = value.enabled !== undefined || SHARED_KEYS.some((key) => skill[key] !== undefined) || LEGACY_TOOL_KEYS.some((key) => tool[key] !== undefined) || rawThreshold !== undefined;
-  if (migrated) warnings?.push(`Legacy settings migrated to shared decision.* tuning and independent feature switches; explicit decision.* wins, conflicting legacy policies use the stricter value.${migrationWarnings.length ? ` ${migrationWarnings.join(". ")}` : ""}`);
-  return result;
+  return parseFlatSettingsObject(value, warnings);
 }
-export interface SettingsLoadResult { settings: ContextDecisionsSettings; warnings: string[]; error?: string }
-export async function loadSettings(path: string): Promise<SettingsLoadResult> {
+
+export interface SettingsLoadResult {
+  settings: ContextDecisionsSettings;
+  warnings: string[];
+  error?: string;
+}
+
+function mapSecurityError(error: SettingsSecurityError): SettingsError {
+  switch (error.code) {
+    case "SIZE_LIMIT_EXCEEDED":
+      return new SettingsError("Settings file exceeds 64 KiB");
+    case "SECRET_KEY_REJECTED":
+      return new SettingsError("Credentials must not be stored in context-decisions settings");
+    case "SYMLINK_REJECTED":
+      return new SettingsError("Settings path must be a regular file, not a symlink");
+    case "NOT_REGULAR_FILE":
+      return new SettingsError("Settings path must be a regular file");
+    default:
+      return new SettingsError("Could not read valid context-decisions settings");
+  }
+}
+
+async function fileExistsOnDisk(filePath: string): Promise<boolean> {
   try {
-    const info = await stat(path);
-    if (!info.isFile()) throw new SettingsError("Settings path must be a regular file");
-    if (info.size > 65536) throw new SettingsError("Settings file exceeds 64 KiB");
-    const text = await readFile(path, "utf8");
-    if (Buffer.byteLength(text) > 65536) throw new SettingsError("Settings file exceeds 64 KiB");
-    const warnings: string[] = [];
-    return { settings: parseSettings(JSON.parse(text), warnings), warnings };
+    await lstat(filePath);
+    return true;
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return { settings: defaultSettings(), warnings: [] };
-    // Invalid persisted selections are visible errors, never a fallback to a different paid backend.
-    return { settings: defaultSettings(), warnings: [], error: error instanceof SettingsError ? error.message : "Could not read valid context-decisions settings" };
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    // Any non-ENOENT error (e.g. permission error) means treat as existing so we don't blindly overwrite.
+    return true;
   }
 }
-/** Atomic replacement, restrictive permissions, cleanup on failure; never persists credentials. */
+
+export async function loadSettings(
+  path: string,
+  options?: { persistMigration?: boolean },
+): Promise<SettingsLoadResult> {
+  try {
+    const rawRead = readJsonFileHardened(path, { maxBytes: MAX_BYTES, rejectSecretKeysOnRead: true });
+    if (!rawRead.exists || rawRead.data === null) {
+      const globalAllowlists = await loadGlobalAllowlist(path);
+      const warnings = [...globalAllowlists.warnings, ...(globalAllowlists.error ? [globalAllowlists.error] : [])];
+      return {
+        settings: flatToContextSettings(contextDecisionsSettingsSchema.getDefaults(), globalAllowlists),
+        warnings,
+      };
+    }
+
+    rejectSecrets(rawRead.data);
+    assertStrictFlatHistoryModel(rawRead.data);
+
+    // Collect legacy migration warnings & validate any legacy nested blocks strictly before writing anything.
+    const warnings: string[] = [];
+    const legacy = hasLegacyShape(rawRead.data);
+    const legacyAllowlists = legacy ? extractLegacyGlobalAllowlists(rawRead.data) : { skills: [], tools: [], mcpServers: [], found: false };
+    if (legacy) {
+      migrateLegacySettings(rawRead.data, warnings);
+    }
+
+    const store = createDecisionsSettingsStore(path);
+    const loaded = await store.load({ persistMigration: false });
+
+    // Strict fail-closed: any invalid known persisted field value is a settings error, never silently defaulted.
+    for (const rejectedKey of loaded.rejectedKeys.global) {
+      if (PERSISTED_KEY_SET.has(rejectedKey)) {
+        const migratedRaw = legacy ? migrateLegacySettings(rawRead.data) : rawRead.data;
+        const fieldCheck = contextDecisionsSettingsSchema.validateField(
+          rejectedKey as (typeof contextDecisionsSettingsSchema.persistedFieldKeys)[number],
+          migratedRaw[rejectedKey],
+        );
+        const detail = !fieldCheck.ok ? fieldCheck.error : `Invalid value for ${rejectedKey}`;
+        throw new SettingsError(rejectedKey === "iconStyle" ? "Invalid iconStyle" : detail);
+      }
+    }
+
+    const unknownKeys = loaded.rejectedKeys.global.filter((key) => !PERSISTED_KEY_SET.has(key));
+    if (unknownKeys.length > 0 && !warnings.includes("Unknown settings fields were ignored")) {
+      warnings.push("Unknown settings fields were ignored");
+    }
+
+    // Separate allowlist storage: load allowlists.json if it exists; otherwise migrate legacy global allowlists first!
+    const allowlistsExist = await fileExistsOnDisk(globalAllowlistPath(path));
+    let allowlistData: { names: string[]; tools: string[]; mcpServers: string[] };
+
+    if (!allowlistsExist && legacyAllowlists.found) {
+      allowlistData = {
+        names: legacyAllowlists.skills,
+        tools: legacyAllowlists.tools,
+        mcpServers: legacyAllowlists.mcpServers,
+      };
+      if (options?.persistMigration === true) {
+        // Persist allowlists.json FIRST so legacy allowlists are never lost if settings.json rewrite runs next.
+        await saveGlobalAllowlist(path, {
+          skills: legacyAllowlists.skills,
+          tools: legacyAllowlists.tools,
+          mcpServers: legacyAllowlists.mcpServers,
+        });
+      }
+    } else {
+      const globalAllowlists = await loadGlobalAllowlist(path);
+      warnings.push(...globalAllowlists.warnings, ...(globalAllowlists.error ? [globalAllowlists.error] : []));
+      allowlistData = globalAllowlists;
+    }
+
+    if (options?.persistMigration === true && loaded.migratedScopes.length > 0) {
+      await store.load({ persistMigration: true });
+    }
+
+    return {
+      settings: flatToContextSettings(loaded.effective, allowlistData),
+      warnings,
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { settings: defaultSettings(), warnings: [] };
+    }
+    const settingsError = error instanceof SettingsError
+      ? error
+      : error instanceof SettingsSecurityError
+        ? mapSecurityError(error)
+        : undefined;
+    // Invalid persisted selections are visible errors, never a fallback to a different paid backend.
+    return {
+      settings: defaultSettings(),
+      warnings: [],
+      error: settingsError ? settingsError.message : "Could not read valid context-decisions settings",
+    };
+  }
+}
+
+/**
+ * Atomic replacement of flat v5 overrides via SettingsStore (`force: true`), mode `0o600`, never persists credentials.
+ * Does NOT write global allowlists into `settings.json` (save global allowlists via `saveGlobalAllowlist`).
+ */
 export async function saveSettings(settings: ContextDecisionsSettings, path: string): Promise<void> {
   const validated = parseSettings(settings);
-  const text = JSON.stringify(validated, null, 2) + "\n";
-  if (Buffer.byteLength(text) > 65536) throw new SettingsError("Settings file exceeds 64 KiB");
-  const temporary = `${path}.${randomUUID()}.tmp`;
+  const flat = contextSettingsToFlat(validated);
+  const store = createDecisionsSettingsStore(path);
   try {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(temporary, text, { mode: 0o600, flag: "wx" });
-    await rename(temporary, path);
-  } catch { throw new SettingsError("Could not save context-decisions settings"); }
-  finally { await rm(temporary, { force: true }).catch(() => {}); }
+    await store.save(flat, { scope: "global", force: true });
+  } catch (error) {
+    if (error instanceof SettingsSecurityError) {
+      if (error.code === "SIZE_LIMIT_EXCEEDED") throw new SettingsError("Settings file exceeds 64 KiB");
+      if (error.code === "SECRET_KEY_REJECTED") throw new SettingsError("Credentials must not be stored in context-decisions settings");
+      throw new SettingsError("Could not save context-decisions settings");
+    }
+    // Allow repairing a corrupt regular file on disk (malformed JSON or corrupt legacy block) without bypassing security checks.
+    if (error instanceof SyntaxError || error instanceof SettingsError) {
+      try {
+        const diff = store.schema.diffForScope(flat, "global", { global: {}, project: {} });
+        await store.adapter.writeLayer("global", diff);
+        return;
+      } catch (writeError) {
+        if (writeError instanceof SettingsSecurityError && writeError.code === "SIZE_LIMIT_EXCEEDED") {
+          throw new SettingsError("Settings file exceeds 64 KiB");
+        }
+        throw new SettingsError("Could not save context-decisions settings");
+      }
+    }
+    throw new SettingsError("Could not save context-decisions settings");
+  }
 }
+
 /** CLI/UI updates always pass through the same strict validation as persistence. */
 export function updateSetting(settings: ContextDecisionsSettings, key: string, text: string): ContextDecisionsSettings {
   if (key === "globalAllowlist") throw new SettingsError("Edit the allowlist in the /decisions dialog");
-  if (key === "tools.alwaysAllowedTools" || key === "tools.alwaysAllowedMcpServers") throw new SettingsError("Edit these allowlists in the /decisions Tools tab");
+  if (key === "tools.alwaysAllowedTools" || key === "tools.alwaysAllowedMcpServers") {
+    throw new SettingsError("Edit these allowlists in the /decisions Tools tab");
+  }
   const next = structuredClone(settings);
   let target: Record<string, unknown>;
-  let field: string;
+  let fieldName: string;
   if (key === "enabled") throw new SettingsError("Removed master switch; use relevance.enabled or tools.enabled");
-  if (key === "iconStyle") { target = next as unknown as Record<string, unknown>; field = key; }
-  else if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; field = key.slice(9); }
-  else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; field = key.slice(10); }
-  else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; field = key.slice(6); }
-  else if (key === "history.enabled" || key === "history.thinkingLevel") { target = next.history as unknown as Record<string, unknown>; field = key.slice(8); }
+  if (key === "iconStyle") { target = next as unknown as Record<string, unknown>; fieldName = key; }
+  else if (key.startsWith("decision.")) { target = next.decision as unknown as Record<string, unknown>; fieldName = key.slice(9); }
+  else if (key.startsWith("relevance.")) { target = next.relevance as unknown as Record<string, unknown>; fieldName = key.slice(10); }
+  else if (key.startsWith("tools.")) { target = next.tools as unknown as Record<string, unknown>; fieldName = key.slice(6); }
+  else if (key === "history.enabled" || key === "history.thinkingLevel") { target = next.history as unknown as Record<string, unknown>; fieldName = key.slice(8); }
   else throw new SettingsError("Use iconStyle, a decision, relevance or tools setting; choose a backend in the /decisions dialog");
-  if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(field)) {
+  if (target === (next.relevance as unknown) && (LEGACY_RELEVANCE_KEYS as readonly string[]).includes(fieldName)) {
     throw new SettingsError("Removed setting: skill picking is score-only. Use decision.threshold <0–1>");
   }
-  if ((key.startsWith("relevance.") && SHARED_KEYS.includes(field)) || (key.startsWith("tools.") && LEGACY_TOOL_KEYS.includes(field))) throw new SettingsError(`Removed per-feature tuning; use decision.${field}`);
-  if (!Object.hasOwn(target, field) || field === "pinned") throw new SettingsError("Unknown setting; use pin/unpin for pinned skills");
-  if (typeof target[field] === "boolean") {
+  if (
+    (key.startsWith("relevance.") && SHARED_KEYS.includes(fieldName)) ||
+    (key.startsWith("tools.") && (LEGACY_TOOL_KEYS as readonly string[]).includes(fieldName))
+  ) {
+    throw new SettingsError(`Removed per-feature tuning; use decision.${fieldName}`);
+  }
+  if (!Object.hasOwn(target, fieldName) || fieldName === "pinned") {
+    throw new SettingsError("Unknown setting; use pin/unpin for pinned skills");
+  }
+  if (typeof target[fieldName] === "boolean") {
     if (text !== "true" && text !== "false") throw new SettingsError("Boolean setting requires true or false");
-    target[field] = text === "true";
-  } else if (typeof target[field] === "number") {
-    const threshold = field === "threshold";
-    if (!(threshold ? /^(?:\d+(?:\.\d+)?|\.\d+)$/u : /^\d+$/u).test(text)) throw new SettingsError(threshold ? "Threshold requires a decimal in [0, 1]" : "Numeric setting requires a nonnegative integer");
-    target[field] = Number(text);
-  } else target[field] = text;
+    target[fieldName] = text === "true";
+  } else if (typeof target[fieldName] === "number") {
+    const threshold = fieldName === "threshold";
+    if (!(threshold ? /^(?:\d+(?:\.\d+)?|\.\d+)$/u : /^\d+$/u).test(text)) {
+      throw new SettingsError(threshold ? "Threshold requires a decimal in [0, 1]" : "Numeric setting requires a nonnegative integer");
+    }
+    target[fieldName] = Number(text);
+  } else {
+    target[fieldName] = text;
+  }
   return parseSettings(next);
 }

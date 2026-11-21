@@ -2,7 +2,7 @@
 // header toggles pin whole groups, and both lists are saved together (global settings and project file) without losing unloaded names.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Component } from "@earendil-works/pi-tui";
+import { getKeybindings, type Component } from "@earendil-works/pi-tui";
 import type { CommandContext } from "../src/extension/contracts.ts";
 import { loadProjectAllowlist, projectAllowlistPath, saveProjectAllowlist } from "../src/project-allowlist.ts";
 import { loadSettings, saveSettings } from "../src/settings.ts";
@@ -16,7 +16,7 @@ import { normalizeServerAllowlist } from "../src/apps/allowlist.ts";
 const PKG_KEY = extensionKey("@acme/pi-web")!;
 
 const KEY = { tab: "\t", down: "\x1b[B", up: "\x1b[A", enter: "\r", esc: "\x1b", space: " ", save: "\x13" };
-const theme = { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value };
+const theme = { fg: (_token: unknown, value: string) => value, bg: (_token: unknown, value: string) => value, bold: (value: string) => value };
 const waitFor = async <T,>(read: () => T | undefined | false, label: string): Promise<T> => {
   const deadline = Date.now() + 2000;
   for (;;) { const value = read(); if (value) return value; if (Date.now() > deadline) assert.fail(`Timed out waiting for ${label}`); await new Promise((resolve) => setTimeout(resolve, 1)); }
@@ -36,7 +36,7 @@ async function open(h: ToolHarness, target: `${"tools" | "mcp"} ${"global" | "pr
   const [list, scope] = target.split(" ") as ["tools" | "mcp", "global" | "project"];
   const components: (Component & { dispose?(): void })[] = [];
   const ui = { async select() { return undefined; }, async input() { return undefined; }, notify() {}, setStatus() {},
-    async custom(factory: (...a: unknown[]) => unknown) { return new Promise((resolve) => { components.push(factory({ requestRender() {}, terminal: { rows: 40 } }, theme, {}, resolve) as Component); }); } };
+    async custom(factory: (...a: unknown[]) => unknown) { return new Promise((resolve) => { components.push(factory({ requestRender() {}, terminal: { rows: 40 } }, theme, getKeybindings(), resolve) as Component); }); } };
   const ctx = { ...h.ctx, mode: "tui", hasUI: true, ui } as unknown as CommandContext;
   const run = h.sim.command("", ctx);
   const dialog = await waitFor(() => components[0], "dialog");
@@ -50,8 +50,8 @@ async function open(h: ToolHarness, target: `${"tools" | "mcp"} ${"global" | "pr
     for (let guard = 0; guard < 80; guard++) { if (text().split("\n").some((line) => /❯/.test(line) && pattern.test(line))) return; press(KEY.down); }
     assert.fail(`cursor never reached ${pattern}\n${text()}`);
   };
-  press(KEY.tab); await until(/Always allowed tools · Global/);
-  to(new RegExp(`${list === "tools" ? "Always allowed tools" : "Always allowed MCP servers & extensions"} · ${scope === "global" ? "Global" : "Project"}`)); press(KEY.enter);
+  press(KEY.tab); await until(/Global always-allowed tools/);
+  to(new RegExp(`${scope === "global" ? "Global" : "Project"} always-allowed ${list === "tools" ? "tools" : "MCP \\/ extensions"}`)); press(KEY.enter);
   return { dialog, run, text, until, press, to, close };
 }
 

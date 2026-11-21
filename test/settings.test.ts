@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { defaultSettings, defaultToolSettings, loadSettings, parseSettings, saveSettings, SettingsError, TOOL_CADENCES, TOOL_FILTER_MODES, updateSetting, validateBackendSelection } from "../src/settings.ts";
+import { createDecisionsSettingsStore, defaultSettings, defaultToolSettings, loadSettings, parseSettings, saveSettings, SettingsError, TOOL_CADENCES, TOOL_FILTER_MODES, updateSetting, validateBackendSelection } from "../src/settings.ts";
+import { globalAllowlistPath, loadGlobalAllowlist, saveGlobalAllowlist } from "../src/project-allowlist.ts";
 import { OPENROUTER_DECISION_MODELS } from "../src/catalog/openrouter-models.ts";
 
 async function directory(t: { after(fn: () => Promise<void>): void }) {
@@ -72,7 +73,9 @@ test("atomic settings replacement roundtrips with no temporary files and mode 06
   assert.deepEqual((await loadSettings(path)).settings, { ...settings, relevance: { ...settings.relevance, pinned: ["one"] } });
   assert.deepEqual(await readdir(join(root, "nested")), ["settings.json"]);
   const next = { ...settings, relevance: { ...settings.relevance, enabled: false } }; await saveSettings(next, path);
-  assert.equal(JSON.parse(await readFile(path, "utf8")).relevance.enabled, false);
+  const disk = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(disk.skillFilteringEnabled, false);
+  assert.equal(Object.hasOwn(disk, "relevance"), false, "v5 writes flat keys, not nested blocks");
 });
 test("invalid writes leave existing file unchanged; rename failure cleans temp", async (t) => {
   const root = await directory(t); const path = join(root, "settings.json"); await saveSettings(defaultSettings(), path);
@@ -111,8 +114,10 @@ test("decimal thresholds persist, old settings receive defaults, and bad bounds/
   assert.equal(settings.decision.threshold, 0.625);
   const path = join(await directory(t), "settings.json");
   await saveSettings(settings, path); assert.equal((await loadSettings(path)).settings.decision.threshold, 0.625);
-  const text = JSON.parse(await readFile(path, "utf8")).relevance;
-  for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.equal(Object.hasOwn(text, removed), false, `save writes only the new shape (${removed})`);
+  const disk = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(disk.decisionThreshold, 0.625);
+  assert.equal(Object.hasOwn(disk, "relevance"), false);
+  for (const removed of ["mode", "minLabel", "relatedThreshold", "directThreshold"]) assert.equal(Object.hasOwn(disk, removed), false, `save writes only the new shape (${removed})`);
   for (const ok of [0, 1, 0.5, 0.375]) assert.equal(parseSettings({ decision: { threshold: ok } }).decision.threshold, ok);
   for (const value of [NaN, Infinity, -0.01, 1.01, 2, "0.5", true, null]) assert.throws(() => parseSettings({ decision: { threshold: value } }), SettingsError);
   for (const value of ["NaN", "Infinity", "-1", "1.01", "2", "1e0", "true", "1.2.3", ""]) assert.throws(() => updateSetting(settings, "decision.threshold", value), SettingsError);
@@ -129,7 +134,9 @@ test("retired skill cadence is validated on load, omitted on save, and cannot be
     assert.equal(Object.hasOwn(loaded.settings.relevance, "cadence"), false);
     assert.equal(loaded.settings.tools.cadence, "tool-round");
     await saveSettings(loaded.settings, path);
-    assert.equal(Object.hasOwn(JSON.parse(await readFile(path, "utf8")).relevance, "cadence"), false);
+    const savedDisk = JSON.parse(await readFile(path, "utf8"));
+    assert.equal(Object.hasOwn(savedDisk, "relevance"), false);
+    assert.equal(savedDisk.toolCadence, "tool-round");
   }
   assert.throws(() => parseSettings({ relevance: { cadence: "every-token" } }), SettingsError);
   assert.throws(() => updateSetting(defaultSettings(), "relevance.cadence", "prompt"), SettingsError);
@@ -188,7 +195,10 @@ test("migrated settings load from disk without rewriting and save in the new sha
   assert.equal(loaded.error, undefined); assert.equal(loaded.settings.decision.threshold, 0.625); assert.equal(loaded.warnings.length, 1);
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), legacy);
   await saveSettings(loaded.settings, path);
-  assert.deepEqual(Object.keys(JSON.parse(await readFile(path, "utf8")).relevance).sort(), Object.keys(defaultSettings().relevance).sort());
+  const migratedDisk = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(Object.hasOwn(migratedDisk, "relevance"), false);
+  assert.equal(migratedDisk.decisionThreshold, 0.625);
+  assert.equal(migratedDisk.skillMaxAdded, 5);
   assert.equal((await loadSettings(path)).settings.decision.threshold, 0.625);
 });
 test("removed settings cannot be set through the UI/CLI path and point to the threshold", () => {
@@ -232,13 +242,19 @@ test("a settings file without `tools` loads identically, is never rewritten, and
   assert.deepEqual(partial.tools, { ...defaultToolSettings(), enabled: true });
   assert.deepEqual(parseSettings({ tools: {} }).tools, defaultToolSettings());
 });
-test("a saved tools block roundtrips with sorted, de-duplicated allowlists", async (t) => {
+test("a saved tools block roundtrips with sorted, de-duplicated allowlists in allowlists.json", async (t) => {
   const path = join(await directory(t), "settings.json");
   const settings = parseSettings({ ...defaultSettings(), decision: { ...defaultSettings().decision, threshold: 0.5 }, tools: { ...defaultToolSettings(), enabled: true, mode: "mcp", cadence: "tool-round", maxAdded: 3, alwaysAllowedTools: ["z_tool", "a_tool", "z_tool"], alwaysAllowedMcpServers: ["dev-radius", "docs"] } });
   await saveSettings(settings, path);
+  await saveGlobalAllowlist(path, { tools: settings.tools.alwaysAllowedTools, mcpServers: settings.tools.alwaysAllowedMcpServers });
+  const disk = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(Object.hasOwn(disk, "globalAllowlist"), false, "global allowlists live in allowlists.json, not settings.json");
+  assert.equal(Object.hasOwn(disk, "tools"), false);
   const back = (await loadSettings(path)).settings;
   assert.deepEqual(back, settings);
   assert.deepEqual(back.tools.alwaysAllowedTools, ["a_tool", "z_tool"]); assert.deepEqual(back.tools.alwaysAllowedMcpServers, ["dev-radius", "docs"]);
+  const allowDisk = await loadGlobalAllowlist(path);
+  assert.deepEqual(allowDisk.tools, ["a_tool", "z_tool"]); assert.deepEqual(allowDisk.mcpServers, ["dev-radius", "docs"]);
 });
 test("every tools bound, enum and type is rejected when invalid", () => {
   const bad: Record<string, unknown[]> = {
@@ -318,7 +334,11 @@ test("shared decision migration merges legacy policies conservatively, warns onc
   await saveSettings(independent, path);
   const saved = JSON.parse(await readFile(path, "utf8"));
   assert.equal(Object.hasOwn(saved, "enabled"), false);
-  for (const group of [saved.relevance, saved.tools]) for (const key of Object.keys(defaultSettings().decision)) assert.equal(Object.hasOwn(group, key), false, key);
+  assert.equal(Object.hasOwn(saved, "relevance"), false);
+  assert.equal(Object.hasOwn(saved, "tools"), false);
+  assert.equal(saved.skillFilteringEnabled, false);
+  assert.equal(saved.toolFilteringEnabled, true);
+  assert.equal(saved.decisionThreshold, 0.75);
   assert.deepEqual((await loadSettings(path)).warnings, []);
 });
 
@@ -349,8 +369,8 @@ test("shadowed legacy values and all shared bounds stay errors; shared saves can
 
 test("settings documentation canonical defaults stay valid, warning-free and in sync", async () => {
   const settingsDoc = await readFile(new URL("../docs/settings.md", import.meta.url), "utf8");
-  const json = /Canonical settings shape \(defaults\):\s+```json\n([\s\S]*?)\n```/.exec(settingsDoc)?.[1];
-  assert.ok(json);
+  const json = /Canonical v5 flat settings shape[^:]*:\s+```json\n([\s\S]*?)\n```/.exec(settingsDoc)?.[1];
+  assert.ok(json, "expected Canonical v5 flat settings shape JSON block in docs/settings.md");
   const warnings: string[] = [];
   assert.deepEqual(parseSettings(JSON.parse(json), warnings), defaultSettings());
   assert.deepEqual(warnings, []);
@@ -372,4 +392,87 @@ test("constant scoring matrix defaults off, validates and persists", async (t) =
   const settings = updateSetting(defaultSettings(), "relevance.constantMatrix", "true");
   await saveSettings(settings, path);
   assert.equal((await loadSettings(path)).settings.relevance.constantMatrix, true);
+});
+
+test("v4 -> v5 inline migration extracts global allowlists to allowlists.json (0600) first, flattens settings.json, and is idempotent", async (t) => {
+  const dir = await directory(t);
+  const path = join(dir, "settings.json");
+  const v4 = {
+    iconStyle: "emoji",
+    backend: { backend: "typesafe", model: "jev-latest" },
+    globalAllowlist: ["z-skill", "a-skill", "z-skill"],
+    decision: { threshold: 0.6, failMode: "open", timeoutMs: 12000, maxPromptChars: 2000, maxDescriptionChars: 250, chunkSize: 20, concurrency: 4 },
+    relevance: { enabled: false, constantMatrix: true, maxSkills: 5, minCandidates: 3, pinned: ["pin-a"] },
+    tools: { enabled: true, mode: "mcp", cadence: "tool-round", maxAdded: 6, minCandidates: 2, allowSubagentInheritedTools: true, alwaysAllowedTools: ["tool_b", "tool_a"], alwaysAllowedMcpServers: ["dev-radius", "ext__Notes"] },
+    history: { enabled: true, model: "openai/gpt-5-mini", thinkingLevel: "high" },
+  };
+  await writeFile(path, JSON.stringify(v4, null, 2));
+
+  // Default read-only load does NOT rewrite disk, but returns full migrated settings + allowlists.
+  const dry = await loadSettings(path);
+  assert.equal(dry.error, undefined);
+  assert.deepEqual(dry.settings.globalAllowlist, ["a-skill", "z-skill"]);
+  assert.deepEqual(dry.settings.tools.alwaysAllowedTools, ["tool_a", "tool_b"]);
+  assert.deepEqual(dry.settings.tools.alwaysAllowedMcpServers, ["dev-radius", "ext__notes"]);
+  assert.deepEqual(dry.settings.history, { enabled: true, model: "openai/gpt-5-mini", thinkingLevel: "high" });
+  assert.equal(Object.hasOwn(JSON.parse(await readFile(path, "utf8")), "decision"), true, "read-only load never rewrites settings.json");
+
+  // persistMigration: true extracts global allowlists to allowlists.json (0600) FIRST, then flattens settings.json.
+  const migrated = await loadSettings(path, { persistMigration: true });
+  assert.equal(migrated.error, undefined);
+  assert.deepEqual(migrated.settings, dry.settings);
+
+  const allowPath = globalAllowlistPath(path);
+  assert.equal((await stat(allowPath)).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(await readFile(allowPath, "utf8")), {
+    alwaysAllowed: ["a-skill", "z-skill"],
+    alwaysAllowedTools: ["tool_a", "tool_b"],
+    alwaysAllowedMcpServers: ["dev-radius", "ext__notes"],
+  });
+
+  const flatDisk = JSON.parse(await readFile(path, "utf8"));
+  for (const legacyKey of ["decision", "relevance", "tools", "history", "globalAllowlist", "enabled"]) {
+    assert.equal(Object.hasOwn(flatDisk, legacyKey), false, `legacy key ${legacyKey} must be removed from settings.json`);
+  }
+  assert.equal(flatDisk.iconStyle, "emoji");
+  assert.deepEqual(flatDisk.backend, { backend: "typesafe", model: "jev-latest" });
+  assert.equal(flatDisk.decisionThreshold, 0.6);
+  assert.equal(flatDisk.decisionFailMode, "open");
+  assert.equal(flatDisk.skillFilteringEnabled, false);
+  assert.equal(flatDisk.constantMatrix, true);
+  assert.deepEqual(flatDisk.pinnedSkills, ["pin-a"]);
+  assert.equal(flatDisk.toolFilteringEnabled, true);
+  assert.equal(flatDisk.toolMode, "mcp");
+  assert.equal(flatDisk.toolCadence, "tool-round");
+  assert.equal(flatDisk.allowSubagentInheritedTools, true);
+  assert.deepEqual(flatDisk.historyModel, { model: "openai/gpt-5-mini", thinkingLevel: "high" });
+  assert.equal(flatDisk.historyEnabled, true);
+
+  // Second load through SettingsStore is strictly idempotent (migratedScopes: []).
+  const store = createDecisionsSettingsStore(path);
+  const second = await store.load({ persistMigration: true });
+  assert.deepEqual(second.migratedScopes, []);
+  const reload = await loadSettings(path, { persistMigration: true });
+  assert.equal(reload.error, undefined);
+  assert.deepEqual(reload.warnings, []);
+  assert.deepEqual(reload.settings, migrated.settings);
+});
+
+test("v4 -> v5 migration preserves empty history model as null and fails closed on corrupt legacy blocks without rewriting", async (t) => {
+  const dir = await directory(t);
+  const path = join(dir, "settings.json");
+  await writeFile(path, JSON.stringify({ history: { enabled: false, model: "", thinkingLevel: "off" }, tools: { enabled: true } }));
+  const loaded = await loadSettings(path, { persistMigration: true });
+  assert.equal(loaded.error, undefined);
+  assert.deepEqual(loaded.settings.history, { enabled: false, model: "", thinkingLevel: "off" });
+  const disk = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(disk.toolFilteringEnabled, true);
+  assert.equal(Object.hasOwn(disk, "history"), false);
+
+  const badPath = join(dir, "bad.json");
+  const badJson = JSON.stringify({ relevance: { mode: "invalid-mode" }, globalAllowlist: ["a"] });
+  await writeFile(badPath, badJson);
+  const bad = await loadSettings(badPath, { persistMigration: true });
+  assert.match(bad.error!, /Invalid relevance\.mode/);
+  assert.equal(await readFile(badPath, "utf8"), badJson, "corrupt legacy file is never rewritten");
 });

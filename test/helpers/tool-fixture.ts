@@ -9,6 +9,7 @@ import type { CommandContext } from "../../src/extension/contracts.ts";
 import { createDecisionClient } from "../../src/decision/api.ts";
 import type { DecisionRequest } from "../../src/decision/types.ts";
 import { defaultSettings, defaultToolSettings, saveSettings, type ContextDecisionsSettings, type ToolFilterSettings, type DecisionSettings } from "../../src/settings.ts";
+import { saveGlobalAllowlist } from "../../src/project-allowlist.ts";
 import { saveAllowlist, setSetting } from "./settings-ui.ts";
 import { SimSession, builtinSource, extensionSource, simHost, turnEnd, type SimToolInfo } from "./pi-sim.ts";
 
@@ -40,6 +41,13 @@ export async function toolSetup(t: { after(fn: () => Promise<void>): void }, opt
     decision: { ...base.decision, ...options.settings?.decision, ...options.decision }, relevance: { ...base.relevance, enabled: options.skills === true, minCandidates: 0, ...options.settings?.relevance },
     tools: { ...defaultToolSettings(), enabled: true, ...options.tools } };
   await saveSettings(settings, path);
+  if (settings.globalAllowlist.length || settings.tools.alwaysAllowedTools.length || settings.tools.alwaysAllowedMcpServers.length) {
+    await saveGlobalAllowlist(path, {
+      skills: settings.globalAllowlist,
+      tools: settings.tools.alwaysAllowedTools,
+      mcpServers: settings.tools.alwaysAllowedMcpServers,
+    });
+  }
   const sim = simHost(options.session ?? new SimSession());
   for (const info of options.extra ?? []) sim.registerTool(info);
   const behavior = { fail: options.fail === true, hang: options.hang === true, gate: undefined as Promise<void> | undefined, inflight: 0, peak: 0 };

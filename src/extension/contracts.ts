@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { RegistryLike, BackendSelection } from "../core/backends/factory.ts";
 import type { DecisionClient } from "../decision/api.ts";
-import type { ContextDecisionsSettings, SettingsLoadResult } from "../settings.ts";
+import type { ContextDecisionsSettings, ContextDecisionsSettingsSchema, DecisionsSettingsStore, FlatContextDecisionsSettings, SettingsLoadResult } from "../settings.ts";
 import type { DecisionUsage } from "../decision/types.ts";
 import type { AllowlistScope, ScopedSkill } from "../apps/allowlist.ts";
 import type { ProjectAllowlistLists, ProjectAllowlistLoad } from "../project-allowlist.ts";
@@ -85,7 +85,10 @@ export interface ToolReport {
   withheld: number;
 }
 export interface Controller {
+  readonly settingsPath: string;
   ensureLoaded(): Promise<void>;
+  getStore(): DecisionsSettingsStore;
+  createDialogStore(schema: ContextDecisionsSettingsSchema): DecisionsSettingsStore;
   subagentManagerPresent?(): boolean;
   managerDiagnosticsStatus?(): string | undefined;
   getSettings(): ContextDecisionsSettings;
@@ -97,9 +100,13 @@ export interface Controller {
   /** Existing registry snapshot, names only; history must not refresh the inventory or infer membership from tool names. */
   historyToolGroups(): ReadonlyMap<string, string>;
   getInventory(): ScopedSkill[];
+  loadGlobalAllowlist(): Promise<ProjectAllowlistLoad>;
+  /** Names only: the skill list (iterable) or any subset of `{ skills, tools, mcpServers }`; omitted lists keep their value. */
+  saveGlobalAllowlist(lists: Iterable<string> | ProjectAllowlistLists): Promise<void>;
   loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad>;
   /** Names only: the skill list (iterable) or any subset of `{ skills, tools, mcpServers }`; omitted lists keep their value. */
   saveProjectAllowlist(cwd: string, lists: Iterable<string> | ProjectAllowlistLists): Promise<void>;
+  applyFlatSettings(flat: FlatContextDecisionsSettings): void;
   update(change: (current: ContextDecisionsSettings) => ContextDecisionsSettings): Promise<void>;
   createClient(selection: BackendSelection, ctx: CommandContext): DecisionClient;
   beginOperation(): { signal: AbortSignal; close(): void };
@@ -122,4 +129,7 @@ export interface ExtensionDependencies {
   report?: Controller["report"];
   /** Test seam for the project allowlist read (defaults to the real bounded file read). */
   loadProjectAllowlist?: Controller["loadProjectAllowlist"];
+  /** Test seams for global allowlist storage (defaults to the real bounded allowlists.json file). */
+  loadGlobalAllowlist?: (settingsPath: string) => Promise<ProjectAllowlistLoad>;
+  saveGlobalAllowlist?: (settingsPath: string, lists: ProjectAllowlistLists | Iterable<string>) => Promise<void>;
 }

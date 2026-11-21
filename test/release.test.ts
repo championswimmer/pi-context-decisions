@@ -26,11 +26,15 @@ test("package metadata is publish-ready and public", () => {
   assert.ok(existsSync(new URL("../LICENSE", import.meta.url)));
 });
 
-test("Pi host packages are peers with * ranges, never runtime dependencies", () => {
-  assert.equal(pkg.dependencies, undefined);
-  for (const name of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "@earendil-works/pi-tui"]) {
-    assert.equal(pkg.peerDependencies[name], "*");
+test("Pi host packages are peers, never runtime dependencies; pi-extension-settings-tui is the sole runtime dependency", () => {
+  const deps = pkg.dependencies ?? {};
+  assert.deepEqual(Object.keys(deps), ["pi-extension-settings-tui"]);
+  for (const name of Object.keys(deps)) {
+    assert.ok(!name.startsWith("@earendil-works/"), `Pi host package ${name} must not be a runtime dependency`);
   }
+  assert.equal(pkg.peerDependencies["@earendil-works/pi-ai"], "*");
+  assert.equal(pkg.peerDependencies["@earendil-works/pi-tui"], "*");
+  assert.equal(pkg.peerDependencies["@earendil-works/pi-coding-agent"], ">=1.5.0");
 });
 
 test("published file list ships sources and documentation and excludes tests, demos and scripts", () => {

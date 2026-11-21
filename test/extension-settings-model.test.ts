@@ -2,9 +2,23 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { DecisionError } from "../src/decision/errors.ts";
-import { defaultSettings, SettingsError } from "../src/settings.ts";
 import {
-  ADVANCED_FIELDS, SKILL_FIELDS, TOOL_FIELDS, advancedRows, advancedValueText, dialogHeightBudget, describeError, fieldFor, layoutMenu, sanitizeTerminalText,
+  contextDecisionsSettingsSchema,
+  contextSettingsToFlat,
+  createContextDecisionsSettingsSchema,
+  defaultSettings,
+  flatToContextSettings,
+  SettingsError,
+} from "../src/settings.ts";
+import {
+  backendLabel,
+  describeError,
+  dialogHeightBudget,
+  iconStyleText,
+  layoutMenu,
+  modelLabel,
+  sanitizeTerminalText,
+  toolsSummary,
 } from "../src/extension/settings-model.ts";
 
 test("settings-model is pure: it imports no Pi or pi-tui module", () => {
@@ -14,66 +28,130 @@ test("settings-model is pure: it imports no Pi or pi-tui module", () => {
   for (const specifier of specifiers) assert.match(specifier, /^\.\.?\//, `non-local import ${specifier}`);
 });
 
-test("Advanced covers every relevance setting except legacy pins, and each field is typed", () => {
-  const expected = Object.keys(defaultSettings().relevance).filter((key) => key !== "pinned").sort();
-  assert.deepEqual([...ADVANCED_FIELDS.filter((field) => field.group === "relevance"), ...SKILL_FIELDS].map((field) => field.key).sort(), expected);
-  assert.equal(new Set(ADVANCED_FIELDS.map((field) => `${field.group}.${field.key}`)).size, ADVANCED_FIELDS.length);
-  for (const field of ADVANCED_FIELDS) {
-    assert.ok(field.hint.length > 10, `${field.key} needs a hint`);
-    if (field.kind === "options") assert.ok((field.options?.length ?? 0) >= 2, `${field.key} needs options`);
-  }
-  assert.equal(advancedRows(defaultSettings()).length, ADVANCED_FIELDS.length);
+test("schema defines four peer tabs (Skills, Tools, Decision, Lab) and covers every persisted setting", () => {
+  const schema = contextDecisionsSettingsSchema;
+  assert.deepEqual(schema.tabs.map((tab) => tab.id), ["skills", "tools", "decision", "lab"]);
+  assert.deepEqual(schema.tabs.map((tab) => tab.label), ["Skills", "Tools", "Decision", "Lab"]);
+  assert.equal(schema.saveMode, "immediate");
+  assert.deepEqual(schema.scopes, ["global"]);
+
+  const defaults = schema.getDefaults();
+  assert.deepEqual(flatToContextSettings(defaults), defaultSettings());
+  assert.deepEqual(contextSettingsToFlat(defaultSettings()), defaults);
+
+  // Legacy pinnedSkills is persisted but hidden from the dialog UI.
+  assert.equal(schema.fields.pinnedSkills.visibleWhen?.(defaults), false);
+  // Every tab has its expected primary fields.
+  assert.deepEqual(
+    schema.getFieldsForTab("skills").map((entry) => entry.key),
+    ["skillFilteringEnabled", "skillMaxAdded", "skillMinCandidates", "globalSkillAllowlist", "projectSkillAllowlist", "statusView", "pinnedSkills"],
+  );
+  assert.deepEqual(
+    schema.getFieldsForTab("tools").map((entry) => entry.key),
+    ["toolFilteringEnabled", "toolMode", "toolCadence", "toolMaxAdded", "toolMinCandidates", "allowSubagentInheritedTools", "globalToolAllowlist", "projectToolAllowlist", "globalMcpAllowlist", "projectMcpAllowlist"],
+  );
+  assert.deepEqual(
+    schema.getFieldsForTab("decision").map((entry) => entry.key),
+    ["backend", "decisionThreshold", "decisionFailMode", "decisionChunkSize", "decisionConcurrency", "decisionTimeoutMs", "decisionMaxPromptChars", "decisionMaxDescriptionChars", "iconStyle"],
+  );
+  assert.deepEqual(
+    schema.getFieldsForTab("lab").map((entry) => entry.key),
+    ["constantMatrix", "historyModel", "historyEnabled"],
+  );
 });
 
-test("tool limit metadata follows the mode without changing keys, values, skill rows or static fields", () => {
-  for (const enabled of [false, true]) {
-    const settings = defaultSettings(); settings.tools.enabled = enabled;
-    const original = structuredClone(settings);
-    const toolRows = advancedRows(settings);
-    settings.tools.mode = "mcp";
-    const groupRows = advancedRows(settings);
-    assert.deepEqual(groupRows.map(({ id, value }) => ({ id, value })), toolRows.map(({ id, value }) => ({ id, value })));
-    assert.deepEqual(groupRows.filter((row) => !row.id.startsWith("tools.")), toolRows.filter((row) => !row.id.startsWith("tools.")));
-    const max = groupRows.find((row) => row.id === "tools.maxAdded")!;
-    const min = groupRows.find((row) => row.id === "tools.minCandidates")!;
-    assert.equal(max.label, "MCP/exts · Max added per round");
-    assert.equal(min.label, "MCP/exts · Minimum candidates");
-    assert.match(max.description, /MCP servers or extensions per round/);
-    assert.match(max.description, /whole group counts once/);
-    assert.match(max.description, /allowlisted and already-available groups do not count/);
-    assert.match(min.description, /Below this many groups, no scoring and every tool stays available/);
-    for (const row of [max, min]) {
-      const field = fieldFor("tools", row.id.split(".")[1], settings)!;
-      assert.deepEqual([field.label, field.hint], [row.label, row.description], "editor metadata matches the row");
-    }
-    settings.tools.mode = "tools";
-    assert.deepEqual(advancedRows(settings), toolRows, "switching back restores the tool wording");
-    assert.deepEqual(settings, original, "metadata resolution never changes settings");
-    assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "tools").map((field) => field.label), ["Subagents · Allow inherited tools", "Tools · Max added per round", "Tools · Minimum candidates"]);
-  }
+test("tool limit labels and descriptions follow toolMode dynamically without mutating settings", () => {
+  const schema = contextDecisionsSettingsSchema;
+  const base = schema.getDefaults();
+  assert.equal(schema.getFieldLabel("toolMaxAdded", base), "Tools · Max added per round");
+  assert.equal(schema.getFieldLabel("toolMinCandidates", base), "Tools · Minimum candidates");
+
+  const mcp = { ...base, toolMode: "mcp" as const };
+  assert.equal(schema.getFieldLabel("toolMaxAdded", mcp), "MCP/exts · Max added per round");
+  assert.equal(schema.getFieldLabel("toolMinCandidates", mcp), "MCP/exts · Minimum candidates");
+  assert.match(schema.getFieldDescription("toolMaxAdded", mcp) ?? "", /MCP servers or extensions per round/);
+  assert.match(schema.getFieldDescription("toolMaxAdded", mcp) ?? "", /whole group counts once/);
+  assert.match(schema.getFieldDescription("toolMaxAdded", mcp) ?? "", /allowlisted and already-available groups do not count/);
+  assert.match(schema.getFieldDescription("toolMinCandidates", mcp) ?? "", /Below this many groups, no scoring and every tool stays available/);
 });
 
-test("feature fields stay on their tabs; all tuning is Advanced", () => {
-  assert.deepEqual(SKILL_FIELDS.map((field) => field.key), ["enabled"]);
-  assert.deepEqual(TOOL_FIELDS.map((field) => field.key), ["enabled", "mode", "cadence"]);
-  assert.ok(!ADVANCED_FIELDS.some((field) => field.key === "enabled" || field.key === "cadence"));
-  assert.deepEqual(ADVANCED_FIELDS.slice(0, 3).map((field) => field.key), ["threshold", "chunkSize", "maxSkills"]);
+test("decisionFailMode disables inline stepping, lists closed first, and warns loudly on open", () => {
+  const def = contextDecisionsSettingsSchema.fields.decisionFailMode;
+  assert.equal(def.kind, "enum");
+  assert.equal(def.display, "picker");
+  assert.equal(def.allowInlineStep, false);
+  assert.equal(def.options[0].value, "closed");
+  const open = def.options.find((opt) => opt.value === "open")!;
+  assert.equal(open.tone, "warn");
+  assert.match(open.description ?? "", /WARNING.*every remaining skill, tool or group is added/i);
 });
 
-test("failMode open option carries a visible warning and closed is listed first", () => {
-  const field = ADVANCED_FIELDS.find((item) => item.key === "failMode")!;
-  assert.equal(field.options![0].value, "closed");
-  assert.match(field.options!.find((option) => option.value === "open")!.description, /WARNING.*every remaining skill, tool or group is added/i);
+test("eligibility gates subagent inherited tools and past turn summaries; normalizeDraft disables history when model cleared", () => {
+  let managerPresent = false;
+  let usableModel = false;
+  const schema = createContextDecisionsSettingsSchema({
+    isSubagentManagerPresent: () => managerPresent,
+    isHousekeepingModelUsable: () => usableModel,
+  });
+  const defaults = schema.getDefaults();
+
+  // Subagents · Allow inherited tools
+  assert.equal(schema.getFieldEligibility("allowSubagentInheritedTools", defaults).eligible, false);
+  assert.match(schema.getFieldEligibility("allowSubagentInheritedTools", defaults).reason ?? "", /pi-subagent-manager/);
+  // Already enabled can always be toggled off even when manager is absent.
+  assert.equal(schema.getFieldEligibility("allowSubagentInheritedTools", { ...defaults, allowSubagentInheritedTools: true }).eligible, true);
+  managerPresent = true;
+  assert.equal(schema.getFieldEligibility("allowSubagentInheritedTools", defaults).eligible, true);
+
+  // Past turn summaries · Enabled
+  assert.equal(schema.getFieldEligibility("historyEnabled", defaults).eligible, false);
+  assert.match(schema.getFieldEligibility("historyEnabled", defaults).reason ?? "", /Select a housekeeping model first/);
+  const withModel = { ...defaults, historyModel: { model: "openai/gpt-5-mini", thinkingLevel: "off" as const } };
+  assert.equal(schema.getFieldEligibility("historyEnabled", withModel).eligible, false);
+  assert.match(schema.getFieldEligibility("historyEnabled", withModel).reason ?? "", /unavailable or unauthenticated/);
+  usableModel = true;
+  assert.equal(schema.getFieldEligibility("historyEnabled", withModel).eligible, true);
+  // Already enabled can always be turned off.
+  usableModel = false;
+  assert.equal(schema.getFieldEligibility("historyEnabled", { ...withModel, historyEnabled: true }).eligible, true);
+
+  // normalizeDraft: clearing historyModel forces historyEnabled = false
+  const cleared = schema.normalizeDraft!(
+    { ...defaults, historyModel: null, historyEnabled: true },
+    "historyModel",
+    { ...withModel, historyEnabled: true },
+  );
+  assert.equal(cleared.historyEnabled, false);
 });
 
-test("value text: concurrency 0 explains all-parallel, booleans read On/Off", () => {
+test("field formatting: concurrency 0 explains all-parallel, iconStyle shows plain label, backend formats cleanly", () => {
+  const schema = contextDecisionsSettingsSchema;
+  const defaults = schema.getDefaults();
+  assert.equal(schema.formatFieldValue("decisionConcurrency", 0, defaults), "0 (all shards parallel)");
+  assert.equal(schema.formatFieldValue("decisionConcurrency", 4, defaults), "4");
+  assert.equal(schema.formatFieldValue("decisionThreshold", 0.375, defaults), "0.375");
+  assert.equal(schema.formatFieldValue("iconStyle", "unicode", defaults), "ASCII / Unicode");
+  assert.equal(schema.formatFieldValue("iconStyle", "emoji", defaults), "Emoji");
+  assert.equal(schema.formatFieldValue("iconStyle", "nerd", defaults), "Nerd Font");
+  assert.equal(schema.formatFieldValue("backend", null, defaults), "Not configured");
+  assert.equal(schema.formatFieldValue("backend", { backend: "typesafe", model: "jev-latest" }, defaults), "typesafe direct jev-latest");
+  assert.equal(schema.formatFieldValue("backend", { backend: "pi", provider: "custom", id: "cls" }, defaults), "Pi custom/cls");
+});
+
+test("summary helpers format icon style, tools summary and backend/model labels safely", () => {
   const settings = defaultSettings();
-  const field = (key: string) => [...ADVANCED_FIELDS, ...SKILL_FIELDS].find((item) => item.key === key)!;
-  assert.equal(advancedValueText(field("concurrency"), settings), "0 (all shards parallel)");
-  settings.decision.concurrency = 4; assert.equal(advancedValueText(field("concurrency"), settings), "4");
-  assert.equal(advancedValueText(field("enabled"), settings), "On");
-  settings.relevance.enabled = false; assert.equal(advancedValueText(field("enabled"), settings), "Off");
-  assert.equal(advancedValueText(field("threshold"), settings), "0.375");
+  assert.equal(iconStyleText(settings), "ASCII / Unicode");
+  settings.iconStyle = "nerd";
+  assert.equal(iconStyleText(settings), "Nerd Font");
+  assert.equal(toolsSummary(settings), "Off");
+  settings.tools.enabled = true;
+  settings.tools.mode = "mcp";
+  settings.tools.cadence = "tool-round";
+  assert.equal(toolsSummary(settings), "On · mcp · tool-round");
+  assert.equal(backendLabel(null), "not configured");
+  assert.equal(backendLabel({ backend: "pi", provider: "custom", id: "m" }), "Pi internal · custom");
+  assert.equal(backendLabel({ backend: "openai", model: "gpt-6-luna" }), "openai direct");
+  assert.equal(modelLabel({ backend: "openai", model: "gpt-6-luna" }), "openai direct gpt-6-luna");
 });
 
 test("dialogHeightBudget matches an independent oracle for the overlay options", () => {
@@ -91,14 +169,13 @@ test("layoutMenu always keeps the selected row inside the window and inside the 
   for (let budget = 1; budget <= 30; budget++) {
     for (let count = 0; count <= 40; count += 3) {
       for (const tall of [false, true]) {
-        const heights = Array.from({ length: count }, (_, i) => tall && i % 3 === 1 ? 3 : 1);
+        const heights = Array.from({ length: count }, (_, i) => (tall && i % 3 === 1 ? 3 : 1));
         let start = 0;
         for (let selected = 0; selected < count; selected++) {
           const layout = layoutMenu(heights, selected, budget, start);
           start = layout.start;
           assert.ok(layout.start <= selected && selected < layout.end, `selected ${selected} outside [${layout.start}, ${layout.end}) at budget ${budget}`);
           const cost = heights.slice(layout.start, layout.end).reduce((sum, height) => sum + height, 0);
-          // A single row taller than the budget is still shown (never hidden).
           assert.ok(cost <= budget || layout.end - layout.start === 1, `window costs ${cost} > ${budget}`);
         }
         for (let selected = count - 1; selected >= 0; selected--) {
@@ -121,14 +198,4 @@ test("sanitizeTerminalText removes escapes, bidi controls and bounds length; err
   assert.equal(describeError(new SettingsError("Bad value")), "Bad value");
   assert.equal(describeError(new DecisionError("http", "SECRET provider body", { status: 429 })), "Decision operation failed (http, HTTP 429)");
   assert.equal(describeError(new Error("SECRET_KEY")), "Context-decisions operation failed");
-});
-
-test("shared decision tuning appears once, exclusively in Advanced; feature caps retain distinct defaults", () => {
-  const settings = defaultSettings();
-  assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key).sort(), Object.keys(settings.decision).sort());
-  assert.equal(new Set(ADVANCED_FIELDS.filter((field) => field.group === "decision").map((field) => field.key)).size, Object.keys(settings.decision).length);
-  assert.ok([...SKILL_FIELDS, ...TOOL_FIELDS].every((field) => field.group !== "decision"));
-  assert.deepEqual(ADVANCED_FIELDS.filter((field) => field.group !== "decision").map((field) => `${field.group}.${field.key}`),
-    ["relevance.maxSkills", "relevance.minCandidates", "relevance.constantMatrix", "tools.allowSubagentInheritedTools", "tools.maxAdded", "tools.minCandidates"]);
-  assert.deepEqual([settings.relevance.maxSkills, settings.tools.maxAdded, settings.relevance.minCandidates, settings.tools.minCandidates], [12, 8, 8, 0]);
 });

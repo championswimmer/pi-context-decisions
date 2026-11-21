@@ -3,73 +3,113 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist } from "./apps/allowlist.ts";
-import { SettingsError } from "./settings.ts";
+import { SettingsError } from "./settings-error.ts";
 
 const MAX_BYTES = 65536;
 export function projectAllowlistPath(cwd: string): string { return join(cwd, ".pi", "pi-context-decisions.json"); }
-/** `names` is the always-advertised skill list (file key `alwaysAllowed`); tools and MCP servers have their own keys, matching public project-scope provenance only. */
+export function globalAllowlistPath(settingsPath: string): string { return join(dirname(settingsPath), "allowlists.json"); }
+/** `names` is the always-advertised skill list (file key `alwaysAllowed`); tools and MCP servers have their own keys. */
 export interface ProjectAllowlistLoad { names: string[]; tools: string[]; mcpServers: string[]; warnings: string[]; error?: string }
 export interface ProjectAllowlistLists { skills?: Iterable<string>; tools?: Iterable<string>; mcpServers?: Iterable<string> }
 const KNOWN_KEYS = ["alwaysAllowed", "alwaysAllowedTools", "alwaysAllowedMcpServers"];
 const EMPTY = (): ProjectAllowlistLoad => ({ names: [], tools: [], mcpServers: [], warnings: [] });
-function rejectSecrets(value: unknown, depth = 0): void {
-  if (depth > 20) throw new SettingsError("Project allowlist nesting exceeds the allowed bound");
+
+interface AllowlistScopeLabels {
+  /** Capitalized noun phrase, e.g. `"Project"` or `"Global"`. */
+  title: string;
+  /** Lowercase adjective, e.g. `"project"` or `"global"`. */
+  lower: string;
+  /** Optional mode when creating parent directories (e.g. `0o700` for global). */
+  dirMode?: number;
+}
+
+const PROJECT_LABELS: AllowlistScopeLabels = { title: "Project", lower: "project" };
+const GLOBAL_LABELS: AllowlistScopeLabels = { title: "Global", lower: "global", dirMode: 0o700 };
+
+function rejectSecrets(value: unknown, labels: AllowlistScopeLabels, depth = 0): void {
+  if (depth > 20) throw new SettingsError(`${labels.title} allowlist nesting exceeds the allowed bound`);
   if (!value || typeof value !== "object") return;
   for (const [key, entry] of Object.entries(value)) {
-    if (/api.?key|token|secret|password|authorization|credential/iu.test(key)) throw new SettingsError("Credentials must not be stored in project allowlists");
-    rejectSecrets(entry, depth + 1);
+    if (/api.?key|token|secret|password|authorization|credential/iu.test(key)) throw new SettingsError(`Credentials must not be stored in ${labels.lower} allowlists`);
+    rejectSecrets(entry, labels, depth + 1);
   }
 }
-async function regularDirectory(path: string): Promise<void> {
+async function regularDirectory(path: string, labels: AllowlistScopeLabels): Promise<void> {
   try {
     const info = await lstat(path);
-    if (!info.isDirectory()) throw new SettingsError("Project allowlist directory must be a real directory, not a symlink");
+    if (!info.isDirectory()) throw new SettingsError(`${labels.title} allowlist directory must be a real directory, not a symlink`);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
     throw error;
   }
 }
-async function regularFile(path: string): Promise<void> {
+async function regularFile(path: string, labels: AllowlistScopeLabels): Promise<void> {
   try {
     const info = await lstat(path);
-    if (!info.isFile()) throw new SettingsError("Project allowlist path must be a regular file, not a symlink");
-    if (info.size > MAX_BYTES) throw new SettingsError("Project allowlist exceeds 64 KiB");
+    if (!info.isFile()) throw new SettingsError(`${labels.title} allowlist path must be a regular file, not a symlink`);
+    if (info.size > MAX_BYTES) throw new SettingsError(`${labels.title} allowlist exceeds 64 KiB`);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
     throw error;
   }
 }
-export async function loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad> {
+async function loadAllowlistFile(path: string, labels: AllowlistScopeLabels): Promise<ProjectAllowlistLoad> {
   let file: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    const path = projectAllowlistPath(cwd);
-    await regularDirectory(dirname(path));
-    await regularFile(path);
+    await regularDirectory(dirname(path), labels);
+    await regularFile(path, labels);
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const info = await file.stat();
-    if (!info.isFile()) throw new SettingsError("Project allowlist path must be a regular file");
-    if (info.size > MAX_BYTES) throw new SettingsError("Project allowlist exceeds 64 KiB");
+    if (!info.isFile()) throw new SettingsError(`${labels.title} allowlist path must be a regular file`);
+    if (info.size > MAX_BYTES) throw new SettingsError(`${labels.title} allowlist exceeds 64 KiB`);
     const text = await file.readFile("utf8");
-    if (Buffer.byteLength(text) > MAX_BYTES) throw new SettingsError("Project allowlist exceeds 64 KiB");
+    if (Buffer.byteLength(text) > MAX_BYTES) throw new SettingsError(`${labels.title} allowlist exceeds 64 KiB`);
     const input: unknown = JSON.parse(text);
-    rejectSecrets(input);
-    if (!input || typeof input !== "object" || Array.isArray(input)) throw new SettingsError("Project allowlist must be a JSON object");
+    rejectSecrets(input, labels);
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new SettingsError(`${labels.title} allowlist must be a JSON object`);
     const data = input as Record<string, unknown>;
     const present = KNOWN_KEYS.filter((key) => data[key] !== undefined);
-    if (!present.length) throw new SettingsError("Project allowlist alwaysAllowed must be an array");
-    for (const key of present) if (!Array.isArray(data[key])) throw new SettingsError(`Project allowlist ${key} must be an array`);
-    const warnings = Object.keys(data).some((key) => !KNOWN_KEYS.includes(key)) ? ["Unknown project allowlist fields were ignored"] : [];
+    if (!present.length) throw new SettingsError(`${labels.title} allowlist alwaysAllowed must be an array`);
+    for (const key of present) if (!Array.isArray(data[key])) throw new SettingsError(`${labels.title} allowlist ${key} must be an array`);
+    const warnings = Object.keys(data).some((key) => !KNOWN_KEYS.includes(key)) ? [`Unknown ${labels.lower} allowlist fields were ignored`] : [];
     let tools: string[], mcpServers: string[];
     try { tools = data.alwaysAllowedTools === undefined ? [] : normalizeToolAllowlist(data.alwaysAllowedTools as unknown[]); }
-    catch { throw new SettingsError("Project tool allowlist names must be 1-128 characters without whitespace or control characters"); }
+    catch { throw new SettingsError(`${labels.title} tool allowlist names must be 1-128 characters without whitespace or control characters`); }
     try { mcpServers = data.alwaysAllowedMcpServers === undefined ? [] : normalizeServerAllowlist(data.alwaysAllowedMcpServers as unknown[]); }
-    catch { throw new SettingsError("Project MCP server allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix"); }
+    catch { throw new SettingsError(`${labels.title} MCP server allowlist names must match [A-Za-z0-9_-]{1,64}, optionally after the mcp__ or ext__ prefix`); }
     return { names: data.alwaysAllowed === undefined ? [] : normalizeAllowlist(data.alwaysAllowed as unknown[]), tools, mcpServers, warnings };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return EMPTY();
     // A malformed file yields empty lists (never the full inventory) plus a visible error.
-    return { ...EMPTY(), error: error instanceof SettingsError ? error.message : "Could not read valid project skill allowlist" };
+    return { ...EMPTY(), error: error instanceof SettingsError ? error.message : `Could not read valid ${labels.lower} skill allowlist` };
   } finally { await file?.close(); }
+}
+async function saveAllowlistFile(path: string, lists: ProjectAllowlistLists | Iterable<string>, labels: AllowlistScopeLabels): Promise<void> {
+  const input: ProjectAllowlistLists = Symbol.iterator in Object(lists) ? { skills: lists as Iterable<string> } : lists as ProjectAllowlistLists;
+  const current = await loadAllowlistFile(path, labels);
+  let skills: string[], tools: string[], mcpServers: string[];
+  try {
+    skills = input.skills === undefined ? current.names : normalizeAllowlist(input.skills);
+    tools = input.tools === undefined ? current.tools : normalizeToolAllowlist(input.tools);
+    mcpServers = input.mcpServers === undefined ? current.mcpServers : normalizeServerAllowlist(input.mcpServers);
+  } catch { throw new SettingsError(`${labels.title} allowlist names must be bounded, nonempty identifiers`); }
+  const text = JSON.stringify({ alwaysAllowed: skills, ...(tools.length ? { alwaysAllowedTools: tools } : {}), ...(mcpServers.length ? { alwaysAllowedMcpServers: mcpServers } : {}) }, null, 2) + "\n";
+  if (Buffer.byteLength(text) > MAX_BYTES) throw new SettingsError(`${labels.title} allowlist exceeds 64 KiB`);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await regularDirectory(dirname(path), labels);
+    await mkdir(dirname(path), labels.dirMode !== undefined ? { recursive: true, mode: labels.dirMode } : { recursive: true });
+    await regularDirectory(dirname(path), labels);
+    await regularFile(path, labels);
+    await writeFile(temporary, text, { mode: 0o600, flag: "wx" });
+    await regularFile(path, labels);
+    await rename(temporary, path);
+  } catch (error) { throw error instanceof SettingsError ? error : new SettingsError(`Could not save ${labels.lower} skill allowlist`); }
+  finally { await rm(temporary, { force: true }).catch(() => {}); }
+}
+
+export async function loadProjectAllowlist(cwd: string): Promise<ProjectAllowlistLoad> {
+  return loadAllowlistFile(projectAllowlistPath(cwd), PROJECT_LABELS);
 }
 /**
  * Read-modify-write: a list that is not supplied keeps its current value, so saving skills never drops tool or MCP
@@ -77,25 +117,14 @@ export async function loadProjectAllowlist(cwd: string): Promise<ProjectAllowlis
  * An unreadable existing file contributes empty lists (the same as loading it); symlinks and non-regular files still reject the write.
  */
 export async function saveProjectAllowlist(cwd: string, lists: ProjectAllowlistLists | Iterable<string>): Promise<void> {
-  const input: ProjectAllowlistLists = Symbol.iterator in Object(lists) ? { skills: lists as Iterable<string> } : lists as ProjectAllowlistLists;
-  const current = await loadProjectAllowlist(cwd);
-  let skills: string[], tools: string[], mcpServers: string[];
-  try {
-    skills = input.skills === undefined ? current.names : normalizeAllowlist(input.skills);
-    tools = input.tools === undefined ? current.tools : normalizeToolAllowlist(input.tools);
-    mcpServers = input.mcpServers === undefined ? current.mcpServers : normalizeServerAllowlist(input.mcpServers);
-  } catch { throw new SettingsError("Project allowlist names must be bounded, nonempty identifiers"); }
-  const text = JSON.stringify({ alwaysAllowed: skills, ...(tools.length ? { alwaysAllowedTools: tools } : {}), ...(mcpServers.length ? { alwaysAllowedMcpServers: mcpServers } : {}) }, null, 2) + "\n";
-  if (Buffer.byteLength(text) > MAX_BYTES) throw new SettingsError("Project allowlist exceeds 64 KiB");
-  const path = projectAllowlistPath(cwd), temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    await regularDirectory(dirname(path));
-    await mkdir(dirname(path), { recursive: true });
-    await regularDirectory(dirname(path));
-    await regularFile(path);
-    await writeFile(temporary, text, { mode: 0o600, flag: "wx" });
-    await regularFile(path);
-    await rename(temporary, path);
-  } catch (error) { throw error instanceof SettingsError ? error : new SettingsError("Could not save project skill allowlist"); }
-  finally { await rm(temporary, { force: true }).catch(() => {}); }
+  return saveAllowlistFile(projectAllowlistPath(cwd), lists, PROJECT_LABELS);
+}
+
+/** Hardened load of `<dir(settingsPath)>/allowlists.json`. Missing file returns empty lists without error. */
+export async function loadGlobalAllowlist(settingsPath: string): Promise<ProjectAllowlistLoad> {
+  return loadAllowlistFile(globalAllowlistPath(settingsPath), GLOBAL_LABELS);
+}
+/** Hardened atomic `0o600` read-modify-write of `<dir(settingsPath)>/allowlists.json`, preserving unsupplied lists. */
+export async function saveGlobalAllowlist(settingsPath: string, lists: ProjectAllowlistLists | Iterable<string>): Promise<void> {
+  return saveAllowlistFile(globalAllowlistPath(settingsPath), lists, GLOBAL_LABELS);
 }

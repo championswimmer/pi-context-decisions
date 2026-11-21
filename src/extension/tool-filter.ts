@@ -60,6 +60,8 @@ export interface ToolFilter {
   agentEnd(ctx: ExtensionContext): void;
   /** Capture names/scopes alongside Pi's session_start config load, even when filtering is initially off. */
   startSession(ctx: ExtensionContext): Promise<void>;
+  /** Drop branch-transient state and re-withhold any tools explicitly withheld on the target branch. */
+  sessionTree(ctx?: ExtensionContext): void;
   /** Drop branch-transient state; true also discards the session MCP capture (start/shutdown only). The ledger is untouched. */
   reset(session?: boolean): void;
   /** Settings/allowlist saved: project list cache and scores are stale. */
@@ -649,6 +651,22 @@ export function createToolFilter(deps: ToolFilterDeps): ToolFilter {
       try { projectTrusted = ctx.isProjectTrusted() === true; } catch { /* unknown trust never admits project config */ }
       const read = await readMcpConfigScopes({ agentDir: deps.agentDir ?? getAgentDir(), cwd: ctx.cwd, projectTrusted });
       if (epoch === scopeEpoch) mcpOrigins = read;
+    },
+    sessionTree(ctx) {
+      filter.reset();
+      if (!supported() || !ctx?.sessionManager) return;
+      const settings = deps.getSettings();
+      const ledger = readLedger(ctx);
+      const state = stateOf(settings, deps.getSettingsError(), ledger);
+      if (state === "off" || ledger.unreadable || !ledger.withheld.size) return;
+      // Pi 1.6.0's _restoreToolsFromTranscript activates registered extension tools that never appeared
+      // in the branch's system messages (including tools withheld before the first prompt). Re-withhold
+      // any tool that the target branch's ledger explicitly marks withheld.
+      const active = pi.getActiveTools();
+      const next = active.filter((name) => !ledger.withheld.has(name));
+      if (next.length !== active.length) {
+        try { pi.setActiveTools!(next); } catch { /* stale host */ }
+      }
     },
     reset(session = false) {
       if (session) { scopeEpoch++; scopeWarnings.clear(); snapshot = undefined; mcpOrigins = { scopes: new Map(), warnings: [] }; }

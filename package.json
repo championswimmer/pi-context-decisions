@@ -1,6 +1,6 @@
 {
   "name": "pi-context-decisions",
-  "version": "4.2.2",
+  "version": "5.0.0",
   "description": "Pi extension that uses decision/classifier models (Pi, TypeSafe JEV, OpenAI, OpenRouter) to filter which skills are advertised and, opt-in, which external tools and MCP servers are available for each prompt",
   "type": "module",
   "license": "MIT",
@@ -53,15 +53,18 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm test"
   },
+  "dependencies": {
+    "pi-extension-settings-tui": "^0.5.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": ">=1.5.0",
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@earendil-works/pi-tui": "1.1.0",
+    "@earendil-works/pi-ai": "^1.5.2",
+    "@earendil-works/pi-coding-agent": "^1.5.2",
+    "@earendil-works/pi-tui": "^1.5.2",
     "@types/node": "^22.15.0",
     "@xterm/headless": "5.5.0",
     "typescript": "^5.9.3"
