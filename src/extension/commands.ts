@@ -6,7 +6,7 @@ import {
   type ModelPickerEntry,
 } from "pi-extension-settings-tui";
 import { buildPickerEntries, type AuthStatus, type PickerEntry } from "../catalog/picker-models.ts";
-import { resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey, type CredentialSource } from "../core/auth.ts";
+import { resolveGeminiKey, resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey, type CredentialSource } from "../core/auth.ts";
 import { createDeadline } from "../core/control.ts";
 import type { BackendSelection } from "../core/backends/factory.ts";
 import { DecisionError } from "../decision/errors.ts";
@@ -40,7 +40,7 @@ import { describeError, iconStyleText, sanitizeTerminalText } from "./settings-m
  * legacy `pinned` list. `tools`/`mcp` accept only `list`.
  */
 const COMMANDS = ["status", "history", "test", "tools", "mcp", "pin", "unpin"];
-type DirectProvider = "openai" | "typesafe" | "openrouter";
+type DirectProvider = Exclude<BackendSelection["backend"], "pi">;
 
 function cleanLabel(value: string): string { return sanitizeTerminalText(value, 400); }
 const safeError = describeError;
@@ -119,12 +119,13 @@ function statusSafely(controller: Controller, ctx: CommandContext): void {
 }
 
 function credentialGuide(provider: string, native = false): string {
+  if (provider === "gemini") return "Gemini Developer API credentials are missing or unavailable. Set GEMINI_API_KEY or configure Google API-key credentials in Pi.";
   const variable = provider === "typesafe" ? "TYPESAFE_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : provider === "openrouter" ? "OPENROUTER_API_KEY" : undefined;
   return `${cleanLabel(provider)} credentials are missing or unavailable. ${variable ? `Set ${variable} in the environment or ` : ""}configure /login ${cleanLabel(provider)} in Pi.${provider === "openai" ? ` Use an OpenAI API key, not openai-codex/ChatGPT OAuth.${native ? " If Pi resolves OAuth for openai, choose OpenAI direct with OPENAI_API_KEY instead." : ""}` : ""}`;
 }
 
 async function directAuth(provider: DirectProvider, ctx: CommandContext, env?: Record<string, string | undefined>): Promise<{ status: AuthStatus; source?: CredentialSource }> {
-  const resolve = provider === "openai" ? resolveOpenAIKey : provider === "typesafe" ? resolveTypeSafeKey : resolveOpenRouterKey;
+  const resolve = provider === "openai" ? resolveOpenAIKey : provider === "typesafe" ? resolveTypeSafeKey : provider === "gemini" ? resolveGeminiKey : resolveOpenRouterKey;
   try {
     const credential = await resolve({ registry: ctx.modelRegistry, env, signal: ctx.signal, timeoutMs: 1500 });
     return { status: "ok", source: credential.source };
@@ -158,7 +159,7 @@ export async function pickerEntries(ctx: CommandContext, env?: Record<string, st
   const auth: Record<string, AuthStatus> = {};
   await Promise.all([
     ...providers.map(async (provider) => { native[provider] = await nativeAuth(provider, ctx); }),
-    ...(["openai", "typesafe", "openrouter"] as const).map(async (provider) => { auth[provider] = (await directAuth(provider, ctx, env)).status; }),
+    ...(["openai", "typesafe", "openrouter", "gemini"] as const).map(async (provider) => { auth[provider] = (await directAuth(provider, ctx, env)).status; }),
   ]);
   return buildPickerEntries({ piClassifiers: classifiers, auth: { ...native, ...auth } }).map((entry) =>
     entry.selection.backend === "pi"

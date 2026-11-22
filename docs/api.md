@@ -2,7 +2,7 @@
 
 # Application and core API
 
-Provider names `noul` (TypeSafe/OpenRouter), `predicate` (OpenAI), and Pi's `bool` are normalized to **one internal primitive: `bool`**, alongside `choice` and `score`. Bool answers contain P(true), not a coerced Boolean. Required scalar answers are validated; optional confidence/distributions/legend remain optional.
+Provider names `noul` (TypeSafe/OpenRouter/Gemini), `predicate` (OpenAI), and Pi's `bool` are normalized to **one internal primitive: `bool`**, alongside `choice` and `score`. Bool answers contain P(true), not a coerced Boolean. Required scalar answers are validated; optional confidence/distributions/legend remain optional.
 
 The first example runs inside a Pi extension, where `ctx` is the current extension context.
 
@@ -36,7 +36,7 @@ This host-only adapter uses public `ModelRuntime`/`ModelRegistry`, respects Pi's
 
 ### Reusable skill picker
 
-`pickSkills` works with any of the four core backends through the same decision client. It is a **stateless, score-only** helper: it evaluates **every** unique automatic candidate in bounded batches, ranks by expected relevance, applies threshold/cap/pins, and returns the original skill objects in inventory order. The extension builds its additive, branch-aware behavior on the same ranking and selection primitives (`scoreAdditions`, `RelevanceScoreCache`) and derives advertised names from committed Pi system sections. Names and descriptions are the only skill information transmitted; file paths are retained locally for Pi's selected advertisements. It does not read or attach full skill bodies.
+`pickSkills` works with any of the core backends through the same decision client. It is a **stateless, score-only** helper: it evaluates **every** unique automatic candidate in bounded batches, ranks by expected relevance, applies threshold/cap/pins, and returns the original skill objects in inventory order. The extension builds its additive, branch-aware behavior on the same ranking and selection primitives (`scoreAdditions`, `RelevanceScoreCache`) and derives advertised names from committed Pi system sections. Names and descriptions are the only skill information transmitted; file paths are retained locally for Pi's selected advertisements. It does not read or attach full skill bodies.
 
 Here `selection` is a backend selection, `prompt` is your task text, and `thirtySkills` is your inventory of skill objects (each with a name and description).
 

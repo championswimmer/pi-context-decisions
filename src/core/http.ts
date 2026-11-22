@@ -20,7 +20,9 @@ export interface GetOptions {
   headers?: Record<string, string>;
   maxResponseBytes?: number;
 }
+export const GEMINI_DECISIONS = "https://generativelanguage.googleapis.com/v1beta/decisions";
 const ENDPOINTS = new Set([
+  GEMINI_DECISIONS,
   "https://api.typesafe.ai/v1/systemone",
   "https://api.openai.com/v1/decisions",
   "https://openrouter.ai/api/alpha/decisions",
@@ -94,7 +96,7 @@ export async function postJson(url: string, key: string, body: unknown, options:
       deadline.check();
       let response: Response;
       try {
-        response = await deadline.run((deps.fetch ?? fetch)(url, {method: "POST", redirect: "error", headers: {Authorization: `Bearer ${key}`, "Content-Type": "application/json"}, body: serialized, signal: deadline.signal}));
+        response = await deadline.run((deps.fetch ?? fetch)(url, {method: "POST", redirect: "error", headers: {...(url === GEMINI_DECISIONS ? {"x-goog-api-key": key} : {Authorization: `Bearer ${key}`}), "Content-Type": "application/json"}, body: serialized, signal: deadline.signal}));
       } catch (error) {
         deadline.check();
         if (error instanceof DecisionError) throw error;

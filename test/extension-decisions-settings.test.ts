@@ -123,11 +123,11 @@ for (const [provider, model, variable] of [
   assert.equal(h.inference(), 0);
 });
 
-test("missing-key picker labels include all three direct providers and Pi internal classifiers", async (t) => {
+test("missing-key picker labels include all four direct providers and Pi internal classifiers", async (t) => {
   const h = await fixture(t, { ui: true });
   await h.menu(row("[Decision] Decision model:"), undefined);
   const picker = h.dialogs.find((dialog) => dialog.title === "Decision model")!;
-  for (const label of ["OpenAI direct", "OpenRouter direct", "TypeSafe direct"]) {
+  for (const label of ["OpenAI direct", "OpenRouter direct", "TypeSafe direct", "Google direct"]) {
     assert.match(picker.options.find((opt) => opt.includes(label))!, /missing key/);
   }
   assert.ok(picker.options.some((opt) => opt.includes("[Pi internal classifiers]")));
@@ -193,6 +193,9 @@ test("all direct and native provider choices require available keys, are atomic 
   for (const [label, selection] of [
     ["typesafe direct jev-latest", { backend: "typesafe", model: "jev-latest" }],
     ["openai direct gpt-6-luna", { backend: "openai", model: "gpt-6-luna" }],
+    ["gemini direct gemini-decision-1", { backend: "gemini", model: "gemini-decision-1" }],
+    ["openrouter direct openai/gpt-6-luna-decisions", { backend: "openrouter", model: "openai/gpt-6-luna-decisions" }],
+    ["openrouter direct google/gemini-decision-1", { backend: "openrouter", model: "google/gemini-decision-1" }],
     ["openrouter direct typesafe/jev-1.14", { backend: "openrouter", model: "typesafe/jev-1.14" }],
     ["Pi custom/local", { backend: "pi", provider: "custom", id: "local" }],
   ] as const) {

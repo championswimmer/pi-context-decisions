@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { formatBackendSelection } from "../settings-schema.ts";
 import type { RegistryLike, BackendSelection } from "../core/backends/factory.ts";
 import type { DecisionClient } from "../decision/api.ts";
 import type { ContextDecisionsSettings, ContextDecisionsSettingsSchema, DecisionsSettingsStore, FlatContextDecisionsSettings, SettingsLoadResult } from "../settings.ts";
@@ -116,7 +117,7 @@ export interface Controller {
 export function selectionLabel(selection: BackendSelection | null): string {
   if (!selection) return "not configured";
   if (selection.backend === "pi") return `Pi ${selection.provider}/${selection.id}`;
-  return `${selection.backend} direct ${selection.model ?? (selection.backend === "typesafe" ? "jev-latest" : "gpt-6-luna")}`;
+  return formatBackendSelection(selection);
 }
 export interface ExtensionDependencies {
   settingsPath: string;

@@ -5,7 +5,8 @@ export type PickerSelection =
   | { backend: "pi"; provider: string; id: string }
   | { backend: "typesafe"; model?: string }
   | { backend: "openai"; model?: string }
-  | { backend: "openrouter"; model: string };
+  | { backend: "openrouter"; model: string }
+  | { backend: "gemini"; model?: string };
 export type AuthStatus = "ok" | "missing" | "unknown";
 export interface PickerEntry {
   label: string;
@@ -39,5 +40,6 @@ export function buildPickerEntries(input: PickerInputs): PickerEntry[] {
   });
   for (const model of ["jev-latest", "jev-1.13.0"]) entries.push({ label: `${model} · TypeSafe direct`, selection: { backend: "typesafe", model }, group: "direct", authStatus: input.auth.typesafe ?? "unknown" });
   entries.push({ label: "gpt-6-luna · OpenAI direct", selection: { backend: "openai", model: "gpt-6-luna" }, group: "direct", authStatus: input.auth.openai ?? "unknown" });
+  entries.push({ label: "Gemini Decision 1 · Google direct", selection: { backend: "gemini", model: "gemini-decision-1" }, group: "direct", authStatus: input.auth.gemini ?? "unknown" });
   return entries;
 }

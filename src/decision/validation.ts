@@ -155,7 +155,7 @@ export function validateResponse(request: DecisionRequest, response: unknown): a
   record(response.answers, "Decision answers must be a named map");
   sameKeys(response.answers, Object.keys(request.questions), "Response must answer exactly the requested names");
   for (const [name, question] of Object.entries(request.questions)) validateAnswer(question, response.answers[name]);
-  if (response.backend !== undefined && !["pi", "typesafe", "openai", "openrouter"].includes(response.backend as string)) fail("Response backend must be recognized");
+  if (response.backend !== undefined && !["pi", "typesafe", "openai", "openrouter", "gemini"].includes(response.backend as string)) fail("Response backend must be recognized");
   if (response.requestId !== undefined) text(response.requestId, "Response request id must be nonempty text");
   if (response.provider !== undefined) text(response.provider, "Response provider must be nonempty text");
   if (response.model !== undefined) text(response.model, "Response model must be nonempty text");

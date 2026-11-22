@@ -22,9 +22,9 @@ export const OPENROUTER_DECISION_SNAPSHOT = Object.freeze({
   usageThrough: "2026-11-20",
   metric: "prompt + completion tokens",
   originalCount: 10,
-  // Date of validation supporting Luna's exclusion, not a check of all excluded IDs.
+  // Historical routing check, not a guarantee or an eligibility filter.
   routingCheckedDate: "2026-10-12",
-  excludedIds: Object.freeze(["typesafe/jev-1.13", "perplexity/pplx-decider-v1.2", "openai/gpt-6-luna-decisions"]),
+  excludedIds: Object.freeze(["typesafe/jev-1.13", "perplexity/pplx-decider-v1.2"]),
   source: "openrouter-frontend-rankings-week",
   unofficial: true,
   catalogUrl: "https://openrouter.ai/api/v1/models?output_modalities=decisions",
@@ -38,6 +38,7 @@ export const OPENROUTER_DECISION_MODELS: readonly OpenRouterDecisionModel[] = Ob
   { id: "liquid/d1-ultra", popularityRank: 4, name: "LiquidAI: d1-ultra", canonicalSlug: "liquid/d1-ultra-20261015", weeklyTokens: "275356685190" },
   { id: "perplexity/pplx-decider-v1.3:free", popularityRank: 5, name: "Perplexity: Decider V1.3 (free)", canonicalSlug: "perplexity/pplx-decider-v1.3-20261112", weeklyTokens: "232109682778" },
   { id: "liquid/d1.1", popularityRank: 6, name: "LiquidAI: d1.1", canonicalSlug: "liquid/d1.1-20261027", weeklyTokens: "93715760755" },
+  { id: "openai/gpt-6-luna-decisions", popularityRank: 7, name: "OpenAI: GPT-6 Luna Decisions", canonicalSlug: "openai/gpt-6-luna-decisions-20261006", weeklyTokens: "87507974349" },
   { id: "perplexity/pplx-decider-flash-v1.3:free", popularityRank: 8, name: "Perplexity: Decider Flash V1.3 (free)", canonicalSlug: "perplexity/pplx-decider-flash-v1.3-20261112", weeklyTokens: "60108700793" },
   { id: "nace-ai/drex-max", popularityRank: 9, name: "Nace.AI: Drex Max", canonicalSlug: "nace-ai/drex-max-20261016", weeklyTokens: "41326695423" },
   { id: "google/gemini-decision-1", popularityRank: 10, name: "Google: Gemini Decision 1", canonicalSlug: "google/gemini-decision-1-20261111", weeklyTokens: "39751518937" },

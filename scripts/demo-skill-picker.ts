@@ -13,7 +13,7 @@ import type { DecisionAnswer, DecisionRequest } from "../src/decision/types.ts";
 
 export const DEMO_ROOT = fileURLToPath(new URL("../examples/skill-picker-demo/", import.meta.url));
 export const DEFAULT_DEMO_PROMPT = "Build an accessible React signup form with validation and browser tests.";
-export type DemoBackend = "mock" | "pi" | "typesafe" | "openai" | "openrouter";
+export type DemoBackend = "mock" | "pi" | "typesafe" | "openai" | "openrouter" | "gemini";
 export interface DemoOptions {
   backend: DemoBackend;
   prompt: string;
@@ -121,7 +121,7 @@ export function createDemoMockClient(): RelevanceClient {
   } };
 }
 function validatedOptions(options: DemoOptions): DemoOptions {
-  if (!["mock", "pi", "typesafe", "openai", "openrouter"].includes(options.backend)) throw new DemoError("config", "Unknown demo backend");
+  if (!["mock", "pi", "typesafe", "openai", "openrouter", "gemini"].includes(options.backend)) throw new DemoError("config", "Unknown demo backend");
   if (typeof options.prompt !== "string" || !options.prompt.trim() || options.prompt.length > 4000) throw new DemoError("config", "A bounded nonempty demo prompt is required");
   if (!Number.isFinite(options.threshold) || options.threshold < 0 || options.threshold > 1) throw new DemoError("config", "Threshold must be a normalized score in [0,1]");
   for (const [value, min, max] of [[options.batchSize, 1, 24], [options.maxSkills, 0, 30], [options.concurrency, 1, 4], [options.timeoutMs, 1, 60000]]) {
@@ -164,6 +164,7 @@ function selectionFor(options: DemoOptions): BackendSelection {
   switch (options.backend) {
     case "typesafe": return checked({ backend: "typesafe", model: options.model ?? "jev-latest" });
     case "openai": return checked({ backend: "openai", model: options.model ?? "gpt-6-luna" });
+    case "gemini": return checked({ backend: "gemini", model: options.model });
     case "openrouter": return checked({ backend: "openrouter", model: options.model ?? "typesafe/jev-1.14" });
     case "pi": return checked({ backend: "pi", provider: options.provider ?? "typesafe", id: options.model ?? "jev-latest" });
     default: throw new DemoError("config", "Mock does not need a provider selection");

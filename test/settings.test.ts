@@ -35,7 +35,7 @@ test("every static router ID accepted by direct and native, aliases and unlisted
     assert.deepEqual(validateBackendSelection({ backend: "openrouter", model: id }), { backend: "openrouter", model: id });
     assert.deepEqual(validateBackendSelection({ backend: "pi", provider: "openrouter", id }), { backend: "pi", provider: "openrouter", id });
   }
-  for (const id of ["~typesafe/jev-latest", "respan/span-01", "typesafe/jev-1.13", "perplexity/pplx-decider-v1.2", "microsoft/microsoft-decision-1", "liquid/d1", "typesafe/jev-1.14-20261014", "unknown/model", "openai/gpt-6-luna-decisions", "inception/mercury-decide:free"]) {
+  for (const id of ["~typesafe/jev-latest", "respan/span-01", "typesafe/jev-1.13", "perplexity/pplx-decider-v1.2", "microsoft/microsoft-decision-1", "liquid/d1", "typesafe/jev-1.14-20261014", "unknown/model", "inception/mercury-decide:free"]) {
     assert.throws(() => validateBackendSelection({ backend: "openrouter", model: id }), /outside the checked-in catalog/);
     assert.throws(() => validateBackendSelection({ backend: "pi", provider: "openrouter", id }), /outside the checked-in catalog/);
   }
@@ -44,6 +44,8 @@ test("nonrouter Pi selections remain independent; direct versions and fields val
   assert.deepEqual(validateBackendSelection({ backend: "pi", provider: "custom", id: "nested/id" }), { backend: "pi", provider: "custom", id: "nested/id" });
   assert.deepEqual(validateBackendSelection({ backend: "typesafe" }), { backend: "typesafe", model: "jev-latest" });
   assert.deepEqual(validateBackendSelection({ backend: "openai" }), { backend: "openai", model: "gpt-6-luna" });
+  assert.deepEqual(validateBackendSelection({ backend: "gemini" }), { backend: "gemini", model: "gemini-decision-1" });
+  assert.throws(() => validateBackendSelection({ backend: "gemini", model: "gemini-chat" }), /supported Gemini decision model/);
   for (const value of [{ backend: "openai", model: "chat-model" }, { backend: "typesafe", model: "unknown" }, { backend: "pi", provider: "x", id: "bad\nmodel" }, { backend: "openrouter", model: "typesafe/jev-1.14", url: "https://evil.invalid" }, {}]) assert.throws(() => validateBackendSelection(value), SettingsError);
 });
 test("partial config receives defaults, unknown read fields warn but cannot be saved", () => {

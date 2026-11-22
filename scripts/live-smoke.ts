@@ -3,6 +3,7 @@ import { createDecisionClient } from "../src/decision/api.ts";
 import { DecisionError } from "../src/decision/errors.ts";
 import type { DecisionRequest } from "../src/decision/types.ts";
 import { createTypeSafeBackend } from "../src/core/backends/typesafe.ts";
+import { createGeminiBackend } from "../src/core/backends/gemini.ts";
 import { createOpenAIBackend } from "../src/core/backends/openai.ts";
 import type { AuthRegistryLike } from "../src/core/auth.ts";
 import { createPiCredentialRegistry } from "../src/host/pi-credentials.ts";
@@ -21,14 +22,15 @@ const request: DecisionRequest = {
     relevance: { type: "score", instructions: "How relevant is the text to weather?", criteria: ["Irrelevant", "Related", "Directly relevant"] },
   },
 };
-const selected = process.argv.slice(2).map((id) => id === "openai" || id === "luna" ? "gpt-6-luna" : id);
+const selected = process.argv.slice(2).map((id) => id === "openai" || id === "luna" ? "gpt-6-luna" : id === "gemini" ? "gemini-decision-1" : id);
 const targets = [
   { backend: "typesafe", model: "jev-latest", key: "TYPESAFE_API_KEY" },
   { backend: "openai", model: "gpt-6-luna", key: "OPENAI_API_KEY" },
+  { backend: "gemini", model: "gemini-decision-1", key: "GEMINI_API_KEY" },
   ...OPENROUTER_DECISION_MODELS.map(({ id }) => ({ backend: "openrouter", model: id, key: "OPENROUTER_API_KEY" })),
-].filter(({ backend, model }) => selected.length === 0 ? backend !== "openai" : selected.includes(model));
+].filter(({ backend, model }) => selected.length === 0 ? backend !== "openai" && backend !== "gemini" && model !== "openai/gpt-6-luna-decisions" : selected.includes(model));
 if (!targets.length || selected.some((id) => !targets.some(({ model }) => model === id))) {
-  console.error("Unknown smoke-test model. Only the checked-in catalog, jev-latest, and explicit gpt-6-luna (openai/luna) are allowed.");
+  console.error("Unknown smoke-test model. Only the checked-in catalog, jev-latest, and explicit gpt-6-luna (openai/luna) or gemini-decision-1 (gemini) are allowed.");
   process.exit(2);
 }
 let piRegistry: AuthRegistryLike | undefined;
@@ -75,7 +77,8 @@ for (const target of targets) {
   };
   const deps = { http: { fetch: monitoredFetch }, registry, env: process.env };
   const backend = target.backend === "typesafe" ? createTypeSafeBackend(target.model, deps)
-    : target.backend === "openai" ? createOpenAIBackend(target.model, deps) : createOpenRouterBackend(target.model, deps);
+    : target.backend === "openai" ? createOpenAIBackend(target.model, deps)
+    : target.backend === "gemini" ? createGeminiBackend(target.model, deps) : createOpenRouterBackend(target.model, deps);
   const start = Date.now();
   try {
     const result = await createDecisionClient(backend).decide(request, { timeoutMs: 15000 });

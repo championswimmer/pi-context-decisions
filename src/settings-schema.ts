@@ -12,6 +12,7 @@ import {
   type ViewContentContext,
 } from "pi-extension-settings-tui";
 import type { BackendSelection } from "./core/backends/factory.ts";
+import { GEMINI_DECISION_MODEL } from "./core/codecs/gemini.ts";
 import { isAllowedOpenRouterModel } from "./catalog/openrouter-models.ts";
 import { normalizeAllowlist, normalizeServerAllowlist, normalizeToolAllowlist } from "./apps/allowlist.ts";
 import { DEFAULT_RELEVANCE_THRESHOLD, validThreshold } from "./apps/skill-filter.ts";
@@ -181,7 +182,7 @@ export function defaultSettings(): ContextDecisionsSettings {
 export function formatBackendSelection(selection: BackendSelection | null): string {
   if (!selection) return "Not configured";
   if (selection.backend === "pi") return `Pi ${selection.provider}/${selection.id}`;
-  return `${selection.backend} direct ${selection.model ?? (selection.backend === "typesafe" ? "jev-latest" : "gpt-6-luna")}`;
+  return `${selection.backend} direct ${selection.model ?? (selection.backend === "typesafe" ? "jev-latest" : selection.backend === "gemini" ? GEMINI_DECISION_MODEL : "gpt-6-luna")}`;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -227,6 +228,11 @@ export function validateBackendSelection(value: unknown): BackendSelection | nul
       throw new SettingsError("OpenRouter model is outside the checked-in catalog; select a listed model");
     }
     return { backend: "openrouter", model: value.model };
+  }
+  if (value.backend === "gemini") {
+    checkKeys(value, ["backend", "model"]);
+    if (value.model !== undefined && value.model !== GEMINI_DECISION_MODEL) throw new SettingsError("Select a supported Gemini decision model");
+    return { backend: "gemini", model: GEMINI_DECISION_MODEL };
   }
   if (value.backend === "typesafe" || value.backend === "openai") {
     checkKeys(value, ["backend", "model"]);

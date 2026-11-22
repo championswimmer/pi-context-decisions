@@ -63,7 +63,7 @@ export interface DecisionUsage {
   cost?: number;
 }
 
-export type BackendId = "pi" | "typesafe" | "openai" | "openrouter";
+export type BackendId = "pi" | "typesafe" | "openai" | "openrouter" | "gemini";
 
 export interface DecisionResponse {
   answers: Record<string, DecisionAnswer>;

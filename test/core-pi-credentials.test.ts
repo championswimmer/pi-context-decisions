@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createPiCredentialRegistry } from "../src/host/pi-credentials.ts";
 import { resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey } from "../src/core/auth.ts";
 
@@ -15,6 +19,23 @@ for (const [provider, resolve] of [["openai", resolveOpenAIKey], ["openrouter", 
     assert.deepEqual(queries, [provider]);
   });
 }
+test("Luna routes read distinct stored keys through Pi's public SDK before env fallback", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-luna-auth-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("Network forbidden"); });
+  const options = {authPath: join(root, "auth.json"), modelsPath: null};
+  const runtime = await ModelRuntime.create({...options, refreshOnCreate: false, allowModelNetwork: false});
+  await runtime.login("openai", "api_key", {async prompt() { return "stored-openai-fixture"; }, notify() {}});
+  await runtime.login("openrouter", "api_key", {async prompt() { return "stored-router-fixture"; }, notify() {}});
+  const native = new ModelRegistry(await ModelRuntime.create({...options, refreshOnCreate: false, allowModelNetwork: false}));
+  const standalone = await createPiCredentialRegistry(options);
+  for (const registry of [native, standalone]) {
+    const env = {OPENAI_API_KEY: "env-openai-fixture", OPENROUTER_API_KEY: "env-router-fixture"};
+    assert.deepEqual(await resolveOpenAIKey({registry, env}), {key: "stored-openai-fixture", source: "pi"});
+    assert.deepEqual(await resolveOpenRouterKey({registry, env}), {key: "stored-router-fixture", source: "pi"});
+  }
+  assert.equal(fetch.mock.callCount(), 0);
+});
 test("standalone adapter never refreshes stored OpenAI OAuth; router OAuth still resolves", async () => {
   const queries: string[] = [];
   const registry = await createPiCredentialRegistry({runtime: {

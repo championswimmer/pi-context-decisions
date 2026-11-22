@@ -38,8 +38,8 @@ pi install npm:pi-context-decisions
 Keep this package first or near the start of your configured extensions. In Pi:
 
 1. Run `/decisions`.
-2. Open **Advanced**, choose **Provider / execution**, then **Model**. Supported backends are Pi classifiers, TypeSafe, OpenAI and OpenRouter.
-3. If credentials are missing, configure the matching `TYPESAFE_API_KEY`, `OPENAI_API_KEY` or `OPENROUTER_API_KEY`, or use Pi's `/login <provider>`. OpenAI needs an API key, not Codex/ChatGPT OAuth.
+2. Open **Decision** → **Decision model**. Supported backends are Pi classifiers, TypeSafe, OpenAI, Google Gemini, and OpenRouter.
+3. The direct routes use Pi's matching provider credential first. If it is missing, set `TYPESAFE_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `OPENROUTER_API_KEY` for the selected route. OpenAI and Gemini direct require API keys, not OAuth.
 4. In **Skills**, leave **Skill filtering** on. Optionally choose skills under **Always allowed · Global** or **Always allowed · Project**; save allowlist edits with **Ctrl+S**.
 5. Close the dialog and start a fresh session before sending your first task.
 
