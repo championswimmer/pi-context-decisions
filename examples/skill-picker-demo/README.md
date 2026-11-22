@@ -49,7 +49,7 @@ Both `--live` and `PI_CONTEXT_DECISIONS_LIVE=1` are required. Choosing a non-moc
 ```bash
 PI_CONTEXT_DECISIONS_LIVE=1 npm run demo -- --live --backend typesafe --model jev-latest --batch-size 10
 PI_CONTEXT_DECISIONS_LIVE=1 npm run demo -- --live --backend openai --model gpt-6-luna --batch-size 10
-PI_CONTEXT_DECISIONS_LIVE=1 npm run demo -- --live --backend openrouter --model typesafe/jev-1.13 --batch-size 10
+PI_CONTEXT_DECISIONS_LIVE=1 npm run demo -- --live --backend openrouter --model typesafe/jev-1.14 --batch-size 10
 PI_CONTEXT_DECISIONS_LIVE=1 npm run demo -- --live --backend pi --provider typesafe --model jev-latest --batch-size 10
 ```
 

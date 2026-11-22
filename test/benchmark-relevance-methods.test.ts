@@ -54,7 +54,7 @@ async function withTemp<T>(run: (output: string) => Promise<T>): Promise<T> {
   try { return await run(join(dir, "report.json")); } finally { await rm(dir, { recursive: true, force: true }); }
 }
 const config = (output: string, extra: Partial<BenchmarkConfig> = {}): BenchmarkConfig => ({
-  models: ["typesafe/jev-1.13", "liquid/d1"], trials: 2, shortlistTrials: 1, maxRequests: 100, maxCostUsd: 5, timeoutMs: 5000, retryFailed: false, output, ...extra,
+  models: ["typesafe/jev-1.14", "liquid/d1-ultra"], trials: 2, shortlistTrials: 1, maxRequests: 100, maxCostUsd: 5, timeoutMs: 5000, retryFailed: false, output, ...extra,
 });
 
 test("benchmark fixture: at least three cases incl. multi-skill and unrelated, all names real demo skills", () => {
@@ -65,12 +65,11 @@ test("benchmark fixture: at least three cases incl. multi-skill and unrelated, a
   assert.throws(() => validateCases(bad, skills), BenchmarkError);
   assert.throws(() => validateCases({ cases: cases.slice(0, 2) }, skills), BenchmarkError);
 });
-test("default models are five distinct entries of the static retained catalog", () => {
-  const catalog = new Set(OPENROUTER_DECISION_MODELS.map((m) => m.id));
-  assert.equal(DEFAULT_MODELS.length, 5); assert.equal(new Set(DEFAULT_MODELS).size, 5);
-  assert.ok(DEFAULT_MODELS.every((id) => catalog.has(id)));
+test("default models are the five highest-ranked retained models", () => {
+  assert.equal(new Set(DEFAULT_MODELS).size, 5);
+  assert.deepEqual(DEFAULT_MODELS, OPENROUTER_DECISION_MODELS.slice(0, 5).map(({ id }) => id));
   assert.throws(() => parseArgs(["--models", "openai/gpt-6-luna-decisions"]), BenchmarkError);
-  assert.throws(() => parseArgs(["--models", "typesafe/jev-1.13,typesafe/jev-1.13"]), BenchmarkError);
+  assert.throws(() => parseArgs(["--models", "typesafe/jev-1.14,typesafe/jev-1.14"]), BenchmarkError);
 });
 test("default plan fits the 100-request budget: 5 models x 4 cases x (2 trials x 2 arms + 1 shortlist)", () => {
   const { config: defaults } = parseArgs([]);
@@ -150,7 +149,7 @@ test("every score and choice run evaluates all thirty candidates in identical bo
 });
 test("results are resumable and idempotent; failures are recorded not retried unless asked", async () => {
   await withTemp(async (output) => {
-    const failing = fakeFactory({ fail: (model) => model === "liquid/d1" });
+    const failing = fakeFactory({ fail: (model) => model === "liquid/d1-ultra" });
     const first = await runBenchmark(config(output), { env: LIVE, createClient: failing.createClient, baseFetch: failing.baseFetch, skills });
     assert.equal(first.records.filter((r) => r.outcome === "error").length, cases.length * 5);
     assert.ok(first.records.filter((r) => r.outcome === "error").every((r) => r.errorCode === "http" && r.selected.length === 0));
@@ -176,7 +175,7 @@ test("summary: per-arm quality, shortlist hit@1, sweep and render are consistent
   await withTemp(async (output) => {
     const fake = fakeFactory();
     let clock = 0;
-    const report = await runBenchmark(config(output, { models: ["typesafe/jev-1.13"] }), { env: LIVE, createClient: fake.createClient, baseFetch: fake.baseFetch, skills, now: () => (clock += 10) });
+    const report = await runBenchmark(config(output, { models: ["typesafe/jev-1.14"] }), { env: LIVE, createClient: fake.createClient, baseFetch: fake.baseFetch, skills, now: () => (clock += 10) });
     const stats = summarize(report);
     assert.deepEqual(stats.map((s) => s.arm), ["choice-label", "choice-shortlist", "score"]);
     const score = stats.find((s) => s.arm === "score")!;
@@ -223,7 +222,7 @@ test("argmax-versus-threshold diagnostic compares ALL items; an integer derived 
 });
 
 // ---------- resume safety ----------
-const SMALL = { models: ["liquid/d1"], trials: 1, shortlistTrials: 0 };
+const SMALL = { models: ["liquid/d1-ultra"], trials: 1, shortlistTrials: 0 };
 const failingEveryTime = () => fakeFactory({ fail: () => true });
 test("--retry-failed preserves attempt history: cumulative requests/failures survive repeated failure and resume, and the request cap keeps binding", async () => {
   await withTemp(async (output) => {
@@ -302,7 +301,7 @@ test("resume may extend the file with new models, trials or cases without touchi
     const base = { env: LIVE, createClient: fake.createClient, baseFetch: fake.baseFetch, skills };
     await runBenchmark(config(output, SMALL), { ...base, cases });
     const extra: BenchmarkCase = { ...cases[0], id: "react-signup-variant", task: cases[0].task.replace("Build", "Create") };
-    const extended = await runBenchmark(config(output, { ...SMALL, models: ["liquid/d1", "typesafe/jev-1.13"] }), { ...base, cases: [...cases, extra] });
+    const extended = await runBenchmark(config(output, { ...SMALL, models: ["liquid/d1-ultra", "typesafe/jev-1.14"] }), { ...base, cases: [...cases, extra] });
     assert.deepEqual(extended.cases.map((c) => c.id), [...cases.map((c) => c.id), "react-signup-variant"]);
     assert.deepEqual(extended.cases.slice(0, cases.length), cases);
     assert.equal(extended.records.length, (cases.length + 1) * 2 * 2);

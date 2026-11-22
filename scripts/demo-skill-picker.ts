@@ -164,7 +164,7 @@ function selectionFor(options: DemoOptions): BackendSelection {
   switch (options.backend) {
     case "typesafe": return checked({ backend: "typesafe", model: options.model ?? "jev-latest" });
     case "openai": return checked({ backend: "openai", model: options.model ?? "gpt-6-luna" });
-    case "openrouter": return checked({ backend: "openrouter", model: options.model ?? "typesafe/jev-1.13" });
+    case "openrouter": return checked({ backend: "openrouter", model: options.model ?? "typesafe/jev-1.14" });
     case "pi": return checked({ backend: "pi", provider: options.provider ?? "typesafe", id: options.model ?? "jev-latest" });
     default: throw new DemoError("config", "Mock does not need a provider selection");
   }

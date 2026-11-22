@@ -21,7 +21,7 @@ async function fixture(t: { after(fn: () => Promise<void>): void }, options: { u
   const inputs: (string | undefined)[] = [];
   const lookups: string[] = [];
   let inference = 0;
-  const models = [{ provider: "custom", id: "local" }, { provider: "openai", id: "gpt-6-luna" }, { provider: "openrouter", id: "typesafe/jev-1.13" }];
+  const models = [{ provider: "custom", id: "local" }, { provider: "openai", id: "gpt-6-luna" }, { provider: "openrouter", id: "typesafe/jev-1.14" }];
   const registry: ExtensionRegistry = {
     getModelsOfType(type, provider) { return type === "classifier" ? models.filter((m) => !provider || m.provider === provider) : []; },
     findOfType(_type, provider, id) { return models.find((m) => m.provider === provider && m.id === id); },
@@ -112,7 +112,7 @@ test("RPC enable/disable, batch size and all-parallel settings persist with boun
 for (const [provider, model, variable] of [
   ["openai", "gpt-6-luna", "OPENAI_API_KEY"],
   ["typesafe", "jev-latest", "TYPESAFE_API_KEY"],
-  ["openrouter", "typesafe/jev-1.13", "OPENROUTER_API_KEY"],
+  ["openrouter", "typesafe/jev-1.14", "OPENROUTER_API_KEY"],
 ] as const) test(`missing ${provider} credentials never persist or enable an unusable selection`, async (t) => {
   const h = await fixture(t);
   await h.set("enabled");
@@ -160,7 +160,7 @@ test("picker UI separates direct, OpenRouter and Pi native groups and does not r
   h.dialogs.length = 0;
   await h.menu(
     row("[Decision] Decision model:"),
-    (choices) => choices.find((label) => label.includes("— openrouter direct typesafe/jev-1.13")),
+    (choices) => choices.find((label) => label.includes("— openrouter direct typesafe/jev-1.14")),
   );
   const picker = h.dialogs.find((dialog) => dialog.title === "Decision model")!;
   assert.ok(picker.options.some((label) => label.includes("[Pi internal classifiers]")));
@@ -168,7 +168,7 @@ test("picker UI separates direct, OpenRouter and Pi native groups and does not r
   assert.ok(picker.options.some((label) => label.includes("OpenAI direct")));
   assert.equal(picker.options.filter((label) => label.includes("OpenRouter direct")).length, OPENROUTER_DECISION_MODELS.length);
   const settings = (await loadSettings(h.path)).settings;
-  assert.deepEqual(settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" }); assert.equal(settings.relevance.enabled, false);
+  assert.deepEqual(settings.backend, { backend: "openrouter", model: "typesafe/jev-1.14" }); assert.equal(settings.relevance.enabled, false);
   assert.doesNotMatch(JSON.stringify(h.messages), /FIXTURE/); assert.equal(h.inference(), 0);
 });
 
@@ -193,7 +193,7 @@ test("all direct and native provider choices require available keys, are atomic 
   for (const [label, selection] of [
     ["typesafe direct jev-latest", { backend: "typesafe", model: "jev-latest" }],
     ["openai direct gpt-6-luna", { backend: "openai", model: "gpt-6-luna" }],
-    ["openrouter direct typesafe/jev-1.13", { backend: "openrouter", model: "typesafe/jev-1.13" }],
+    ["openrouter direct typesafe/jev-1.14", { backend: "openrouter", model: "typesafe/jev-1.14" }],
     ["Pi custom/local", { backend: "pi", provider: "custom", id: "local" }],
   ] as const) {
     await h.model(label); assert.deepEqual((await loadSettings(h.path)).settings.backend, selection);

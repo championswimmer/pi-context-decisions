@@ -12,4 +12,8 @@ Start with the [README](../README.md) for installation and everyday use.
 | [Development](development.md) | Offline checks and opt-in live smoke tests |
 | [Publishing](publishing.md) | Authorized releases, trusted publishing and changelog automation |
 
-Existing benchmark material lives in [benchmarks/](benchmarks/).
+## Benchmarks
+
+- [OpenRouter decision models vs. a manual skill baseline](benchmarks/decision-models-2026-11-22.md): coverage, latency, quality, threshold sweep, and raw scores (November 22, 2026).
+- [Threshold comparison graphs: 0.30, 0.40, and 0.50](benchmarks/decision-thresholds-2026-11-22.md): off-topic picks, missed required skills, and picking quality vs. latency and cost.
+- [Per-skill choice vs. score](benchmarks/relevance-choice-vs-score.md): historical comparison of selection methods (October 13, 2026).

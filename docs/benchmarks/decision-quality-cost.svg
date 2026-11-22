@@ -1,0 +1,223 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1010" height="652" viewBox="0 0 1010 652" role="img" aria-labelledby="title desc">
+<title id="title">Picking quality vs. reported cost</title>
+<desc id="desc">Higher is better. Each model has three threshold settings at the same measured latency or cost. Circle is 0.30, diamond is 0.40, and filled square is 0.50. Positive costs use a log scale; reported zeros have a separate lane. The benchmark page contains the exact values.</desc>
+<style>text{font:14px system-ui,sans-serif;fill:#1e293b}.title{font-size:25px;font-weight:700}.head{font-size:16px;font-weight:700}.muted{font-size:13px;fill:#475569}.label{font:12px ui-monospace,Menlo,monospace}</style>
+<rect width="1010" height="652" fill="#fff"/>
+<text x="24" y="36" class="title" >Picking quality vs. reported cost</text>
+<text x="24" y="61" class="muted" >Higher is better. Each model has three threshold settings at the same measured latency or cost.</text>
+<text x="82" y="107" class="head" >Picking quality (100 = ideal)</text>
+<text x="652" y="107" class="head" >Model</text>
+<rect x="82" y="124" width="535" height="398" rx="5" fill="#f5f8fc" stroke="#d5dce5"/>
+<rect x="83" y="125" width="85" height="396" fill="#e8eef7"/>
+<path d="M 82 512 H 617" stroke="#c9d3e1"/>
+<text x="70" y="517" class="muted" text-anchor="end">60</text>
+<path d="M 82 418.5 H 617" stroke="#c9d3e1"/>
+<text x="70" y="423.5" class="muted" text-anchor="end">70</text>
+<path d="M 82 325 H 617" stroke="#c9d3e1"/>
+<text x="70" y="330" class="muted" text-anchor="end">80</text>
+<path d="M 82 231.5 H 617" stroke="#c9d3e1"/>
+<text x="70" y="236.5" class="muted" text-anchor="end">90</text>
+<path d="M 82 138 H 617" stroke="#c9d3e1"/>
+<text x="70" y="143" class="muted" text-anchor="end">100</text>
+<path d="M 194 124 V 522" stroke="#d5dce5"/>
+<text x="194" y="545" class="muted" text-anchor="middle">$0.0003</text>
+<path d="M 335.8030965827333 124 V 522" stroke="#d5dce5"/>
+<text x="335.8030965827333" y="545" class="muted" text-anchor="middle">$0.001</text>
+<path d="M 465.1969034172667 124 V 522" stroke="#d5dce5"/>
+<text x="465.1969034172667" y="545" class="muted" text-anchor="middle">$0.003</text>
+<path d="M 607 124 V 522" stroke="#d5dce5"/>
+<text x="607" y="545" class="muted" text-anchor="middle">$0.01</text>
+<text x="125" y="545" class="muted" text-anchor="middle">$0 reported</text>
+<text x="349.5" y="568" class="muted" text-anchor="middle">Reported USD per 10 tasks (log scale for positive costs)</text>
+<g data-model="baseten/elephant-1" fill="hsl(206, 76%, 43%)" stroke="hsl(206, 76%, 43%)"><title>baseten/elephant-1 · $0.001546 · quality 95.5 / 96.6 / 98.9</title>
+<path d="M 387.14964011947484 180.5 V 148.62500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="387.14964011947484" cy="180.5" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 387.14964011947484 164.67499999999995 L 392.3496401194748 169.87499999999994 L 387.14964011947484 175.07499999999993 L 381.94964011947485 169.87499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="384.5496401194748" y="146.02500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="126" width="18" height="10" rx="2" fill="hsl(206, 76%, 43%)"/>
+<text x="680" y="135" class="label" >baseten/elephant-1</text>
+<g data-model="baseten/groundhog-1" fill="hsl(344, 64%, 36%)" stroke="hsl(344, 64%, 36%)"><title>baseten/groundhog-1 · $0.001563 · quality 97.7 / 97.7 / 94.3</title>
+<path d="M 388.40115658692633 191.12500000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="388.40115658692633" cy="159.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 388.40115658692633 154.04999999999995 L 393.6011565869263 159.24999999999994 L 388.40115658692633 164.44999999999993 L 383.20115658692634 159.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="385.8011565869263" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="145" width="18" height="10" rx="2" fill="hsl(344, 64%, 36%)"/>
+<text x="680" y="154" class="label" >baseten/groundhog-1</text>
+<g data-model="baseten/joey-1" fill="hsl(121, 76%, 43%)" stroke="hsl(121, 76%, 43%)"><title>baseten/joey-1 · $0.000442 · quality 88.6 / 92.0 / 94.3</title>
+<path d="M 239.60007124339197 244.24999999999994 V 191.12500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="239.60007124339197" cy="244.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 239.60007124339197 207.175 L 244.80007124339195 212.375 L 239.60007124339197 217.575 L 234.40007124339198 212.375 Z" fill="none" stroke-width="1.6"/>
+<rect x="237.00007124339197" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="164" width="18" height="10" rx="2" fill="hsl(121, 76%, 43%)"/>
+<text x="680" y="173" class="label" >baseten/joey-1</text>
+<g data-model="baseten/mammoth-1" fill="hsl(259, 64%, 36%)" stroke="hsl(259, 64%, 36%)"><title>baseten/mammoth-1 · $0.004418 · quality 92.0 / 95.5 / 100.0</title>
+<path d="M 510.79697466065863 212.375 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="510.79697466065863" cy="212.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 510.79697466065863 175.3 L 515.9969746606587 180.5 L 510.79697466065863 185.7 L 505.59697466065865 180.5 Z" fill="none" stroke-width="1.6"/>
+<rect x="508.1969746606586" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="183" width="18" height="10" rx="2" fill="hsl(259, 64%, 36%)"/>
+<text x="680" y="192" class="label" >baseten/mammoth-1</text>
+<g data-model="cloudflare/clef" fill="hsl(36, 76%, 43%)" stroke="hsl(36, 76%, 43%)"><title>cloudflare/clef · $0.000000 · quality 88.6 / 93.2 / 92.0</title>
+<path d="M 92 244.24999999999994 V 201.74999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="92" cy="244.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 92 196.54999999999995 L 97.2 201.74999999999994 L 92 206.94999999999993 L 86.8 201.74999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="89.4" y="209.775" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="202" width="18" height="10" rx="2" fill="hsl(36, 76%, 43%)"/>
+<text x="680" y="211" class="label" >cloudflare/clef</text>
+<g data-model="cloudflare/clef-flash" fill="hsl(174, 64%, 36%)" stroke="hsl(174, 64%, 36%)"><title>cloudflare/clef-flash · $0.000000 · quality 83.0 / 90.9 / 95.5</title>
+<path d="M 101.42857142857143 297.375 V 180.5" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="101.42857142857143" cy="297.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 101.42857142857143 217.80000000000007 L 106.62857142857143 223.00000000000006 L 101.42857142857143 228.20000000000005 L 96.22857142857143 223.00000000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="98.82857142857144" y="177.9" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="221" width="18" height="10" rx="2" fill="hsl(174, 64%, 36%)"/>
+<text x="680" y="230" class="label" >cloudflare/clef-flash</text>
+<g data-model="cloudflare/clef-omni" fill="hsl(311, 76%, 43%)" stroke="hsl(311, 76%, 43%)"><title>cloudflare/clef-omni · $0.007424 · quality 96.6 / 98.9 / 100.0</title>
+<path d="M 571.9190026594509 169.87499999999994 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="571.9190026594509" cy="169.87499999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 571.9190026594509 143.42500000000007 L 577.119002659451 148.62500000000006 L 571.9190026594509 153.82500000000005 L 566.7190026594509 148.62500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="569.3190026594509" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="240" width="18" height="10" rx="2" fill="hsl(311, 76%, 43%)"/>
+<text x="680" y="249" class="label" >cloudflare/clef-omni</text>
+<g data-model="liquid/d1-ultra" fill="hsl(89, 64%, 36%)" stroke="hsl(89, 64%, 36%)"><title>liquid/d1-ultra · $0.001675 · quality 68.2 / 85.2 / 94.3</title>
+<path d="M 396.58784185762994 435.49999999999994 V 191.12500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="396.58784185762994" cy="435.49999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 396.58784185762994 270.92499999999995 L 401.7878418576299 276.12499999999994 L 396.58784185762994 281.32499999999993 L 391.38784185762995 276.12499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="393.9878418576299" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="259" width="18" height="10" rx="2" fill="hsl(89, 64%, 36%)"/>
+<text x="680" y="268" class="label" >liquid/d1-ultra</text>
+<g data-model="liquid/d1.1" fill="hsl(226, 76%, 43%)" stroke="hsl(226, 76%, 43%)"><title>liquid/d1.1 · $0.000798 · quality 92.0 / 97.7 / 100.0</title>
+<path d="M 309.20296690449544 212.375 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="309.20296690449544" cy="212.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 309.20296690449544 154.04999999999995 L 314.40296690449543 159.24999999999994 L 309.20296690449544 164.44999999999993 L 304.00296690449545 159.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="306.6029669044954" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="278" width="18" height="10" rx="2" fill="hsl(226, 76%, 43%)"/>
+<text x="680" y="287" class="label" >liquid/d1.1</text>
+<g data-model="liquid/d1.2" fill="hsl(4, 64%, 36%)" stroke="hsl(4, 64%, 36%)"><title>liquid/d1.2 · $0.000798 · quality 84.1 / 94.3 / 98.9</title>
+<path d="M 309.20296690449544 286.74999999999994 V 148.62500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="309.20296690449544" cy="286.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 309.20296690449544 185.92500000000007 L 314.40296690449543 191.12500000000006 L 309.20296690449544 196.32500000000005 L 304.00296690449545 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="306.6029669044954" y="146.02500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="297" width="18" height="10" rx="2" fill="hsl(4, 64%, 36%)"/>
+<text x="680" y="306" class="label" >liquid/d1.2</text>
+<g data-model="liquid/d1.2-ultra" fill="hsl(141, 76%, 43%)" stroke="hsl(141, 76%, 43%)"><title>liquid/d1.2-ultra · $0.001675 · quality 89.8 / 95.5 / 100.0</title>
+<path d="M 396.58784185762994 233.62500000000006 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="396.58784185762994" cy="233.62500000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 396.58784185762994 175.3 L 401.7878418576299 180.5 L 396.58784185762994 185.7 L 391.38784185762995 180.5 Z" fill="none" stroke-width="1.6"/>
+<rect x="393.9878418576299" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="316" width="18" height="10" rx="2" fill="hsl(141, 76%, 43%)"/>
+<text x="680" y="325" class="label" >liquid/d1.2-ultra</text>
+<g data-model="microsoft/microsoft-decision-1" fill="hsl(279, 64%, 36%)" stroke="hsl(279, 64%, 36%)"><title>microsoft/microsoft-decision-1 · $0.001333 · quality 68.2 / 75.0 / 92.0</title>
+<path d="M 369.67855695015294 435.49999999999994 V 212.375" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="369.67855695015294" cy="435.49999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 369.67855695015294 366.55 L 374.8785569501529 371.75 L 369.67855695015294 376.95 L 364.47855695015295 371.75 Z" fill="none" stroke-width="1.6"/>
+<rect x="367.0785569501529" y="209.775" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="335" width="18" height="10" rx="2" fill="hsl(279, 64%, 36%)"/>
+<text x="680" y="344" class="label" >microsoft/microsoft-decision-1</text>
+<g data-model="microsoft/microsoft-decision-1.1" fill="hsl(56, 76%, 43%)" stroke="hsl(56, 76%, 43%)"><title>microsoft/microsoft-decision-1.1 · $0.001577 · quality 69.3 / 85.2 / 93.2</title>
+<path d="M 389.41798695874775 424.87500000000006 V 201.74999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="389.41798695874775" cy="424.87500000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 389.41798695874775 270.92499999999995 L 394.61798695874774 276.12499999999994 L 389.41798695874775 281.32499999999993 L 384.21798695874776 276.12499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="386.8179869587477" y="199.14999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="354" width="18" height="10" rx="2" fill="hsl(56, 76%, 43%)"/>
+<text x="680" y="363" class="label" >microsoft/microsoft-decision-1.1</text>
+<g data-model="nace-ai/drex-max" fill="hsl(194, 64%, 36%)" stroke="hsl(194, 64%, 36%)"><title>nace-ai/drex-max · $0.000000 · quality 93.2 / 94.3 / 95.5</title>
+<path d="M 110.85714285714286 201.74999999999994 V 180.5" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="110.85714285714286" cy="201.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 110.85714285714286 185.92500000000007 L 116.05714285714286 191.12500000000006 L 110.85714285714286 196.32500000000005 L 105.65714285714286 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="108.25714285714287" y="177.9" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="373" width="18" height="10" rx="2" fill="hsl(194, 64%, 36%)"/>
+<text x="680" y="382" class="label" >nace-ai/drex-max</text>
+<g data-model="nace-ai/drex-max-finance" fill="hsl(331, 76%, 43%)" stroke="hsl(331, 76%, 43%)"><title>nace-ai/drex-max-finance · $0.000000 · quality 97.7 / 94.3 / 95.5</title>
+<path d="M 120.28571428571428 191.12500000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="120.28571428571428" cy="159.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 120.28571428571428 185.92500000000007 L 125.48571428571428 191.12500000000006 L 120.28571428571428 196.32500000000005 L 115.08571428571427 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="117.68571428571428" y="177.9" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="392" width="18" height="10" rx="2" fill="hsl(331, 76%, 43%)"/>
+<text x="680" y="401" class="label" >nace-ai/drex-max-finance</text>
+<g data-model="nace-ai/drex-v1.5" fill="hsl(109, 64%, 36%)" stroke="hsl(109, 64%, 36%)"><title>nace-ai/drex-v1.5 · $0.000000 · quality 87.5 / 93.2 / 94.3</title>
+<path d="M 129.71428571428572 254.875 V 191.12500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="129.71428571428572" cy="254.875" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 129.71428571428572 196.54999999999995 L 134.9142857142857 201.74999999999994 L 129.71428571428572 206.94999999999993 L 124.51428571428572 201.74999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="127.11428571428573" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="411" width="18" height="10" rx="2" fill="hsl(109, 64%, 36%)"/>
+<text x="680" y="420" class="label" >nace-ai/drex-v1.5</text>
+<g data-model="nace-ai/drex-v2.0" fill="hsl(246, 76%, 43%)" stroke="hsl(246, 76%, 43%)"><title>nace-ai/drex-v2.0 · $0.000000 · quality 93.2 / 97.7 / 97.7</title>
+<path d="M 139.14285714285714 201.74999999999994 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="139.14285714285714" cy="201.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 139.14285714285714 154.04999999999995 L 144.34285714285713 159.24999999999994 L 139.14285714285714 164.44999999999993 L 133.94285714285715 159.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="136.54285714285714" y="156.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="430" width="18" height="10" rx="2" fill="hsl(246, 76%, 43%)"/>
+<text x="680" y="439" class="label" >nace-ai/drex-v2.0</text>
+<g data-model="perplexity/pplx-decider-flash-v1.2" fill="hsl(24, 64%, 36%)" stroke="hsl(24, 64%, 36%)"><title>perplexity/pplx-decider-flash-v1.2 · $0.000357 · quality 89.8 / 94.3 / 97.7</title>
+<path d="M 214.63317479545154 233.62500000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="214.63317479545154" cy="233.62500000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 214.63317479545154 185.92500000000007 L 219.83317479545153 191.12500000000006 L 214.63317479545154 196.32500000000005 L 209.43317479545155 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="212.03317479545154" y="156.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="449" width="18" height="10" rx="2" fill="hsl(24, 64%, 36%)"/>
+<text x="680" y="458" class="label" >perplexity/pplx-decider-flash-v1.2</text>
+<g data-model="perplexity/pplx-decider-flash-v1.3:free" fill="hsl(161, 76%, 43%)" stroke="hsl(161, 76%, 43%)"><title>perplexity/pplx-decider-flash-v1.3:free · $0.000000 · quality 90.9 / 94.3 / 97.7</title>
+<path d="M 148.57142857142856 223.00000000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="148.57142857142856" cy="223.00000000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 148.57142857142856 185.92500000000007 L 153.77142857142854 191.12500000000006 L 148.57142857142856 196.32500000000005 L 143.37142857142857 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="145.97142857142856" y="156.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="468" width="18" height="10" rx="2" fill="hsl(161, 76%, 43%)"/>
+<text x="680" y="477" class="label" >perplexity/pplx-decider-flash-v1.3:free</text>
+<g data-model="perplexity/pplx-decider-v1.2" fill="hsl(299, 64%, 36%)" stroke="hsl(299, 64%, 36%)"><title>perplexity/pplx-decider-v1.2 · $0.000715 · quality 92.0 / 96.6 / 98.9</title>
+<path d="M 296.27157745523647 212.375 V 148.62500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="296.27157745523647" cy="212.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 296.27157745523647 164.67499999999995 L 301.47157745523646 169.87499999999994 L 296.27157745523647 175.07499999999993 L 291.0715774552365 169.87499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="293.67157745523645" y="146.02500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="487" width="18" height="10" rx="2" fill="hsl(299, 64%, 36%)"/>
+<text x="680" y="496" class="label" >perplexity/pplx-decider-v1.2</text>
+<g data-model="perplexity/pplx-decider-v1.3:free" fill="hsl(76, 76%, 43%)" stroke="hsl(76, 76%, 43%)"><title>perplexity/pplx-decider-v1.3:free · $0.000000 · quality 84.1 / 88.6 / 100.0</title>
+<path d="M 158 286.74999999999994 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="158" cy="286.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 158 239.04999999999995 L 163.2 244.24999999999994 L 158 249.44999999999993 L 152.8 244.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="155.4" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="506" width="18" height="10" rx="2" fill="hsl(76, 76%, 43%)"/>
+<text x="680" y="515" class="label" >perplexity/pplx-decider-v1.3:free</text>
+<g data-model="typesafe/jev-1.13" fill="hsl(214, 64%, 36%)" stroke="hsl(214, 64%, 36%)"><title>typesafe/jev-1.13 · $0.001920 · quality 63.6 / 78.4 / 88.6</title>
+<path d="M 412.6482340362015 478 V 244.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="412.6482340362015" cy="478" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 412.6482340362015 334.675 L 417.84823403620146 339.875 L 412.6482340362015 345.075 L 407.4482340362015 339.875 Z" fill="none" stroke-width="1.6"/>
+<rect x="410.04823403620145" y="241.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="525" width="18" height="10" rx="2" fill="hsl(214, 64%, 36%)"/>
+<text x="680" y="534" class="label" >typesafe/jev-1.13</text>
+<g data-model="typesafe/jev-1.14" fill="hsl(351, 76%, 43%)" stroke="hsl(351, 76%, 43%)"><title>typesafe/jev-1.14 · $0.001920 · quality 63.6 / 75.0 / 88.6</title>
+<path d="M 412.6482340362015 478 V 244.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="412.6482340362015" cy="478" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 412.6482340362015 366.55 L 417.84823403620146 371.75 L 412.6482340362015 376.95 L 407.4482340362015 371.75 Z" fill="none" stroke-width="1.6"/>
+<rect x="410.04823403620145" y="241.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="544" width="18" height="10" rx="2" fill="hsl(351, 76%, 43%)"/>
+<text x="680" y="553" class="label" >typesafe/jev-1.14</text>
+<g fill="#334155" stroke="#334155"><circle cx="89" cy="598" r="6.4" fill="none" stroke-width="1.7"/></g>
+<text x="102" y="603" class="muted" >0.30</text>
+<g fill="#334155" stroke="#334155"><path d="M 201 592.8 L 206.2 598 L 201 603.2 L 195.8 598 Z" fill="none" stroke-width="1.6"/></g>
+<text x="214" y="603" class="muted" >0.40</text>
+<g fill="#334155" stroke="#334155"><rect x="310.4" y="595.4" width="5.2" height="5.2" stroke="none"/></g>
+<text x="326" y="603" class="muted" >0.50</text>
+<text x="24" y="631" class="muted" >Zero-cost markers are spaced within their own lane; spacing does not imply a cost difference.</text>
+</svg>

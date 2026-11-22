@@ -1,0 +1,229 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1010" height="652" viewBox="0 0 1010 652" role="img" aria-labelledby="title desc">
+<title id="title">Picking quality vs. latency</title>
+<desc id="desc">Higher is better. Each model has three threshold settings at the same measured latency or cost. Circle is 0.30, diamond is 0.40, and filled square is 0.50. Latency is median elapsed time per task. The benchmark page contains the exact values.</desc>
+<style>text{font:14px system-ui,sans-serif;fill:#1e293b}.title{font-size:25px;font-weight:700}.head{font-size:16px;font-weight:700}.muted{font-size:13px;fill:#475569}.label{font:12px ui-monospace,Menlo,monospace}</style>
+<rect width="1010" height="652" fill="#fff"/>
+<text x="24" y="36" class="title" >Picking quality vs. latency</text>
+<text x="24" y="61" class="muted" >Higher is better. Each model has three threshold settings at the same measured latency or cost.</text>
+<text x="82" y="107" class="head" >Picking quality (100 = ideal)</text>
+<text x="652" y="107" class="head" >Model</text>
+<rect x="82" y="124" width="535" height="398" rx="5" fill="#f5f8fc" stroke="#d5dce5"/>
+<path d="M 82 512 H 617" stroke="#c9d3e1"/>
+<text x="70" y="517" class="muted" text-anchor="end">60</text>
+<path d="M 82 418.5 H 617" stroke="#c9d3e1"/>
+<text x="70" y="423.5" class="muted" text-anchor="end">70</text>
+<path d="M 82 325 H 617" stroke="#c9d3e1"/>
+<text x="70" y="330" class="muted" text-anchor="end">80</text>
+<path d="M 82 231.5 H 617" stroke="#c9d3e1"/>
+<text x="70" y="236.5" class="muted" text-anchor="end">90</text>
+<path d="M 82 138 H 617" stroke="#c9d3e1"/>
+<text x="70" y="143" class="muted" text-anchor="end">100</text>
+<path d="M 82 124 V 522" stroke="#d5dce5"/>
+<text x="82" y="545" class="muted" text-anchor="middle">100</text>
+<path d="M 157 124 V 522" stroke="#d5dce5"/>
+<text x="157" y="545" class="muted" text-anchor="middle">200</text>
+<path d="M 232 124 V 522" stroke="#d5dce5"/>
+<text x="232" y="545" class="muted" text-anchor="middle">300</text>
+<path d="M 307 124 V 522" stroke="#d5dce5"/>
+<text x="307" y="545" class="muted" text-anchor="middle">400</text>
+<path d="M 382 124 V 522" stroke="#d5dce5"/>
+<text x="382" y="545" class="muted" text-anchor="middle">500</text>
+<path d="M 457 124 V 522" stroke="#d5dce5"/>
+<text x="457" y="545" class="muted" text-anchor="middle">600</text>
+<path d="M 532 124 V 522" stroke="#d5dce5"/>
+<text x="532" y="545" class="muted" text-anchor="middle">700</text>
+<path d="M 607 124 V 522" stroke="#d5dce5"/>
+<text x="607" y="545" class="muted" text-anchor="middle">800</text>
+<text x="349.5" y="568" class="muted" text-anchor="middle">Median end-to-end milliseconds per task</text>
+<g data-model="baseten/elephant-1" fill="hsl(206, 76%, 43%)" stroke="hsl(206, 76%, 43%)"><title>baseten/elephant-1 · 252.2 ms · quality 95.5 / 96.6 / 98.9</title>
+<path d="M 196.15 180.5 V 148.62500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="196.15" cy="180.5" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 196.15 164.67499999999995 L 201.35 169.87499999999994 L 196.15 175.07499999999993 L 190.95000000000002 169.87499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="193.55" y="146.02500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="126" width="18" height="10" rx="2" fill="hsl(206, 76%, 43%)"/>
+<text x="680" y="135" class="label" >baseten/elephant-1</text>
+<g data-model="baseten/groundhog-1" fill="hsl(344, 64%, 36%)" stroke="hsl(344, 64%, 36%)"><title>baseten/groundhog-1 · 324.4 ms · quality 97.7 / 97.7 / 94.3</title>
+<path d="M 250.29999999999998 191.12500000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="250.29999999999998" cy="159.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 250.29999999999998 154.04999999999995 L 255.49999999999997 159.24999999999994 L 250.29999999999998 164.44999999999993 L 245.1 159.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="247.7" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="145" width="18" height="10" rx="2" fill="hsl(344, 64%, 36%)"/>
+<text x="680" y="154" class="label" >baseten/groundhog-1</text>
+<g data-model="baseten/joey-1" fill="hsl(121, 76%, 43%)" stroke="hsl(121, 76%, 43%)"><title>baseten/joey-1 · 234.1 ms · quality 88.6 / 92.0 / 94.3</title>
+<path d="M 182.5375 244.24999999999994 V 191.12500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="182.5375" cy="244.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 182.5375 207.175 L 187.73749999999998 212.375 L 182.5375 217.575 L 177.3375 212.375 Z" fill="none" stroke-width="1.6"/>
+<rect x="179.9375" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="164" width="18" height="10" rx="2" fill="hsl(121, 76%, 43%)"/>
+<text x="680" y="173" class="label" >baseten/joey-1</text>
+<g data-model="baseten/mammoth-1" fill="hsl(259, 64%, 36%)" stroke="hsl(259, 64%, 36%)"><title>baseten/mammoth-1 · 293.8 ms · quality 92.0 / 95.5 / 100.0</title>
+<path d="M 227.34999999999997 212.375 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="227.34999999999997" cy="212.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 227.34999999999997 175.3 L 232.54999999999995 180.5 L 227.34999999999997 185.7 L 222.14999999999998 180.5 Z" fill="none" stroke-width="1.6"/>
+<rect x="224.74999999999997" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="183" width="18" height="10" rx="2" fill="hsl(259, 64%, 36%)"/>
+<text x="680" y="192" class="label" >baseten/mammoth-1</text>
+<g data-model="cloudflare/clef" fill="hsl(36, 76%, 43%)" stroke="hsl(36, 76%, 43%)"><title>cloudflare/clef · 523.4 ms · quality 88.6 / 93.2 / 92.0</title>
+<path d="M 399.5125 244.24999999999994 V 201.74999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="399.5125" cy="244.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 399.5125 196.54999999999995 L 404.7125 201.74999999999994 L 399.5125 206.94999999999993 L 394.3125 201.74999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="396.91249999999997" y="209.775" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="202" width="18" height="10" rx="2" fill="hsl(36, 76%, 43%)"/>
+<text x="680" y="211" class="label" >cloudflare/clef</text>
+<g data-model="cloudflare/clef-flash" fill="hsl(174, 64%, 36%)" stroke="hsl(174, 64%, 36%)"><title>cloudflare/clef-flash · 389.3 ms · quality 83.0 / 90.9 / 95.5</title>
+<path d="M 298.9375 297.375 V 180.5" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="298.9375" cy="297.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 298.9375 217.80000000000007 L 304.1375 223.00000000000006 L 298.9375 228.20000000000005 L 293.7375 223.00000000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="296.3375" y="177.9" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="221" width="18" height="10" rx="2" fill="hsl(174, 64%, 36%)"/>
+<text x="680" y="230" class="label" >cloudflare/clef-flash</text>
+<g data-model="cloudflare/clef-omni" fill="hsl(311, 76%, 43%)" stroke="hsl(311, 76%, 43%)"><title>cloudflare/clef-omni · 251.6 ms · quality 96.6 / 98.9 / 100.0</title>
+<path d="M 195.7 169.87499999999994 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="195.7" cy="169.87499999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 195.7 143.42500000000007 L 200.89999999999998 148.62500000000006 L 195.7 153.82500000000005 L 190.5 148.62500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="193.1" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="240" width="18" height="10" rx="2" fill="hsl(311, 76%, 43%)"/>
+<text x="680" y="249" class="label" >cloudflare/clef-omni</text>
+<g data-model="liquid/d1-ultra" fill="hsl(89, 64%, 36%)" stroke="hsl(89, 64%, 36%)"><title>liquid/d1-ultra · 253.8 ms · quality 68.2 / 85.2 / 94.3</title>
+<path d="M 197.3875 435.49999999999994 V 191.12500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="197.3875" cy="435.49999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 197.3875 270.92499999999995 L 202.58749999999998 276.12499999999994 L 197.3875 281.32499999999993 L 192.1875 276.12499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="194.7875" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="259" width="18" height="10" rx="2" fill="hsl(89, 64%, 36%)"/>
+<text x="680" y="268" class="label" >liquid/d1-ultra</text>
+<g data-model="liquid/d1.1" fill="hsl(226, 76%, 43%)" stroke="hsl(226, 76%, 43%)"><title>liquid/d1.1 · 265.1 ms · quality 92.0 / 97.7 / 100.0</title>
+<path d="M 205.82500000000002 212.375 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="205.82500000000002" cy="212.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 205.82500000000002 154.04999999999995 L 211.025 159.24999999999994 L 205.82500000000002 164.44999999999993 L 200.62500000000003 159.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="203.22500000000002" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="278" width="18" height="10" rx="2" fill="hsl(226, 76%, 43%)"/>
+<text x="680" y="287" class="label" >liquid/d1.1</text>
+<g data-model="liquid/d1.2" fill="hsl(4, 64%, 36%)" stroke="hsl(4, 64%, 36%)"><title>liquid/d1.2 · 298.3 ms · quality 84.1 / 94.3 / 98.9</title>
+<path d="M 230.72499999999997 286.74999999999994 V 148.62500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="230.72499999999997" cy="286.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 230.72499999999997 185.92500000000007 L 235.92499999999995 191.12500000000006 L 230.72499999999997 196.32500000000005 L 225.52499999999998 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="228.12499999999997" y="146.02500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="297" width="18" height="10" rx="2" fill="hsl(4, 64%, 36%)"/>
+<text x="680" y="306" class="label" >liquid/d1.2</text>
+<g data-model="liquid/d1.2-ultra" fill="hsl(141, 76%, 43%)" stroke="hsl(141, 76%, 43%)"><title>liquid/d1.2-ultra · 287.6 ms · quality 89.8 / 95.5 / 100.0</title>
+<path d="M 222.70000000000002 233.62500000000006 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="222.70000000000002" cy="233.62500000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 222.70000000000002 175.3 L 227.9 180.5 L 222.70000000000002 185.7 L 217.50000000000003 180.5 Z" fill="none" stroke-width="1.6"/>
+<rect x="220.10000000000002" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="316" width="18" height="10" rx="2" fill="hsl(141, 76%, 43%)"/>
+<text x="680" y="325" class="label" >liquid/d1.2-ultra</text>
+<g data-model="microsoft/microsoft-decision-1" fill="hsl(279, 64%, 36%)" stroke="hsl(279, 64%, 36%)"><title>microsoft/microsoft-decision-1 · 461.8 ms · quality 68.2 / 75.0 / 92.0</title>
+<path d="M 353.35 435.49999999999994 V 212.375" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="353.35" cy="435.49999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 353.35 366.55 L 358.55 371.75 L 353.35 376.95 L 348.15000000000003 371.75 Z" fill="none" stroke-width="1.6"/>
+<rect x="350.75" y="209.775" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="335" width="18" height="10" rx="2" fill="hsl(279, 64%, 36%)"/>
+<text x="680" y="344" class="label" >microsoft/microsoft-decision-1</text>
+<g data-model="microsoft/microsoft-decision-1.1" fill="hsl(56, 76%, 43%)" stroke="hsl(56, 76%, 43%)"><title>microsoft/microsoft-decision-1.1 · 337.9 ms · quality 69.3 / 85.2 / 93.2</title>
+<path d="M 260.4625 424.87500000000006 V 201.74999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="260.4625" cy="424.87500000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 260.4625 270.92499999999995 L 265.66249999999997 276.12499999999994 L 260.4625 281.32499999999993 L 255.2625 276.12499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="257.86249999999995" y="199.14999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="354" width="18" height="10" rx="2" fill="hsl(56, 76%, 43%)"/>
+<text x="680" y="363" class="label" >microsoft/microsoft-decision-1.1</text>
+<g data-model="nace-ai/drex-max" fill="hsl(194, 64%, 36%)" stroke="hsl(194, 64%, 36%)"><title>nace-ai/drex-max · 727.9 ms · quality 93.2 / 94.3 / 95.5</title>
+<path d="M 552.925 201.74999999999994 V 180.5" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="552.925" cy="201.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 552.925 185.92500000000007 L 558.125 191.12500000000006 L 552.925 196.32500000000005 L 547.7249999999999 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="550.3249999999999" y="177.9" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="373" width="18" height="10" rx="2" fill="hsl(194, 64%, 36%)"/>
+<text x="680" y="382" class="label" >nace-ai/drex-max</text>
+<g data-model="nace-ai/drex-max-finance" fill="hsl(331, 76%, 43%)" stroke="hsl(331, 76%, 43%)"><title>nace-ai/drex-max-finance · 400.6 ms · quality 97.7 / 94.3 / 95.5</title>
+<path d="M 307.45 191.12500000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="307.45" cy="159.24999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 307.45 185.92500000000007 L 312.65 191.12500000000006 L 307.45 196.32500000000005 L 302.25 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="304.84999999999997" y="177.9" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="392" width="18" height="10" rx="2" fill="hsl(331, 76%, 43%)"/>
+<text x="680" y="401" class="label" >nace-ai/drex-max-finance</text>
+<g data-model="nace-ai/drex-v1.5" fill="hsl(109, 64%, 36%)" stroke="hsl(109, 64%, 36%)"><title>nace-ai/drex-v1.5 · 312.4 ms · quality 87.5 / 93.2 / 94.3</title>
+<path d="M 241.29999999999998 254.875 V 191.12500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="241.29999999999998" cy="254.875" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 241.29999999999998 196.54999999999995 L 246.49999999999997 201.74999999999994 L 241.29999999999998 206.94999999999993 L 236.1 201.74999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="238.7" y="188.52500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="411" width="18" height="10" rx="2" fill="hsl(109, 64%, 36%)"/>
+<text x="680" y="420" class="label" >nace-ai/drex-v1.5</text>
+<g data-model="nace-ai/drex-v2.0" fill="hsl(246, 76%, 43%)" stroke="hsl(246, 76%, 43%)"><title>nace-ai/drex-v2.0 · 731.9 ms · quality 93.2 / 97.7 / 97.7</title>
+<path d="M 555.8875 201.74999999999994 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="555.8875" cy="201.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 555.8875 154.04999999999995 L 561.0875000000001 159.24999999999994 L 555.8875 164.44999999999993 L 550.6875 159.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="553.2875" y="156.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="430" width="18" height="10" rx="2" fill="hsl(246, 76%, 43%)"/>
+<text x="680" y="439" class="label" >nace-ai/drex-v2.0</text>
+<g data-model="perplexity/pplx-decider-flash-v1.2" fill="hsl(24, 64%, 36%)" stroke="hsl(24, 64%, 36%)"><title>perplexity/pplx-decider-flash-v1.2 · 327.5 ms · quality 89.8 / 94.3 / 97.7</title>
+<path d="M 252.625 233.62500000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="252.625" cy="233.62500000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 252.625 185.92500000000007 L 257.825 191.12500000000006 L 252.625 196.32500000000005 L 247.425 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="250.025" y="156.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="449" width="18" height="10" rx="2" fill="hsl(24, 64%, 36%)"/>
+<text x="680" y="458" class="label" >perplexity/pplx-decider-flash-v1.2</text>
+<g data-model="perplexity/pplx-decider-flash-v1.3:free" fill="hsl(161, 76%, 43%)" stroke="hsl(161, 76%, 43%)"><title>perplexity/pplx-decider-flash-v1.3:free · 224.3 ms · quality 90.9 / 94.3 / 97.7</title>
+<path d="M 175.2625 223.00000000000006 V 159.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="175.2625" cy="223.00000000000006" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 175.2625 185.92500000000007 L 180.46249999999998 191.12500000000006 L 175.2625 196.32500000000005 L 170.0625 191.12500000000006 Z" fill="none" stroke-width="1.6"/>
+<rect x="172.6625" y="156.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="468" width="18" height="10" rx="2" fill="hsl(161, 76%, 43%)"/>
+<text x="680" y="477" class="label" >perplexity/pplx-decider-flash-v1.3:free</text>
+<g data-model="perplexity/pplx-decider-v1.2" fill="hsl(299, 64%, 36%)" stroke="hsl(299, 64%, 36%)"><title>perplexity/pplx-decider-v1.2 · 310.4 ms · quality 92.0 / 96.6 / 98.9</title>
+<path d="M 239.76250000000002 212.375 V 148.62500000000006" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="239.76250000000002" cy="212.375" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 239.76250000000002 164.67499999999995 L 244.9625 169.87499999999994 L 239.76250000000002 175.07499999999993 L 234.56250000000003 169.87499999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="237.16250000000002" y="146.02500000000006" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="487" width="18" height="10" rx="2" fill="hsl(299, 64%, 36%)"/>
+<text x="680" y="496" class="label" >perplexity/pplx-decider-v1.2</text>
+<g data-model="perplexity/pplx-decider-v1.3:free" fill="hsl(76, 76%, 43%)" stroke="hsl(76, 76%, 43%)"><title>perplexity/pplx-decider-v1.3:free · 309.8 ms · quality 84.1 / 88.6 / 100.0</title>
+<path d="M 239.34999999999997 286.74999999999994 V 138" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="239.34999999999997" cy="286.74999999999994" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 239.34999999999997 239.04999999999995 L 244.54999999999995 244.24999999999994 L 239.34999999999997 249.44999999999993 L 234.14999999999998 244.24999999999994 Z" fill="none" stroke-width="1.6"/>
+<rect x="236.74999999999997" y="135.4" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="506" width="18" height="10" rx="2" fill="hsl(76, 76%, 43%)"/>
+<text x="680" y="515" class="label" >perplexity/pplx-decider-v1.3:free</text>
+<g data-model="typesafe/jev-1.13" fill="hsl(214, 64%, 36%)" stroke="hsl(214, 64%, 36%)"><title>typesafe/jev-1.13 · 184.6 ms · quality 63.6 / 78.4 / 88.6</title>
+<path d="M 145.45000000000002 478 V 244.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="145.45000000000002" cy="478" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 145.45000000000002 334.675 L 150.65 339.875 L 145.45000000000002 345.075 L 140.25000000000003 339.875 Z" fill="none" stroke-width="1.6"/>
+<rect x="142.85000000000002" y="241.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="525" width="18" height="10" rx="2" fill="hsl(214, 64%, 36%)"/>
+<text x="680" y="534" class="label" >typesafe/jev-1.13</text>
+<g data-model="typesafe/jev-1.14" fill="hsl(351, 76%, 43%)" stroke="hsl(351, 76%, 43%)"><title>typesafe/jev-1.14 · 191.7 ms · quality 63.6 / 75.0 / 88.6</title>
+<path d="M 150.7375 478 V 244.24999999999994" fill="none" stroke-width="2" stroke-opacity="0.6"/>
+<circle cx="150.7375" cy="478" r="6.4" fill="none" stroke-width="1.7"/>
+<path d="M 150.7375 366.55 L 155.9375 371.75 L 150.7375 376.95 L 145.53750000000002 371.75 Z" fill="none" stroke-width="1.6"/>
+<rect x="148.13750000000002" y="241.64999999999995" width="5.2" height="5.2" stroke="none"/>
+</g>
+<rect x="652" y="544" width="18" height="10" rx="2" fill="hsl(351, 76%, 43%)"/>
+<text x="680" y="553" class="label" >typesafe/jev-1.14</text>
+<g fill="#334155" stroke="#334155"><circle cx="89" cy="598" r="6.4" fill="none" stroke-width="1.7"/></g>
+<text x="102" y="603" class="muted" >0.30</text>
+<g fill="#334155" stroke="#334155"><path d="M 201 592.8 L 206.2 598 L 201 603.2 L 195.8 598 Z" fill="none" stroke-width="1.6"/></g>
+<text x="214" y="603" class="muted" >0.40</text>
+<g fill="#334155" stroke="#334155"><rect x="310.4" y="595.4" width="5.2" height="5.2" stroke="none"/></g>
+<text x="326" y="603" class="muted" >0.50</text>
+<text x="24" y="631" class="muted" >Overlapping markers can share a score or latency; see the exact-value table.</text>
+</svg>

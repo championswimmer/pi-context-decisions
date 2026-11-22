@@ -17,13 +17,13 @@
 - `src/decision/`: canonical primitives, validation, client, typed errors.
 - `src/core/`: Pi classifier and direct TypeSafe/OpenAI/OpenRouter transports/codecs/auth.
 - `src/host/pi-credentials.ts`: opt-in standalone public SDK credential adapter, exported as `./pi-credentials`; active extensions keep using `ctx.modelRegistry`.
-- `src/catalog/`: **static checked-in eight survivors of the original top ten** OpenRouter decisions plus pure picker merge. Snapshot 2026-10-12, token window October 5–11. Future updates require code changes, never runtime discovery.
+- `src/catalog/`: **static checked-in OpenRouter catalog**: retained top-ten entries plus explicitly requested variants from the same leaderboard, with pure picker merge. Snapshot 2026-11-21, token window November 14–20. Future updates require code changes, never runtime discovery.
 - `src/apps/`: metadata-only relevance and skill policy; public `pickSkills` composes existing ranking/filtering for all four backends. Explicit picks default to no inventory minimum; automatic hook defaults to eight.
 - `test/`: offline fixtures and mocked real Pi registration/lifecycle/commands. `test/helpers/settings-ui.ts` changes settings the way users now can (RPC menus: `setSetting`, `setModel`; the real terminal editors: `saveAllowlist`) because no setter subcommands exist. `test/helpers/pi-sim.ts` is an offline stand-in for Pi's branch/compaction/context-edit projection and before_agent_start/turn_end commit order: a contract fake, not a Pi test. `test/extension-real-pi-session.test.ts` drives the REAL `AgentSession` (faux provider, in-memory session, injected decision client; offline) to check Pi's actual commit order, branch contents, context conversion, steering, tool rounds and compaction.
 - `.agents/skills/`: project-local skills; `.agents/plans/`: pending implementation handoffs (none pending now); `.agents/research/`: archived research and live-validation evidence.
 - `../pi-skill-picker-jev`: pattern reference only; do not copy wholesale or add as a dependency.
 
-Archived research proposed dynamic discovery and fail-open defaults. Latest user requirements override it: **static top-ten snapshot trimmed by confirmed routing failures, and default fail closed**, explicit fail-open optional. Completed and superseded plans have been pruned; keep pending work in `.agents/plans/`. Preserve historical evidence in `.agents/research/`; add a uniquely named follow-up when needed.
+Archived research proposed dynamic discovery and fail-open defaults. Latest user requirements override it: **static ranked snapshot with explicit additions/exclusions, and default fail closed**, explicit fail-open optional. Completed and superseded plans have been pruned; keep pending work in `.agents/plans/`. Preserve historical evidence in `.agents/research/`; add a uniquely named follow-up when needed.
 
 ## Working rules
 

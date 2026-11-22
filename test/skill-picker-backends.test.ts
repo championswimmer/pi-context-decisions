@@ -62,7 +62,7 @@ function fixture(selection: BackendSelection, wait?: () => Promise<void>) {
 }
 const selections: BackendSelection[] = [
   { backend: "pi", provider: "fixture", id: "classifier" }, { backend: "typesafe" },
-  { backend: "openai" }, { backend: "openrouter", model: "typesafe/jev-1.13" },
+  { backend: "openai" }, { backend: "openrouter", model: "typesafe/jev-1.14" },
 ];
 for (const selection of selections) test(`${selection.backend} core selects the same relevant skills across all 30 metadata-only candidates`, async () => {
   const { client, batches, observed } = fixture(selection);
@@ -82,7 +82,7 @@ test("explicit pick has no minimum inventory, honors the inclusive normalized th
   assert.deepEqual(tiny.kept, [skills[5]]);
 });
 test("picker failures stay closed and malformed options never imply fail-open", async () => {
-  const { client } = fixture({ backend: "openrouter", model: "typesafe/jev-1.13" });
+  const { client } = fixture({ backend: "openrouter", model: "typesafe/jev-1.14" });
   const invalid = await pickSkills(prompt, skills, client, { threshold: 1.5 });
   assert.equal(invalid.reason, "fail-closed"); assert.deepEqual(invalid.kept, []); assert.equal(invalid.errorCode, "config");
   const absent = await pickSkills(prompt, skills, null); assert.equal(absent.skipReason, "unconfigured");

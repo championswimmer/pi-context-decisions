@@ -13,7 +13,7 @@ import type { BackendSelection } from "../src/core/backends/factory.ts";
 for (const [selection, url, provider] of [
   [{ backend: "typesafe", model: "jev-1.13.0" }, "https://api.typesafe.ai/v1/systemone", "typesafe"],
   [{ backend: "openai", model: "gpt-6-luna" }, "https://api.openai.com/v1/decisions", "openai"],
-  [{ backend: "openrouter", model: "typesafe/jev-1.13" }, "https://openrouter.ai/api/alpha/decisions", "openrouter"],
+  [{ backend: "openrouter", model: "typesafe/jev-1.14" }, "https://openrouter.ai/api/alpha/decisions", "openrouter"],
 ] as const) test(`${provider} actual hook → factory → auth → codec → mock HTTP → filtered skills`, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "extension-direct-")); t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, "settings.json"); await saveSettings({ ...defaultSettings(), backend: selection satisfies BackendSelection }, path);

@@ -30,21 +30,21 @@ test("housekeeping settings default off, validate identity, and persist", async 
   await saveSettings(settings, path);
   assert.deepEqual((await loadSettings(path)).settings.history, settings.history);
 });
-test("every static router ID accepted by direct and native, aliases and outside-ten rejected", () => {
+test("every static router ID accepted by direct and native, aliases and unlisted IDs rejected", () => {
   for (const { id } of OPENROUTER_DECISION_MODELS) {
     assert.deepEqual(validateBackendSelection({ backend: "openrouter", model: id }), { backend: "openrouter", model: id });
     assert.deepEqual(validateBackendSelection({ backend: "pi", provider: "openrouter", id }), { backend: "pi", provider: "openrouter", id });
   }
-  for (const id of ["~typesafe/jev-latest", "respan/span-01", "typesafe/jev-1.13-20260917", "unknown/model", "openai/gpt-6-luna-decisions", "inception/mercury-decide:free"]) {
-    assert.throws(() => validateBackendSelection({ backend: "openrouter", model: id }), /outside the checked-in top ten/);
-    assert.throws(() => validateBackendSelection({ backend: "pi", provider: "openrouter", id }), /outside the checked-in top ten/);
+  for (const id of ["~typesafe/jev-latest", "respan/span-01", "typesafe/jev-1.13", "perplexity/pplx-decider-v1.2", "microsoft/microsoft-decision-1", "liquid/d1", "typesafe/jev-1.14-20261014", "unknown/model", "openai/gpt-6-luna-decisions", "inception/mercury-decide:free"]) {
+    assert.throws(() => validateBackendSelection({ backend: "openrouter", model: id }), /outside the checked-in catalog/);
+    assert.throws(() => validateBackendSelection({ backend: "pi", provider: "openrouter", id }), /outside the checked-in catalog/);
   }
 });
 test("nonrouter Pi selections remain independent; direct versions and fields validated", () => {
   assert.deepEqual(validateBackendSelection({ backend: "pi", provider: "custom", id: "nested/id" }), { backend: "pi", provider: "custom", id: "nested/id" });
   assert.deepEqual(validateBackendSelection({ backend: "typesafe" }), { backend: "typesafe", model: "jev-latest" });
   assert.deepEqual(validateBackendSelection({ backend: "openai" }), { backend: "openai", model: "gpt-6-luna" });
-  for (const value of [{ backend: "openai", model: "chat-model" }, { backend: "typesafe", model: "unknown" }, { backend: "pi", provider: "x", id: "bad\nmodel" }, { backend: "openrouter", model: "typesafe/jev-1.13", url: "https://evil.invalid" }, {}]) assert.throws(() => validateBackendSelection(value), SettingsError);
+  for (const value of [{ backend: "openai", model: "chat-model" }, { backend: "typesafe", model: "unknown" }, { backend: "pi", provider: "x", id: "bad\nmodel" }, { backend: "openrouter", model: "typesafe/jev-1.14", url: "https://evil.invalid" }, {}]) assert.throws(() => validateBackendSelection(value), SettingsError);
 });
 test("partial config receives defaults, unknown read fields warn but cannot be saved", () => {
   const warnings: string[] = [];
@@ -67,7 +67,7 @@ test("credential fields rejected at any depth without printing values", () => {
 });
 test("atomic settings replacement roundtrips with no temporary files and mode 0600", async (t) => {
   const root = await directory(t); const path = join(root, "nested", "settings.json");
-  const settings = defaultSettings(); settings.backend = { backend: "openrouter", model: "cloudflare/clef-flash" }; settings.relevance.pinned = ["one", "one"];
+  const settings = defaultSettings(); settings.backend = { backend: "openrouter", model: "perplexity/pplx-decider-v1.3:free" }; settings.relevance.pinned = ["one", "one"];
   await saveSettings(settings, path);
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   assert.deepEqual((await loadSettings(path)).settings, { ...settings, relevance: { ...settings.relevance, pinned: ["one"] } });
@@ -88,8 +88,8 @@ test("invalid writes leave existing file unchanged; rename failure cleans temp",
 });
 test("stale nonallowlisted persisted router model is an explicit error with no substituted backend", async (t) => {
   const path = join(await directory(t), "settings.json");
-  await writeFile(path, JSON.stringify({ ...defaultSettings(), backend: { backend: "openrouter", model: "~typesafe/jev-latest" } }));
-  const result = await loadSettings(path); assert.match(result.error!, /outside the checked-in top ten/); assert.equal(result.settings.backend, null);
+  await writeFile(path, JSON.stringify({ ...defaultSettings(), backend: { backend: "openrouter", model: "typesafe/jev-1.13" } }));
+  const result = await loadSettings(path); assert.match(result.error!, /outside the checked-in catalog/); assert.equal(result.settings.backend, null);
 });
 test("malformed, oversized, and secret-bearing reads fail explicitly without sensitive diagnostics", async (t) => {
   const path = join(await directory(t), "settings.json");

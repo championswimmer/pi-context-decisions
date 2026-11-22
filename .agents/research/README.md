@@ -7,6 +7,9 @@ These dated documents preserve provider/API evidence, catalog provenance, and li
 - [Direct provider research](direct-provider-research.md): TypeSafe, OpenAI, and OpenRouter protocol contracts and sources.
 - [Pi integration research](pi-integration-research.md): Pi 1.1.0 host APIs, especially the tool/MCP visibility limits referenced by the pending plan.
 - [OpenRouter weekly popularity](openrouter-weekly-popularity.md): the original top-ten snapshot and token-ranking provenance.
+- [OpenRouter weekly popularity, 2026-11-21](openrouter-weekly-popularity-2026-11-21.md): refreshed top ten and token-ranking provenance.
+- [OpenRouter score threshold check, 2026-11-21](openrouter-threshold-pass-2026-11-21.md): one pass over the new top ten, routing results, and the decision to keep the default.
+- [OpenRouter Clef, Liquid D1, Microsoft, and Perplexity checks, 2026-11-22](openrouter-clef-d1-microsoft-perplexity-2026-11-22.md): targeted catalog additions and live 30-question score checks.
 - [Live provider validation, 2026-10-12](live-provider-validation-2026-10-12.md): account-specific routing checks explaining the eight retained OpenRouter models.
 - [Direct OpenAI with Pi credentials, 2026-10-12](live-openai-pi-credentials-2026-10-12.md): completed source-aware credential integration and bounded Luna smoke validation.
 

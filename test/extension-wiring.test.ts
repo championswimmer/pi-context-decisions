@@ -27,7 +27,7 @@ function context(overrides: Partial<ExtensionRegistry> = {}, hasUI = false) {
   const dialogs: { title: string; options?: string[] }[] = [];
   const selections: (string | undefined | ((options: string[]) => string))[] = [];
   const inputs: (string | undefined)[] = [];
-  const classifiers = [{ provider: "custom", id: "nested/model", name: "Custom" }, { provider: "openrouter", id: "typesafe/jev-1.13", name: "Jev" }];
+  const classifiers = [{ provider: "custom", id: "nested/model", name: "Custom" }, { provider: "openrouter", id: "typesafe/jev-1.14", name: "Jev" }];
   let calls = 0;
   const registry: ExtensionRegistry = {
     getModelsOfType(type, provider) { return type === "chat" ? [{ provider: "openai", id: "chat" }] : classifiers.filter((model) => !provider || model.provider === provider); },
@@ -143,7 +143,7 @@ test("all static-ten direct IDs are selectable through the RPC model menu, with 
 test("picker restricts router entries, preserves native classifiers, and marks auth/OAuth correctly", async () => {
   let lookups: string[] = [];
   const c = context({
-    getModelsOfType(type) { return type === "chat" ? [{ provider: "openai", id: "chat" }] : [{ provider: "openrouter", id: "typesafe/jev-1.13" }, { provider: "openrouter", id: "respan/span-01" }, { provider: "openai", id: "gpt-6-luna" }, { provider: "local", id: "model" }]; },
+    getModelsOfType(type) { return type === "chat" ? [{ provider: "openai", id: "chat" }] : [{ provider: "openrouter", id: "typesafe/jev-1.14" }, { provider: "openrouter", id: "respan/span-01" }, { provider: "openai", id: "gpt-6-luna" }, { provider: "local", id: "model" }]; },
     isUsingOAuth() { return true; },
     async getApiKeyForProvider(provider) { lookups.push(provider); return provider === "openrouter" ? "FIXTURE-KEY" : undefined; },
   });
@@ -159,8 +159,8 @@ test("UI picker uses static entries, supports cancellation and None without writ
   const modelRow = (options: string[]) => options.find((option) => option.includes("Decision model:"))!;
   c.selections.push(modelRow, undefined, "Done"); // open the model picker, cancel it
   await h.command("", c.ctx); assert.equal(c.dialogs.length, 3); assert.equal(c.calls(), 0); assert.equal((await loadSettings(h.path)).settings.backend, null);
-  c.selections.push(modelRow, (options) => options.find((option) => option.includes("— openrouter direct typesafe/jev-1.13"))!, "Done");
-  await h.command("", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.13" });
+  c.selections.push(modelRow, (options) => options.find((option) => option.includes("— openrouter direct typesafe/jev-1.14"))!, "Done");
+  await h.command("", c.ctx); assert.deepEqual((await loadSettings(h.path)).settings.backend, { backend: "openrouter", model: "typesafe/jev-1.14" });
   c.selections.push(modelRow, (options) => options.find((option) => option.startsWith("Not configured —"))!, "Done"); await h.command("", c.ctx); assert.equal((await loadSettings(h.path)).settings.backend, null);
   assert.ok(c.dialogs[1].options!.every((option) => !option.includes("respan")));
 });
@@ -215,7 +215,7 @@ test("malformed decisions and missing current native registry entries fail close
 test("stale persisted model produces explicit startup/status error and fail-closed even below gate", async (t) => {
   const h = await setup(t); const c = context({}, true);
   await writeFile(h.path, JSON.stringify({ ...defaultSettings(), backend: { backend: "openrouter", model: "respan/span-01" } }));
-  await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx); assert.match(h.messages.at(-1)!.text, /outside the checked-in top ten/);
+  await h.emit("session_start", { type: "session_start", reason: "startup" }, c.ctx); assert.match(h.messages.at(-1)!.text, /outside the checked-in catalog/);
   const e = event(2); await h.emit("before_agent_start", e, c.ctx); assert.equal(e.systemPromptOptions.skills.length, 0); assert.equal(c.calls(), 0);
   await h.command("status", c.ctx); assert.match(h.messages.at(-1)!.text, /Settings error/);
   await setModel(h.command, c.ctx, "Pi custom/nested/model"); const repaired = event(); await h.emit("before_agent_start", repaired, c.ctx); assert.equal(c.calls(), 1);

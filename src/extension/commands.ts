@@ -662,7 +662,7 @@ function buildUiHooks(
           group:
             entry.group === "pi-native"
               ? "Pi internal classifiers"
-              : entry.group === "openrouter-top10"
+              : entry.group === "openrouter-catalog"
                 ? "OpenRouter"
                 : "Direct API",
           badge: authLabel(entry.authStatus),

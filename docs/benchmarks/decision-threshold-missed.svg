@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1010" height="620" viewBox="0 0 1010 620" role="img" aria-labelledby="title desc">
+<title id="title">Required picks missed by model</title>
+<desc id="desc">Missed picks out of 22 required per model. Zero means the model kept every required skill. Each model has a colored line and three measured points at thresholds 0.30, 0.40, and 0.50. Vertical offsets spread tied lines within their integer count bands. Exact values are in the companion table.</desc>
+<style>text{font:14px system-ui,sans-serif;fill:#1e293b}.title{font-size:25px;font-weight:700}.head{font-size:16px;font-weight:700}.muted{font-size:13px;fill:#475569}.label{font:12px ui-monospace,Menlo,monospace}</style>
+<rect width="1010" height="620" fill="#fff"/>
+<text x="24" y="36" class="title" >Required picks missed by model</text>
+<text x="24" y="61" class="muted" >Missed picks out of 22 required per model. Zero means the model kept every required skill.</text>
+<text x="70" y="90" class="head" >Required picks missed (of 22)</text>
+<text x="652" y="90" class="head" >Model</text>
+<rect x="70" y="104" width="547" height="398" rx="5" fill="#f5f8fc" stroke="#d5dce5"/>
+<rect x="71" y="369" width="545" height="96" fill="#e8eef7"/>
+<path d="M 70 417 H 617" stroke="#c9d3e1" stroke-dasharray="4 4"/>
+<text x="58" y="422" class="muted" text-anchor="end">0</text>
+<rect x="71" y="141" width="545" height="96" fill="#e8eef7"/>
+<path d="M 70 189 H 617" stroke="#c9d3e1" stroke-dasharray="4 4"/>
+<text x="58" y="194" class="muted" text-anchor="end">1</text>
+<path d="M 92 104 V 502" stroke="#d5dce5"/>
+<text x="92" y="529" class="head" text-anchor="middle">0.30</text>
+<path d="M 343.5 104 V 502" stroke="#d5dce5"/>
+<text x="343.5" y="529" class="head" text-anchor="middle">0.40</text>
+<path d="M 595 104 V 502" stroke="#d5dce5"/>
+<text x="595" y="529" class="head" text-anchor="middle">0.50</text>
+<text x="343.5" y="554" class="muted" text-anchor="middle">Normalized threshold</text>
+<g data-model="baseten/elephant-1" stroke="hsl(206, 76%, 43%)" fill="hsl(206, 76%, 43%)"><title>baseten/elephant-1: 0 → 0 → 0</title>
+<polyline points="92,373 343.5,373 595,373" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="373" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="373" r="2.1" stroke="none"/>
+<circle cx="595" cy="373" r="2.1" stroke="none"/>
+<path d="M 652 114 h 20" stroke-width="3"/><circle cx="662" cy="114" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="118" class="label" >baseten/elephant-1</text>
+<g data-model="baseten/groundhog-1" stroke="hsl(344, 64%, 36%)" fill="hsl(344, 64%, 36%)"><title>baseten/groundhog-1: 0 → 0 → 1</title>
+<polyline points="92,377 343.5,377 595,149" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="377" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="377" r="2.1" stroke="none"/>
+<circle cx="595" cy="149" r="2.1" stroke="none"/>
+<path d="M 652 133 h 20" stroke-width="3"/><circle cx="662" cy="133" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="137" class="label" >baseten/groundhog-1</text>
+<g data-model="baseten/joey-1" stroke="hsl(121, 76%, 43%)" fill="hsl(121, 76%, 43%)"><title>baseten/joey-1: 1 → 1 → 1</title>
+<polyline points="92,153 343.5,153 595,153" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="153" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="153" r="2.1" stroke="none"/>
+<circle cx="595" cy="153" r="2.1" stroke="none"/>
+<path d="M 652 152 h 20" stroke-width="3"/><circle cx="662" cy="152" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="156" class="label" >baseten/joey-1</text>
+<g data-model="baseten/mammoth-1" stroke="hsl(259, 64%, 36%)" fill="hsl(259, 64%, 36%)"><title>baseten/mammoth-1: 0 → 0 → 0</title>
+<polyline points="92,385 343.5,385 595,385" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="385" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="385" r="2.1" stroke="none"/>
+<circle cx="595" cy="385" r="2.1" stroke="none"/>
+<path d="M 652 171 h 20" stroke-width="3"/><circle cx="662" cy="171" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="175" class="label" >baseten/mammoth-1</text>
+<g data-model="cloudflare/clef" stroke="hsl(36, 76%, 43%)" fill="hsl(36, 76%, 43%)"><title>cloudflare/clef: 0 → 0 → 1</title>
+<polyline points="92,389 343.5,389 595,161" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="389" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="389" r="2.1" stroke="none"/>
+<circle cx="595" cy="161" r="2.1" stroke="none"/>
+<path d="M 652 190 h 20" stroke-width="3"/><circle cx="662" cy="190" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="194" class="label" >cloudflare/clef</text>
+<g data-model="cloudflare/clef-flash" stroke="hsl(174, 64%, 36%)" fill="hsl(174, 64%, 36%)"><title>cloudflare/clef-flash: 1 → 1 → 1</title>
+<polyline points="92,165 343.5,165 595,165" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="165" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="165" r="2.1" stroke="none"/>
+<circle cx="595" cy="165" r="2.1" stroke="none"/>
+<path d="M 652 209 h 20" stroke-width="3"/><circle cx="662" cy="209" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="213" class="label" >cloudflare/clef-flash</text>
+<g data-model="cloudflare/clef-omni" stroke="hsl(311, 76%, 43%)" fill="hsl(311, 76%, 43%)"><title>cloudflare/clef-omni: 0 → 0 → 0</title>
+<polyline points="92,397 343.5,397 595,397" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="397" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="397" r="2.1" stroke="none"/>
+<circle cx="595" cy="397" r="2.1" stroke="none"/>
+<path d="M 652 228 h 20" stroke-width="3"/><circle cx="662" cy="228" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="232" class="label" >cloudflare/clef-omni</text>
+<g data-model="liquid/d1-ultra" stroke="hsl(89, 64%, 36%)" fill="hsl(89, 64%, 36%)"><title>liquid/d1-ultra: 0 → 0 → 0</title>
+<polyline points="92,401 343.5,401 595,401" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="401" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="401" r="2.1" stroke="none"/>
+<circle cx="595" cy="401" r="2.1" stroke="none"/>
+<path d="M 652 247 h 20" stroke-width="3"/><circle cx="662" cy="247" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="251" class="label" >liquid/d1-ultra</text>
+<g data-model="liquid/d1.1" stroke="hsl(226, 76%, 43%)" fill="hsl(226, 76%, 43%)"><title>liquid/d1.1: 0 → 0 → 0</title>
+<polyline points="92,405 343.5,405 595,405" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="405" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="405" r="2.1" stroke="none"/>
+<circle cx="595" cy="405" r="2.1" stroke="none"/>
+<path d="M 652 266 h 20" stroke-width="3"/><circle cx="662" cy="266" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="270" class="label" >liquid/d1.1</text>
+<g data-model="liquid/d1.2" stroke="hsl(4, 64%, 36%)" fill="hsl(4, 64%, 36%)"><title>liquid/d1.2: 0 → 0 → 0</title>
+<polyline points="92,409 343.5,409 595,409" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="409" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="409" r="2.1" stroke="none"/>
+<circle cx="595" cy="409" r="2.1" stroke="none"/>
+<path d="M 652 285 h 20" stroke-width="3"/><circle cx="662" cy="285" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="289" class="label" >liquid/d1.2</text>
+<g data-model="liquid/d1.2-ultra" stroke="hsl(141, 76%, 43%)" fill="hsl(141, 76%, 43%)"><title>liquid/d1.2-ultra: 0 → 0 → 0</title>
+<polyline points="92,413 343.5,413 595,413" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="413" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="413" r="2.1" stroke="none"/>
+<circle cx="595" cy="413" r="2.1" stroke="none"/>
+<path d="M 652 304 h 20" stroke-width="3"/><circle cx="662" cy="304" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="308" class="label" >liquid/d1.2-ultra</text>
+<g data-model="microsoft/microsoft-decision-1" stroke="hsl(279, 64%, 36%)" fill="hsl(279, 64%, 36%)"><title>microsoft/microsoft-decision-1: 0 → 0 → 0</title>
+<polyline points="92,417 343.5,417 595,417" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="417" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="417" r="2.1" stroke="none"/>
+<circle cx="595" cy="417" r="2.1" stroke="none"/>
+<path d="M 652 323 h 20" stroke-width="3"/><circle cx="662" cy="323" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="327" class="label" >microsoft/microsoft-decision-1</text>
+<g data-model="microsoft/microsoft-decision-1.1" stroke="hsl(56, 76%, 43%)" fill="hsl(56, 76%, 43%)"><title>microsoft/microsoft-decision-1.1: 0 → 0 → 0</title>
+<polyline points="92,421 343.5,421 595,421" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="421" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="421" r="2.1" stroke="none"/>
+<circle cx="595" cy="421" r="2.1" stroke="none"/>
+<path d="M 652 342 h 20" stroke-width="3"/><circle cx="662" cy="342" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="346" class="label" >microsoft/microsoft-decision-1.1</text>
+<g data-model="nace-ai/drex-max" stroke="hsl(194, 64%, 36%)" fill="hsl(194, 64%, 36%)"><title>nace-ai/drex-max: 1 → 1 → 1</title>
+<polyline points="92,197 343.5,197 595,197" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="197" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="197" r="2.1" stroke="none"/>
+<circle cx="595" cy="197" r="2.1" stroke="none"/>
+<path d="M 652 361 h 20" stroke-width="3"/><circle cx="662" cy="361" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="365" class="label" >nace-ai/drex-max</text>
+<g data-model="nace-ai/drex-max-finance" stroke="hsl(331, 76%, 43%)" fill="hsl(331, 76%, 43%)"><title>nace-ai/drex-max-finance: 0 → 1 → 1</title>
+<polyline points="92,429 343.5,201 595,201" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="429" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="201" r="2.1" stroke="none"/>
+<circle cx="595" cy="201" r="2.1" stroke="none"/>
+<path d="M 652 380 h 20" stroke-width="3"/><circle cx="662" cy="380" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="384" class="label" >nace-ai/drex-max-finance</text>
+<g data-model="nace-ai/drex-v1.5" stroke="hsl(109, 64%, 36%)" fill="hsl(109, 64%, 36%)"><title>nace-ai/drex-v1.5: 1 → 1 → 1</title>
+<polyline points="92,205 343.5,205 595,205" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="205" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="205" r="2.1" stroke="none"/>
+<circle cx="595" cy="205" r="2.1" stroke="none"/>
+<path d="M 652 399 h 20" stroke-width="3"/><circle cx="662" cy="399" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="403" class="label" >nace-ai/drex-v1.5</text>
+<g data-model="nace-ai/drex-v2.0" stroke="hsl(246, 76%, 43%)" fill="hsl(246, 76%, 43%)"><title>nace-ai/drex-v2.0: 0 → 0 → 0</title>
+<polyline points="92,437 343.5,437 595,437" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="437" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="437" r="2.1" stroke="none"/>
+<circle cx="595" cy="437" r="2.1" stroke="none"/>
+<path d="M 652 418 h 20" stroke-width="3"/><circle cx="662" cy="418" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="422" class="label" >nace-ai/drex-v2.0</text>
+<g data-model="perplexity/pplx-decider-flash-v1.2" stroke="hsl(24, 64%, 36%)" fill="hsl(24, 64%, 36%)"><title>perplexity/pplx-decider-flash-v1.2: 0 → 0 → 0</title>
+<polyline points="92,441 343.5,441 595,441" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="441" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="441" r="2.1" stroke="none"/>
+<circle cx="595" cy="441" r="2.1" stroke="none"/>
+<path d="M 652 437 h 20" stroke-width="3"/><circle cx="662" cy="437" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="441" class="label" >perplexity/pplx-decider-flash-v1.2</text>
+<g data-model="perplexity/pplx-decider-flash-v1.3:free" stroke="hsl(161, 76%, 43%)" fill="hsl(161, 76%, 43%)"><title>perplexity/pplx-decider-flash-v1.3:free: 0 → 0 → 0</title>
+<polyline points="92,445 343.5,445 595,445" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="445" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="445" r="2.1" stroke="none"/>
+<circle cx="595" cy="445" r="2.1" stroke="none"/>
+<path d="M 652 456 h 20" stroke-width="3"/><circle cx="662" cy="456" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="460" class="label" >perplexity/pplx-decider-flash-v1.3:free</text>
+<g data-model="perplexity/pplx-decider-v1.2" stroke="hsl(299, 64%, 36%)" fill="hsl(299, 64%, 36%)"><title>perplexity/pplx-decider-v1.2: 0 → 0 → 0</title>
+<polyline points="92,449 343.5,449 595,449" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="449" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="449" r="2.1" stroke="none"/>
+<circle cx="595" cy="449" r="2.1" stroke="none"/>
+<path d="M 652 475 h 20" stroke-width="3"/><circle cx="662" cy="475" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="479" class="label" >perplexity/pplx-decider-v1.2</text>
+<g data-model="perplexity/pplx-decider-v1.3:free" stroke="hsl(76, 76%, 43%)" fill="hsl(76, 76%, 43%)"><title>perplexity/pplx-decider-v1.3:free: 0 → 0 → 0</title>
+<polyline points="92,453 343.5,453 595,453" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="453" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="453" r="2.1" stroke="none"/>
+<circle cx="595" cy="453" r="2.1" stroke="none"/>
+<path d="M 652 494 h 20" stroke-width="3"/><circle cx="662" cy="494" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="498" class="label" >perplexity/pplx-decider-v1.3:free</text>
+<g data-model="typesafe/jev-1.13" stroke="hsl(214, 64%, 36%)" fill="hsl(214, 64%, 36%)"><title>typesafe/jev-1.13: 0 → 0 → 0</title>
+<polyline points="92,457 343.5,457 595,457" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="457" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="457" r="2.1" stroke="none"/>
+<circle cx="595" cy="457" r="2.1" stroke="none"/>
+<path d="M 652 513 h 20" stroke-width="3"/><circle cx="662" cy="513" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="517" class="label" >typesafe/jev-1.13</text>
+<g data-model="typesafe/jev-1.14" stroke="hsl(351, 76%, 43%)" fill="hsl(351, 76%, 43%)"><title>typesafe/jev-1.14: 0 → 0 → 0</title>
+<polyline points="92,461 343.5,461 595,461" fill="none" stroke-width="2" stroke-opacity="0.83" stroke-linejoin="round"/>
+<circle cx="92" cy="461" r="2.1" stroke="none"/>
+<circle cx="343.5" cy="461" r="2.1" stroke="none"/>
+<circle cx="595" cy="461" r="2.1" stroke="none"/>
+<path d="M 652 532 h 20" stroke-width="3"/><circle cx="662" cy="532" r="2.8" stroke="none"/>
+</g>
+<text x="680" y="536" class="label" >typesafe/jev-1.14</text>
+<text x="24" y="583" class="muted" >Lines are spaced within each count band so tied models remain visible; only the band indicates the count.</text>
+<text x="24" y="604" class="muted" >23 complete models · 10 public demo tasks · same saved scores at each threshold</text>
+</svg>

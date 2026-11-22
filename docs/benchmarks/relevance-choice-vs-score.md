@@ -61,7 +61,7 @@ PI_CONTEXT_DECISIONS_LIVE=1 node --experimental-strip-types scripts/benchmark-re
 
 With the score-only production code, the script's score arm uses the current picker and its choice arm the historical comparator, so a live rerun measures the current policy against the historical per-skill choice experiment, not against a production mode.
 
-The output file is **resumable**: completed records are skipped, so pointing `--output` at the committed `docs/benchmarks/relevance-methods-raw.json` makes no calls and leaves the file byte-for-byte unchanged (an offline test enforces this against the committed snapshot).
+The command uses the five highest-ranked retained models in the **current** catalog, not the five models from this historical run. Use a fresh `--output` for live measurements. Completed records are skipped on compatible resumes; use `--summarize` to read the committed `docs/benchmarks/relevance-methods-raw.json` offline without changing it.
 
 Resume rules (all enforced before any request is made; a rejected resume does not modify the file):
 

@@ -30,7 +30,7 @@ import { validateResponse } from "../src/decision/validation.ts";
 
 export const CASES_PATH = fileURLToPath(new URL("../examples/skill-picker-demo/benchmark-cases.json", import.meta.url));
 export type Arm = "score" | "choice-label" | "choice-shortlist";
-export const DEFAULT_MODELS: readonly string[] = ["typesafe/jev-1.13", "perplexity/pplx-decider-v1.1-27b", "cloudflare/clef-flash", "liquid/d1", "microsoft/microsoft-decision-1"];
+export const DEFAULT_MODELS: readonly string[] = OPENROUTER_DECISION_MODELS.slice(0, 5).map(({ id }) => id);
 /** Extension defaults (src/settings.ts), mirrored so the score arm is the production path. */
 /** Policy written into reports before the score-only picker (v0.2.0 extension defaults). Old reports keep it; it is still accepted on resume because the current policy below selects identically (raw 0.75 = normalized 0.375). */
 export const HISTORICAL_POLICY = Object.freeze({ chunkSize: 50, maxQuestions: 50, concurrency: 0, relatedThreshold: 0.75, directThreshold: 1.5, minLabel: "related" as const, maxSkills: 12, productionTimeoutMs: 8000 });

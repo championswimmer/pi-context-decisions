@@ -2,22 +2,35 @@
 
 # Providers and credentials
 
-Native Pi classifiers are listed independently of the chat model; Pi's `/model` excludes classifiers. The picker preserves all non-OpenRouter native classifiers. For OpenRouter, **only the checked-in eight surviving models** are allowed in the picker and settings. A “via Pi” entry appears only if the exact classifier is registered; direct entries are always offered, annotated with credential availability. We do not replace Pi's OpenRouter provider or its chat/image models. Missing native models are a configuration error, not an automatic switch to a paid direct backend.
+Native Pi classifiers are listed independently of the chat model; Pi's `/model` excludes classifiers. The picker preserves all non-OpenRouter native classifiers. For OpenRouter, **only models in the checked-in catalog** are allowed in the picker and settings. A “via Pi” entry appears only if the exact classifier is registered; direct entries are always offered, annotated with credential availability. We do not replace Pi's OpenRouter provider or its chat/image models. Missing native models are a configuration error, not an automatic switch to a paid direct backend.
 
 ## Static OpenRouter snapshot
 
-Verified **2026-10-12 UTC**, ranked by prompt + completion tokens during **2026-10-05 through 2026-10-11**:
+Retrieved **2026-11-21 UTC**, ranked by prompt + completion tokens during **2026-11-14 through 2026-11-20**:
 
-1. `typesafe/jev-1.13`
-2. `perplexity/pplx-decider-v1.1-27b`
-3. `cloudflare/clef-flash` (original rank 4)
-4. `liquid/d1` (original rank 6)
-5. `cloudflare/clef` (original rank 7)
-6. `nace-ai/drex-v1.5` (original rank 8)
-7. `microsoft/microsoft-decision-1` (original rank 9)
-8. `upstage/solar-decide` (original rank 10)
+1. `typesafe/jev-1.13` **(removed in favor of Jev 1.14)**
+2. `typesafe/jev-1.14`
+3. `perplexity/pplx-decider-v1.2` **(removed in favor of Decider v1.3)**
+4. `liquid/d1-ultra`
+5. `perplexity/pplx-decider-v1.3:free`
+6. `liquid/d1.1`
+7. `openai/gpt-6-luna-decisions` **(excluded)**
+8. `perplexity/pplx-decider-flash-v1.3:free`
+9. `nace-ai/drex-max`
+10. `google/gemini-decision-1`
 
-The original top ten was trimmed after live validation: `openai/gpt-6-luna-decisions` and `inception/mercury-decide:free` each returned HTTP 404 with guardrail restrictions twice for this account. They are excluded from both native and direct picker/settings choices; no lower-ranked models were added. These are account-specific routing observations, not claims of global model unavailability. See the [live validation report](../.agents/research/live-provider-validation-2026-10-12.md).
+The catalog also includes these explicitly requested models, with ranks from the same snapshot:
+
+| Rank | Model |
+| ---: | --- |
+| 12 | `cloudflare/clef-flash` |
+| 14 | `liquid/d1.2-ultra` |
+| 16 | `microsoft/microsoft-decision-1.1` |
+| 17 | `cloudflare/clef` |
+| 20 | `liquid/d1.2` |
+| 26 | `cloudflare/clef-omni` |
+
+Jev 1.13 and Decider v1.2 were removed in favor of their newer versions, and Luna remains excluded after [account-specific guardrail failures](../.agents/research/live-provider-validation-2026-10-12.md). These changes apply to the OpenRouter direct and via-Pi choices, not the direct TypeSafe and OpenAI backends. The legacy `liquid/d1` ID is no longer in the public Decisions catalog. Availability varies by account and workload (see the [latest live score checks](../.agents/research/openrouter-clef-d1-microsoft-perplexity-2026-11-22.md)).
 
 Source: [OpenRouter rankings](https://openrouter.ai/rankings), catalog joined with an **unofficial frontend ranking endpoint**, CC BY 4.0. Exact counts and provenance are in `src/catalog/openrouter-models.ts`. This is a dated popularity snapshot of public routed traffic, not model quality or a live availability guarantee. **No runtime popularity-ranking, model-discovery, or catalog-cache requests occur.** Update the list via a reviewed code change; persisted models outside the current list produce an explicit settings error.
 

@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "authoredAt": "2026-11-22 UTC",
+  "labeler": "Assistant judgment based only on the task and public demo skill names/descriptions, written before live decision calls and without consulting prior model scores.",
+  "policy": "Required = should be advertised to complete an explicit or necessary part of the task. Optional = may be advertised but is not required. Every other demo skill should not be advertised. Then measure strict required-only retrieval and separately count truly off-topic picks so optional help is not mistaken for nonsense.",
+  "cases": [
+    {
+      "id": "signup-keyboard",
+      "split": "development",
+      "task": "Add client-side email validation to an existing React signup form. Make validation errors screen-reader friendly and write a Playwright test for keyboard-only submission. Do not change login or the API.",
+      "required": ["react-components", "form-validation", "web-accessibility", "browser-testing"],
+      "optional": ["product-copy", "unit-testing", "typescript-types"],
+      "rationale": "The four explicit deliverables are React wiring, validation, accessibility, and browser testing. Error wording or isolated tests could help, but a signup form edit is not a request to implement authentication."
+    },
+    {
+      "id": "checkout-webhook",
+      "split": "development",
+      "task": "Implement a Node HTTP endpoint for payment webhooks, deduplicate event IDs using a new PostgreSQL unique constraint, and send one receipt email after a successful checkout.",
+      "required": ["node-api", "payments", "database-migrations", "email-delivery"],
+      "optional": ["postgres-queries", "security-review", "unit-testing", "api-contracts", "observability"],
+      "rationale": "The deliverables require a Node handler, payment idempotency, a schema change, and email delivery. Caching and account login are not part of the design."
+    },
+    {
+      "id": "sql-report-only",
+      "split": "development",
+      "task": "Write a read-only PostgreSQL query to report weekly order counts by customer and explain how to inspect its query plan. Do not change the schema, deploy anything, or build an API.",
+      "required": ["postgres-queries"],
+      "optional": [],
+      "rationale": "This is SQL and query-plan analysis only. The mention of orders is not a request for checkout integration, and a schema change is explicitly out of scope."
+    },
+    {
+      "id": "graphql-contract",
+      "split": "development",
+      "task": "Add a backward-compatible GraphQL profile field visible only to the signed-in account owner. Write a short developer-facing example showing the new field; do not redesign the login flow.",
+      "required": ["graphql-schema", "authentication", "technical-docs"],
+      "optional": ["security-review", "unit-testing"],
+      "rationale": "The field is GraphQL, its identity check depends on authentication, and a developer example is requested. REST/OpenAPI guidance is not needed."
+    },
+    {
+      "id": "no-skills-weather",
+      "split": "development",
+      "task": "Explain to a seven-year-old why thunder usually arrives after lightning. Use two short sentences.",
+      "required": [],
+      "optional": [],
+      "rationale": "No skill in the demo inventory is needed for a short explanation of a natural phenomenon."
+    },
+    {
+      "id": "container-pipeline",
+      "split": "holdout",
+      "task": "Create a multistage Docker build, deploy it to an existing Kubernetes cluster with a readiness probe, and add a GitHub Actions workflow that builds the image. Cluster provisioning is out of scope.",
+      "required": ["docker-containers", "kubernetes-deploy", "github-actions"],
+      "optional": ["observability", "technical-docs"],
+      "rationale": "Build packaging, the Kubernetes manifest/probe, and CI are explicit. Nothing calls for provisioning with Terraform or changing Git branch workflows."
+    },
+    {
+      "id": "csv-python-tests",
+      "split": "holdout",
+      "task": "Clean a CSV with pandas, normalize blank timestamps, and use pytest parameterization with seeded edge-case fixtures to test the transformation.",
+      "required": ["python-data", "python-testing", "test-data"],
+      "optional": [],
+      "rationale": "The task explicitly asks for pandas, pytest, and reproducible seeded fixtures. The unit-testing demo skill is JavaScript-specific."
+    },
+    {
+      "id": "responsive-tokens",
+      "split": "holdout",
+      "task": "Make this static page's CSS grid responsive and replace hard-coded spacing and typography colors with shared design tokens. Leave its HTML markup and content alone.",
+      "required": ["css-layout", "design-tokens"],
+      "optional": ["web-accessibility", "browser-testing"],
+      "rationale": "CSS and tokens are the requested changes. Readability and responsive checks could help, but new React components or copy are not requested."
+    },
+    {
+      "id": "incident-runbook",
+      "split": "holdout",
+      "task": "Draft an on-call runbook for rising service latency. Specify which logs and metrics to check first and when to stop a rollout or roll back. No app changes.",
+      "required": ["incident-response", "observability"],
+      "optional": ["technical-docs", "kubernetes-deploy"],
+      "rationale": "An incident runbook and telemetry triage are central. Kubernetes rollout advice may help if the service happens to run there, but the task does not say it does."
+    },
+    {
+      "id": "no-skills-metaphor",
+      "split": "holdout",
+      "task": "Give me a short poem about a cat who calls the sofa a cloud and the window a dashboard. This is a poem, not a software task.",
+      "required": [],
+      "optional": [],
+      "rationale": "The word dashboard is metaphorical, not a request for observability, UI, or UX writing. All demo skills should stay unadvertised."
+    }
+  ]
+}

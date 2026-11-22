@@ -203,6 +203,8 @@ test("choosing a model through the dialog persists it atomically and never enabl
   dialog.handleInput!(KEY.tab); dialog.handleInput!(KEY.tab); // Skills -> Tools -> Decision
   await h.until(dialog, /Decision model/);
   dialog.handleInput!(KEY.enter); // open async backend picker
+  // Search instead of assuming the Direct API group fits in the first viewport.
+  for (const char of "jev-latest") dialog.handleInput!(char);
   await h.until(dialog, /jev-latest · TypeSafe direct/, 120);
   h.selectRow(dialog, /jev-latest · TypeSafe direct/, 120);
   dialog.handleInput!(KEY.enter);
@@ -251,6 +253,7 @@ test("missing keys are labelled, guide to env or /login, and are never persisted
   dialog.handleInput!(KEY.tab); dialog.handleInput!(KEY.tab); // Decision tab
   await h.until(dialog, /Decision model/);
   dialog.handleInput!(KEY.enter);
+  for (const char of "gpt-6-luna") dialog.handleInput!(char);
   await h.until(dialog, /gpt-6-luna · OpenAI direct/, 140);
   assert.match(h.text(dialog, 140), /missing key/);
   h.selectRow(dialog, /gpt-6-luna · OpenAI direct/, 140);

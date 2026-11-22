@@ -217,14 +217,14 @@ export function validateBackendSelection(value: unknown): BackendSelection | nul
     checkKeys(value, ["backend", "provider", "id"]);
     if (!identifier(value.provider) || !identifier(value.id)) throw new SettingsError("Pi selection requires provider and classifier ID");
     if (value.provider === "openrouter" && !isAllowedOpenRouterModel(value.id)) {
-      throw new SettingsError("OpenRouter model is outside the checked-in top ten; select a listed model");
+      throw new SettingsError("OpenRouter model is outside the checked-in catalog; select a listed model");
     }
     return { backend: "pi", provider: value.provider, id: value.id };
   }
   if (value.backend === "openrouter") {
     checkKeys(value, ["backend", "model"]);
     if (!identifier(value.model) || !isAllowedOpenRouterModel(value.model)) {
-      throw new SettingsError("OpenRouter model is outside the checked-in top ten; select a listed model");
+      throw new SettingsError("OpenRouter model is outside the checked-in catalog; select a listed model");
     }
     return { backend: "openrouter", model: value.model };
   }
