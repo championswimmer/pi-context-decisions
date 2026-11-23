@@ -10,7 +10,7 @@ import {
   type PickerLoadContext,
   type SettingsScope,
   type ViewContentContext,
-} from "pi-extension-settings-tui";
+} from "pi-extension-settings-tui/schema";
 import type { BackendSelection } from "./core/backends/factory.ts";
 import { GEMINI_DECISION_MODEL } from "./core/codecs/gemini.ts";
 import { isAllowedOpenRouterModel } from "./catalog/openrouter-models.ts";
@@ -68,7 +68,7 @@ export const ICON_STYLE_LABELS: Readonly<Record<IconStyle, string>> = {
   emoji: "Emoji",
   nerd: "Nerd Font",
 };
-export const HISTORY_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const HISTORY_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type HistoryThinkingLevel = (typeof HISTORY_THINKING_LEVELS)[number];
 export interface HistorySettings { enabled: boolean; model: string; thinkingLevel: HistoryThinkingLevel }
 export interface ContextDecisionsSettings {
@@ -144,7 +144,7 @@ export interface SettingsUiHooks {
 const SUBAGENT_INHERITED_TOOLS_HELP =
   "pi-subagent-manager integration (diagnostics routed to the parent) requires pi-subagent-manager >= 1.1.0 with diagnostics protocol 1. Without this capability, subagent diagnostics fall back to stderr. Requires enabled pi-subagent-manager with subagentExtensions: true ([lab] Enable subagent extensions), and pi-context-decisions installed as a configured package (not only -e). Allows already-bridged parent tools; does not create bridges or bypass the manager's policy.";
 
-export function defaultDecisionSettings(): DecisionSettings {
+function defaultDecisionSettings(): DecisionSettings {
   return {
     threshold: DEFAULT_RELEVANCE_THRESHOLD,
     failMode: "closed",
@@ -179,7 +179,7 @@ export function defaultSettings(): ContextDecisionsSettings {
   };
 }
 
-export function formatBackendSelection(selection: BackendSelection | null): string {
+function formatBackendSelection(selection: BackendSelection | null): string {
   if (!selection) return "Not configured";
   if (selection.backend === "pi") return `Pi ${selection.provider}/${selection.id}`;
   return `${selection.backend} direct ${selection.model ?? (selection.backend === "typesafe" ? "jev-latest" : selection.backend === "gemini" ? GEMINI_DECISION_MODEL : "gpt-6-luna")}`;

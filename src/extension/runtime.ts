@@ -12,7 +12,7 @@ import { createBackend } from "../core/backends/factory.ts";
 import { createDecisionClient } from "../decision/api.ts";
 import { DecisionError } from "../decision/errors.ts";
 import type { DecisionResponse, DecisionUsage } from "../decision/types.ts";
-import { createJsonFileStorageAdapter, createSettingsStore, ConcurrencyConflictError, type StorageAdapter } from "pi-extension-settings-tui";
+import { createJsonFileStorageAdapter, createSettingsStore, ConcurrencyConflictError, type StorageAdapter } from "pi-extension-settings-tui/store";
 import type { ContextDecisionsSettings, ContextDecisionsSettingsSchema, FlatContextDecisionsSettings } from "../settings.ts";
 import { contextSettingsToFlat, createDecisionsSettingsStore, defaultSettings, flatToContextSettings, loadSettings, parseSettings, saveSettings, SettingsError } from "../settings.ts";
 import { SKILL_SCORE_ENTRY } from "./skill-state.ts";

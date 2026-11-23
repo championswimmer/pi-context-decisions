@@ -3,6 +3,7 @@
   "version": "5.3.0",
   "description": "Pi extension that uses decision/classifier models (Pi, TypeSafe JEV, OpenAI, OpenRouter) to filter which skills are advertised and, opt-in, which external tools and MCP servers are available for each prompt",
   "type": "module",
+  "sideEffects": false,
   "license": "MIT",
   "author": "Arnav Gupta",
   "keywords": [
@@ -30,7 +31,6 @@
   },
   "files": [
     "dist/",
-    "docs/*.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

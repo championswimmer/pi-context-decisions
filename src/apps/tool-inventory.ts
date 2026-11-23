@@ -122,7 +122,7 @@ function packageName(source: string): string {
  * `foo/index.ts` -> `foo`); a synthetic path such as `<inline:name>` after its name. Built-in provenance is never an extension. Returns undefined
  * when nothing usable is exposed. Not truncated: the group key hashes this full name.
  */
-export function extensionFullName(info: Pick<ToolInfoLike, "sourceInfo">): string | undefined {
+function extensionFullName(info: Pick<ToolInfoLike, "sourceInfo">): string | undefined {
   const source = info.sourceInfo;
   if (!source) return undefined;
   const path = typeof source.path === "string" ? source.path : "";

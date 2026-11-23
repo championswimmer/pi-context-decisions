@@ -7,7 +7,7 @@ import { sanitizeTerminalText } from "./settings-model.ts";
 const SKILLS_BASE_ENTRY = "context-decisions-base";
 const SKILLS_MESSAGE_TYPE = "context-decisions-skills";
 
-export const HISTORY_KINDS = ["skills", "redelivered", "pinned", "base", "tools", "groups", "noticeTools", "noticeGroups"] as const;
+const HISTORY_KINDS = ["skills", "redelivered", "pinned", "base", "tools", "groups", "noticeTools", "noticeGroups"] as const;
 export type HistoryKind = typeof HISTORY_KINDS[number];
 export interface HistoryBatch {
   /** One-based assistant response on this branch; boundary additions belong to the NEXT response. */

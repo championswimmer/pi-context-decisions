@@ -46,7 +46,7 @@ export interface RelevanceOptions extends DecisionOptions {
   /** 0 (default) or "all" starts every batch together; a positive integer bounds the pool. */
   concurrency?: number | "all";
 }
-export const DEFAULT_RELEVANCE_OPTIONS = Object.freeze({
+const DEFAULT_RELEVANCE_OPTIONS = Object.freeze({
   rubric: "task" as const, subject: "skill" as const,
   maxPromptChars: 4000, maxDescriptionChars: 400, maxNameChars: 64,
   maxStateChars: 65536, maxCandidates: 1000, chunkSize: 50,

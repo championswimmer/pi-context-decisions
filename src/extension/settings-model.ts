@@ -1,10 +1,9 @@
 // Pure data and layout helpers for /decisions views and overlays.
 // No Pi or pi-tui imports: everything here is unit-testable without a terminal.
 import { DecisionError } from "../decision/errors.ts";
-import { ICON_STYLE_LABELS, SettingsError, type ContextDecisionsSettings } from "../settings.ts";
+import { SettingsError } from "../settings-error.ts";
+import { ICON_STYLE_LABELS, type ContextDecisionsSettings } from "../settings-schema.ts";
 import { selectionLabel } from "./contracts.ts";
-
-export { ICON_STYLE_LABELS };
 
 /** Strip control and format characters (ANSI introducers, bidi overrides) and bound the length. */
 export function sanitizeTerminalText(value: unknown, limit = 400): string {

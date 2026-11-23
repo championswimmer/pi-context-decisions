@@ -98,13 +98,13 @@ Think of the decider as a **context picker beside your coding agent**, not anoth
 
 ### 1. The familiar loop, with a picker added
 
-![Send a task, pick relevant context, then let the model answer or call tools. Tool results loop back to the model; more context can be added before its next step.](docs/assets/agent-session-loop.png)
+![Send a task, pick relevant context, then let the model answer or call tools. Tool results loop back to the model; more context can be added before its next step.](https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/docs/assets/agent-session-loop.png)
 
 The usual loop is unchanged: **task → model → tool → result → model → answer**. Selection happens before the first coding-model step and, when needed, between later steps. The picker never forces an extra coding-model turn. Tool filtering is optional; when enabled, it also checks calls before execution.
 
 ### 2. Keep earlier choices; add relevant ones
 
-![The picker sees your task and short candidate summaries, ranks items not already available, and adds relevant matches while preserving earlier choices and always-allowed items.](docs/assets/context-decider.png)
+![The picker sees your task and short candidate summaries, ranks items not already available, and adds relevant matches while preserving earlier choices and always-allowed items.](https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/docs/assets/context-decider.png)
 
 A **skill** is reusable guidance the coding model can load; the picker advertises its description, not its full instructions. Tools can be picked individually, or as whole **MCP-server or extension tool groups**.
 
@@ -112,7 +112,7 @@ For example: “Review this code” might add a review skill. Later, “Prepare 
 
 ### 3. Finding a tool does not mean it can run
 
-![Direct tool lists withhold unavailable external tools. Search and generated code can still find tools, so every call is checked: available tools run; unavailable calls return an error.](docs/assets/tool-availability-gates.png)
+![Direct tool lists withhold unavailable external tools. Search and generated code can still find tools, so every call is checked: available tools run; unavailable calls return an error.](https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/docs/assets/tool-availability-gates.png)
 
 **Direct tools** have their definitions listed in the model request. **Indirect tools** are reached through search or generated code (codemode). A short notice tells the model which indirect tools are available; it does not override the direct list. Both direct and nested calls are checked before the target tool runs. Discovery and MCP connections stay unchanged—this is relevance filtering, **not a sandbox**.
 
@@ -137,11 +137,11 @@ New tools can also be checked when they appear or are first called. With no deci
 - **At execution:** `tool_call` checks direct and nested calls. Eligible unscored tools can trigger one shared decision round. MCP resource calls are routed by their local `server` argument; unscoped resource listing is blocked while filtering is on. No call arguments reach the decision model.
 - **Limits:** late-connecting direct tools can appear in the first request, but calls are still checked. Enabling mid-session preserves registered tools. Pi owns system-section persistence and compaction; tool notices are not re-delivered.
 
-See [skill picking](docs/skill-picking.md) and [tool-filtering limitations](docs/tool-filtering.md#limits-stated-plainly) for the full contracts.
+See [skill picking](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/skill-picking.md) and [tool-filtering limitations](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/tool-filtering.md#limits-stated-plainly) for the full contracts.
 
 </details>
 
-Editable SVGs: [agent loop](docs/assets/agent-session-loop.svg) · [picker](docs/assets/context-decider.svg) · [tool checks](docs/assets/tool-availability-gates.svg). [Offline PNG regeneration and implementation notes](docs/assets/README.md).
+Editable SVGs: [agent loop](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/assets/agent-session-loop.svg) · [picker](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/assets/context-decider.svg) · [tool checks](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/assets/tool-availability-gates.svg). [Offline PNG regeneration and implementation notes](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/assets/README.md).
 
 ### Compact footer
 
@@ -150,7 +150,7 @@ Editable SVGs: [agent loop](docs/assets/agent-session-loop.svg) · [picker](docs
 🎯 📚 12/40 🔧 18/120
 ```
 
-Skills show advertised/total; tools show available/external total (`g` for groups). Choose **Footer icons** under `/decisions` → **Advanced**: ASCII/Unicode, Emoji, or Nerd Font. [Icon requirements and footer states](docs/settings.md#compact-footer).
+Skills show advertised/total; tools show available/external total (`g` for groups). Choose **Footer icons** under `/decisions` → **Advanced**: ASCII/Unicode, Emoji, or Nerd Font. [Icon requirements and footer states](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/settings.md#compact-footer).
 
 ## Know before enabling
 
@@ -160,12 +160,12 @@ Skills show advertised/total; tools show available/external total (`g` for group
 
 ## Documentation
 
-- [Settings, commands and always-allowed lists](docs/settings.md)
-- [Providers and credentials](docs/providers.md)
-- [How skill picking works](docs/skill-picking.md)
-- [Tool/MCP filtering and its limitations](docs/tool-filtering.md)
-- [Library API](docs/api.md)
-- [Development and tests](docs/development.md) · [Publishing](docs/publishing.md)
+- [Settings, commands and always-allowed lists](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/settings.md)
+- [Providers and credentials](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/providers.md)
+- [How skill picking works](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/skill-picking.md)
+- [Tool/MCP filtering and its limitations](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/tool-filtering.md)
+- [Library API](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/api.md)
+- [Development and tests](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/development.md) · [Publishing](https://github.com/championswimmer/pi-context-decisions/blob/main/docs/publishing.md)
 - [Changelog](CHANGELOG.md)
 
 [MIT license](LICENSE).

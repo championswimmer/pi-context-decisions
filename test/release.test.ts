@@ -37,13 +37,13 @@ test("Pi host packages are peers, never runtime dependencies; pi-extension-setti
   assert.equal(pkg.peerDependencies["@earendil-works/pi-coding-agent"], ">=1.5.0");
 });
 
-test("published file list ships compiled output and documentation and excludes sources, tests, demos and scripts", () => {
-  assert.deepEqual(pkg.files, ["dist/", "docs/*.md", "README.md", "CHANGELOG.md", "LICENSE"]);
+test("published file list ships compiled output and top-level metadata and excludes maps, docs, sources, tests, demos and scripts", () => {
+  assert.deepEqual(pkg.files, ["dist/", "README.md", "CHANGELOG.md", "LICENSE"]);
+  assert.equal(pkg.sideEffects, false);
   const out = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { encoding: "utf8", cwd: new URL("..", import.meta.url) }));
   const paths: string[] = out[0].files.map((file: { path: string }) => file.path);
-  for (const required of ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "docs/README.md", "docs/settings.md", "docs/providers.md", "docs/skill-picking.md", "docs/tool-filtering.md", "docs/api.md", "docs/development.md", "docs/publishing.md", "dist/extension.js", "dist/extension.d.ts", "dist/index.js", "dist/index.d.ts", "dist/host/pi-credentials.js", "dist/host/pi-credentials.d.ts"]) assert.ok(paths.includes(required), required);
-  for (const path of paths) assert.ok(!/^(src|test|scripts|examples|node_modules|\.github)\//.test(path) && !/\.(env|tgz)/.test(path) && path !== "AGENTS.md", path);
-  assert.ok(!paths.some((path) => path.startsWith("docs/benchmarks/")));
+  for (const required of ["package.json", "README.md", "CHANGELOG.md", "LICENSE", "dist/extension.js", "dist/extension.d.ts", "dist/index.js", "dist/index.d.ts", "dist/host/pi-credentials.js", "dist/host/pi-credentials.d.ts"]) assert.ok(paths.includes(required), required);
+  for (const path of paths) assert.ok(!/^(src|test|scripts|examples|docs|node_modules|\.github)\//.test(path) && !/\.(env|tgz|map)$/.test(path) && path !== "AGENTS.md", path);
   const exportTargets = Object.values(pkg.exports).flatMap((v) => typeof v === "string" ? [v] : Object.values(v as Record<string, string>));
   for (const target of [pkg.main, pkg.types, pkg.pi.extensions[0], ...exportTargets]) assert.ok(paths.includes(target.replace(/^\.\//, "")), target);
 });

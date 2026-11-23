@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { formatBackendSelection } from "../settings-schema.ts";
+import { GEMINI_DECISION_MODEL } from "../core/codecs/gemini.ts";
 import type { RegistryLike, BackendSelection } from "../core/backends/factory.ts";
 import type { DecisionClient } from "../decision/api.ts";
 import type { ContextDecisionsSettings, ContextDecisionsSettingsSchema, DecisionsSettingsStore, FlatContextDecisionsSettings, SettingsLoadResult } from "../settings.ts";
@@ -117,7 +117,7 @@ export interface Controller {
 export function selectionLabel(selection: BackendSelection | null): string {
   if (!selection) return "not configured";
   if (selection.backend === "pi") return `Pi ${selection.provider}/${selection.id}`;
-  return formatBackendSelection(selection);
+  return `${selection.backend} direct ${selection.model ?? (selection.backend === "typesafe" ? "jev-latest" : selection.backend === "gemini" ? GEMINI_DECISION_MODEL : "gpt-6-luna")}`;
 }
 export interface ExtensionDependencies {
   settingsPath: string;

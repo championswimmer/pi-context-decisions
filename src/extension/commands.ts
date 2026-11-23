@@ -1,10 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-  openSettingsDialog,
-  type DialogRouteComponent,
-  type DynamicPickerOption,
-  type ModelPickerEntry,
-} from "pi-extension-settings-tui";
+import { openSettingsDialog } from "pi-extension-settings-tui/adapter";
+import type { DialogRouteComponent } from "pi-extension-settings-tui/dialog";
+import type { DynamicPickerOption, ModelPickerEntry } from "pi-extension-settings-tui/schema";
 import { buildPickerEntries, type AuthStatus, type PickerEntry } from "../catalog/picker-models.ts";
 import { resolveGeminiKey, resolveOpenAIKey, resolveOpenRouterKey, resolveTypeSafeKey, type CredentialSource } from "../core/auth.ts";
 import { createDeadline } from "../core/control.ts";
@@ -46,7 +43,7 @@ function cleanLabel(value: string): string { return sanitizeTerminalText(value, 
 const safeError = describeError;
 
 /** Thrown by a dialog-scoped context after the dialog closed; callers must drop the work silently. */
-export class DialogClosedError extends Error {
+class DialogClosedError extends Error {
   constructor() {
     super("Settings dialog closed");
     this.name = "DialogClosedError";
@@ -59,7 +56,7 @@ export class DialogClosedError extends Error {
  * Pi invalidates every ctx property after a reload. Never spread a ctx and never read `ctx.signal`:
  * in a command that is the agent-run signal, not the dialog's lifetime.
  */
-export function scopedContext(ctx: CommandContext, signal: AbortSignal | undefined, isOpen: () => boolean): CommandContext {
+function scopedContext(ctx: CommandContext, signal: AbortSignal | undefined, isOpen: () => boolean): CommandContext {
   const hasUI = ctx.hasUI, mode = ctx.mode, cwd = ctx.cwd;
   let projectTrusted = false;
   try { projectTrusted = ctx.isProjectTrusted?.() === true; } catch { /* unknown trust is untrusted */ }

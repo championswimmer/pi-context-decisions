@@ -18,7 +18,7 @@ export function responseCheck(request: DecisionRequest, response: unknown): Deci
 }
 export function number(value: unknown): number { if (typeof value !== "number" || !Number.isFinite(value)) invalid(); return value; }
 export function string(value: unknown): string { if (typeof value !== "string" || !value.trim()) invalid(); return value; }
-export function numberMap(value: unknown): Record<string, number> {
+function numberMap(value: unknown): Record<string, number> {
   if (!isRecord(value)) invalid();
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, number(entry)]));
 }
