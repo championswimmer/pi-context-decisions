@@ -29,29 +29,43 @@
     "node": ">=22.18.0"
   },
   "files": [
-    "src/",
+    "dist/",
     "docs/*.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./extension": "./src/extension.ts",
-    "./pi-credentials": "./src/host/pi-credentials.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./pi-credentials": {
+      "types": "./dist/host/pi-credentials.d.ts",
+      "import": "./dist/host/pi-credentials.js"
+    },
+    "./package.json": "./package.json"
   },
-  "types": "./src/index.ts",
   "pi": {
     "extensions": [
-      "./src/extension.ts"
+      "./dist/extension.js"
     ]
   },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "demo:skills": "node --experimental-strip-types scripts/demo-skill-picker.ts",
     "changelog": "node --experimental-strip-types .github/scripts/changelog.ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck && npm test"
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
     "pi-extension-settings-tui": "^0.5.0"

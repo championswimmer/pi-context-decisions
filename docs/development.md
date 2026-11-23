@@ -4,8 +4,9 @@
 
 ```bash
 npm ci --ignore-scripts
-npm test
 npm run typecheck
+npm run build
+npm test
 npm pack --dry-run --ignore-scripts
 ```
 
