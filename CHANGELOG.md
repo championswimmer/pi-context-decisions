@@ -4,6 +4,14 @@ Generated from version tags and merged GitHub pull requests. Do not edit this fi
 
 ## 5.x
 
+### [v5.3.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v5.3.0) — Minor release (2026-11-23)
+
+<!-- Release notes generated using configuration in .github/release.yml at v5.3.0 -->
+
+
+
+**Full Changelog**: https://github.com/championswimmer/pi-context-decisions/compare/v5.2.0...v5.3.0
+
 ### [v5.2.0](https://github.com/championswimmer/pi-context-decisions/releases/tag/v5.2.0) — Minor release (2026-11-22)
 
 <!-- Release notes generated using configuration in .github/release.yml at v5.2.0 -->
