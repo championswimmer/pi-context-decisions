@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "retrievedAt": "2026-11-24 UTC (approx. 03:00)",
+  "window": "2026-11-17 through 2026-11-23 UTC (7 complete daily buckets; prompt + completion tokens)",
+  "sources": [
+    "https://openrouter.ai/api/v1/models?output_modalities=decisions",
+    "https://openrouter.ai/api/frontend/v1/rankings/models?view=week&metric=tokens (unofficial frontend endpoint; OpenRouter rankings, CC BY 4.0)"
+  ],
+  "method": "Concrete (non-alias) catalog variants joined to the ranking by exact canonical_slug (+':free' only for :free ids); paid and free variants not combined; sorted by tokens. Popularity is not a quality guarantee.",
+  "models": [
+    {
+      "rank": 1,
+      "id": "typesafe/jev-1.13",
+      "weeklyTokens": 2867645738506,
+      "variant": "typesafe/jev-1.13-20260917"
+    },
+    {
+      "rank": 2,
+      "id": "typesafe/jev-1.14",
+      "weeklyTokens": 2410606533178,
+      "variant": "typesafe/jev-1.14-20261014"
+    },
+    {
+      "rank": 3,
+      "id": "perplexity/pplx-decider-v1.2",
+      "weeklyTokens": 460501929334,
+      "variant": "perplexity/pplx-decider-v1.2-20261016"
+    },
+    {
+      "rank": 4,
+      "id": "liquid/d1-ultra",
+      "weeklyTokens": 329343210047,
+      "variant": "liquid/d1-ultra-20261015"
+    },
+    {
+      "rank": 5,
+      "id": "perplexity/pplx-decider-v1.3:free",
+      "weeklyTokens": 220127827639,
+      "variant": "perplexity/pplx-decider-v1.3-20261112:free"
+    },
+    {
+      "rank": 6,
+      "id": "perplexity/pplx-decider-flash-v1.3:free",
+      "weeklyTokens": 88151909161,
+      "variant": "perplexity/pplx-decider-flash-v1.3-20261112:free"
+    },
+    {
+      "rank": 7,
+      "id": "openai/gpt-6-luna-decisions",
+      "weeklyTokens": 72752139186,
+      "variant": "openai/gpt-6-luna-decisions-20261006"
+    },
+    {
+      "rank": 8,
+      "id": "respan/span-01-lite",
+      "weeklyTokens": 42769940184,
+      "variant": "respan/span-01-lite-20260925"
+    },
+    {
+      "rank": 9,
+      "id": "liquid/d1.2-ultra",
+      "weeklyTokens": 41294570971,
+      "variant": "liquid/d1.2-ultra-20261116"
+    },
+    {
+      "rank": 10,
+      "id": "nace-ai/drex-max",
+      "weeklyTokens": 39605478346,
+      "variant": "nace-ai/drex-max-20261016"
+    },
+    {
+      "rank": 11,
+      "id": "google/gemini-decision-1",
+      "weeklyTokens": 37747994707,
+      "variant": "google/gemini-decision-1-20261111"
+    },
+    {
+      "rank": 12,
+      "id": "liquid/d1.1",
+      "weeklyTokens": 36271783829,
+      "variant": "liquid/d1.1-20261027"
+    },
+    {
+      "rank": 13,
+      "id": "nace-ai/drex-v1.5",
+      "weeklyTokens": 23416168331,
+      "variant": "nace-ai/drex-v1.5-20261009"
+    },
+    {
+      "rank": 14,
+      "id": "cloudflare/clef-flash",
+      "weeklyTokens": 23020782490,
+      "variant": "cloudflare/clef-flash"
+    },
+    {
+      "rank": 15,
+      "id": "microsoft/microsoft-decision-1.1",
+      "weeklyTokens": 22260125124,
+      "variant": "microsoft/microsoft-decision-1.1-20261117"
+    },
+    {
+      "rank": 16,
+      "id": "microsoft/microsoft-decision-1",
+      "weeklyTokens": 18249746383,
+      "variant": "microsoft/microsoft-decision-1-20261009"
+    },
+    {
+      "rank": 17,
+      "id": "liquid/d1.2",
+      "weeklyTokens": 15939164186,
+      "variant": "liquid/d1.2-20261116"
+    },
+    {
+      "rank": 18,
+      "id": "perplexity/pplx-decider-flash-v1.2",
+      "weeklyTokens": 14903669615,
+      "variant": "perplexity/pplx-decider-flash-v1.2-20261016"
+    },
+    {
+      "rank": 19,
+      "id": "cloudflare/clef",
+      "weeklyTokens": 13625336034,
+      "variant": "cloudflare/clef"
+    },
+    {
+      "rank": 20,
+      "id": "respan/span-02",
+      "weeklyTokens": 11699508770,
+      "variant": "respan/span-02-20261015"
+    }
+  ]
+}

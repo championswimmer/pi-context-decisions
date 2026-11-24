@@ -14,6 +14,5 @@ Start with the [README](../README.md) for installation and everyday use.
 
 ## Benchmarks
 
-- [OpenRouter decision models vs. a manual skill baseline](benchmarks/decision-models-2026-11-22.md): coverage, latency, quality, threshold sweep, and raw scores (November 22, 2026).
-- [Threshold comparison graphs: 0.30, 0.40, and 0.50](benchmarks/decision-thresholds-2026-11-22.md): off-topic picks, missed required skills, and picking quality vs. latency and cost.
+- [OpenRouter top-20 decision models: three-run skill-picking benchmark](benchmarks/decision-benchmark-report.md): 3 repeats per prompt; frozen spec in `benchmarks/decision-benchmark.json`, roster in `benchmarks/decision-models-top20.json`.
 - [Per-skill choice vs. score](benchmarks/relevance-choice-vs-score.md): historical comparison of selection methods (October 13, 2026).

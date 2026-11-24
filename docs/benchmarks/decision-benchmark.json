@@ -1,0 +1,61 @@
+{
+  "version": 2,
+  "authoredAt": "2026-11-24 UTC",
+  "labeler": "Assistant judgment from the prompt and the public demo skill names/descriptions only; written and frozen before any decision-model request.",
+  "policy": "shouldPick = skills that must be advertised to do the prompt's explicit work. acceptable = plausible adjacent help: allowed, never penalised, never required. Every other skill is off-topic for that run. The three shouldPick sets are pairwise disjoint and span three unrelated domains, so a model that returns the same skills for every run cannot score well.",
+  "inventory": {
+    "count": 30,
+    "sha256": "a2425e65346c4e2773f4e1e26574dcdb668471fb86e0a5d6564ed833c6029d5d"
+  },
+  "selection": "Production score-only picker: advertise a skill when its 0-2 score >= 2 * threshold (threshold 0.375), cap 12.",
+  "runs": [
+    {
+      "id": "run-a",
+      "domain": "frontend",
+      "prompt": "Add client-side email validation to an existing React signup form. Make the validation errors screen-reader friendly and write a Playwright test for keyboard-only submission. Do not touch the API or login.",
+      "shouldPick": [
+        "react-components",
+        "form-validation",
+        "web-accessibility",
+        "browser-testing"
+      ],
+      "acceptable": [
+        "product-copy",
+        "typescript-types",
+        "unit-testing"
+      ],
+      "rationale": "React wiring, field validation, accessible errors and a Playwright test are the four explicit deliverables."
+    },
+    {
+      "id": "run-b",
+      "domain": "devops",
+      "prompt": "Package our service as a Docker image, deploy it to Kubernetes with proper health probes, run the build and tests in GitHub Actions CI, and add latency metrics with an alert so we can see how it behaves in production.",
+      "shouldPick": [
+        "docker-containers",
+        "kubernetes-deploy",
+        "github-actions",
+        "observability"
+      ],
+      "acceptable": [
+        "terraform-infra",
+        "incident-response",
+        "git-workflows"
+      ],
+      "rationale": "Container packaging, cluster rollout, CI pipeline and metrics/alerting are the four explicit deliverables."
+    },
+    {
+      "id": "run-c",
+      "domain": "python-data",
+      "prompt": "Clean a messy CSV of customer records with pandas, then add pytest regression tests that run against realistic seeded sample data including boundary values.",
+      "shouldPick": [
+        "python-data",
+        "python-testing",
+        "test-data"
+      ],
+      "acceptable": [
+        "technical-docs"
+      ],
+      "rationale": "Pandas cleaning, pytest suite and fixture data are the explicit deliverables; nothing web, database or deployment related is requested."
+    }
+  ]
+}
