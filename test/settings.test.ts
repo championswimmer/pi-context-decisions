@@ -35,7 +35,7 @@ test("every static router ID accepted by direct and native, aliases and unlisted
     assert.deepEqual(validateBackendSelection({ backend: "openrouter", model: id }), { backend: "openrouter", model: id });
     assert.deepEqual(validateBackendSelection({ backend: "pi", provider: "openrouter", id }), { backend: "pi", provider: "openrouter", id });
   }
-  for (const id of ["~typesafe/jev-latest", "respan/span-01", "typesafe/jev-1.13", "perplexity/pplx-decider-v1.2", "microsoft/microsoft-decision-1", "liquid/d1", "typesafe/jev-1.14-20261014", "unknown/model", "inception/mercury-decide:free"]) {
+  for (const id of ["~typesafe/jev-latest", "respan/span-01", "respan/span-01-lite", "microsoft/microsoft-decision-1", "liquid/d1", "typesafe/jev-1.14-20261014", "unknown/model", "inception/mercury-decide:free"]) {
     assert.throws(() => validateBackendSelection({ backend: "openrouter", model: id }), /outside the checked-in catalog/);
     assert.throws(() => validateBackendSelection({ backend: "pi", provider: "openrouter", id }), /outside the checked-in catalog/);
   }
@@ -90,7 +90,7 @@ test("invalid writes leave existing file unchanged; rename failure cleans temp",
 });
 test("stale nonallowlisted persisted router model is an explicit error with no substituted backend", async (t) => {
   const path = join(await directory(t), "settings.json");
-  await writeFile(path, JSON.stringify({ ...defaultSettings(), backend: { backend: "openrouter", model: "typesafe/jev-1.13" } }));
+  await writeFile(path, JSON.stringify({ ...defaultSettings(), backend: { backend: "openrouter", model: "microsoft/microsoft-decision-1" } }));
   const result = await loadSettings(path); assert.match(result.error!, /outside the checked-in catalog/); assert.equal(result.settings.backend, null);
 });
 test("malformed, oversized, and secret-bearing reads fail explicitly without sensitive diagnostics", async (t) => {

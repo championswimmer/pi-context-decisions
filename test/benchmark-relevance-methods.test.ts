@@ -68,7 +68,7 @@ test("benchmark fixture: at least three cases incl. multi-skill and unrelated, a
 test("default models are the five highest-ranked retained models", () => {
   assert.equal(new Set(DEFAULT_MODELS).size, 5);
   assert.deepEqual(DEFAULT_MODELS, OPENROUTER_DECISION_MODELS.slice(0, 5).map(({ id }) => id));
-  assert.throws(() => parseArgs(["--models", "typesafe/jev-1.13"]), BenchmarkError);
+  assert.throws(() => parseArgs(["--models", "respan/span-01-lite"]), BenchmarkError);
   assert.throws(() => parseArgs(["--models", "typesafe/jev-1.14,typesafe/jev-1.14"]), BenchmarkError);
 });
 test("default plan fits the 100-request budget: 5 models x 4 cases x (2 trials x 2 arms + 1 shortlist)", () => {
