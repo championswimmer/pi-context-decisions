@@ -5,7 +5,7 @@
  * These are popularity figures for public OpenRouter traffic, not model quality.
  * The list is the union of the 2026-11-24 popularity top ten (minus models whose
  * request shape this extension cannot send) and the top five by benchmark accuracy,
- * kept alongside earlier explicitly requested variants from the same leaderboard. No automatic backfill or runtime discovery.
+ * and nothing else; models outside both sets were removed on purpose. No automatic backfill or runtime discovery.
  * Update this source file deliberately when adopting a newer verified snapshot.
  */
 export interface OpenRouterDecisionModel {
@@ -45,15 +45,9 @@ export const OPENROUTER_DECISION_MODELS: readonly OpenRouterDecisionModel[] = Ob
   { id: "openai/gpt-6-luna-decisions", popularityRank: 7, name: "OpenAI: GPT-6 Luna Decisions", canonicalSlug: "openai/gpt-6-luna-decisions-20261006", weeklyTokens: "72752139186" },
   { id: "liquid/d1.2-ultra", popularityRank: 9, name: "LiquidAI: d1.2-ultra", canonicalSlug: "liquid/d1.2-ultra-20261116", weeklyTokens: "41294570971" },
   { id: "nace-ai/drex-max", popularityRank: 10, name: "Nace.AI: Drex Max", canonicalSlug: "nace-ai/drex-max-20261016", weeklyTokens: "39605478346" },
-  { id: "google/gemini-decision-1", popularityRank: 11, name: "Google: Gemini Decision 1", canonicalSlug: "google/gemini-decision-1-20261111", weeklyTokens: "37747994707" },
   { id: "liquid/d1.1", popularityRank: 12, name: "LiquidAI: d1.1", canonicalSlug: "liquid/d1.1-20261027", weeklyTokens: "36271783829" },
   { id: "nace-ai/drex-v1.5", popularityRank: 13, name: "Nace.AI: Drex v1.5", canonicalSlug: "nace-ai/drex-v1.5-20261009", weeklyTokens: "23416168331" },
-  { id: "cloudflare/clef-flash", popularityRank: 14, name: "Cloudflare: Clef Flash", canonicalSlug: "cloudflare/clef-flash", weeklyTokens: "23020782490" },
-  { id: "microsoft/microsoft-decision-1.1", popularityRank: 15, name: "Microsoft: Microsoft-Decision-1.1", canonicalSlug: "microsoft/microsoft-decision-1.1-20261117", weeklyTokens: "22260125124" },
-  { id: "liquid/d1.2", popularityRank: 17, name: "LiquidAI: d1.2", canonicalSlug: "liquid/d1.2-20261116", weeklyTokens: "15939164186" },
   { id: "perplexity/pplx-decider-flash-v1.2", popularityRank: 18, name: "Perplexity: Decider Flash V1.2", canonicalSlug: "perplexity/pplx-decider-flash-v1.2-20261016", weeklyTokens: "14903669615" },
-  { id: "cloudflare/clef", popularityRank: 19, name: "Cloudflare: Clef", canonicalSlug: "cloudflare/clef", weeklyTokens: "13625336034" },
-  { id: "cloudflare/clef-omni", popularityRank: 29, name: "Cloudflare: Clef Omni", canonicalSlug: "cloudflare/clef-omni-20261009", weeklyTokens: "2023417504" },
 ].map((model) => Object.freeze(model)));
 
 export function getOpenRouterDecisionModel(id: string): OpenRouterDecisionModel | undefined {

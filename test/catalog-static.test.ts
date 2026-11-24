@@ -17,15 +17,9 @@ const EXPECTED = [
   ["openai/gpt-6-luna-decisions", "72752139186"],
   ["liquid/d1.2-ultra", "41294570971"],
   ["nace-ai/drex-max", "39605478346"],
-  ["google/gemini-decision-1", "37747994707"],
   ["liquid/d1.1", "36271783829"],
   ["nace-ai/drex-v1.5", "23416168331"],
-  ["cloudflare/clef-flash", "23020782490"],
-  ["microsoft/microsoft-decision-1.1", "22260125124"],
-  ["liquid/d1.2", "15939164186"],
   ["perplexity/pplx-decider-flash-v1.2", "14903669615"],
-  ["cloudflare/clef", "13625336034"],
-  ["cloudflare/clef-omni", "2023417504"],
 ];
 function selectionId(selection: PickerSelection): string | undefined {
   if (selection.backend === "openrouter") return selection.model;
@@ -34,10 +28,10 @@ function selectionId(selection: PickerSelection): string | undefined {
 }
 
 test("checked-in catalog preserves the actual weekly ranks of both retained and added models", () => {
-  assert.equal(OPENROUTER_DECISION_MODELS.length, 18);
-  assert.deepEqual(OPENROUTER_DECISION_MODELS.map((m) => m.popularityRank), [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 29]);
+  assert.equal(OPENROUTER_DECISION_MODELS.length, 12);
+  assert.deepEqual(OPENROUTER_DECISION_MODELS.map((m) => m.popularityRank), [1, 2, 3, 4, 5, 6, 7, 9, 10, 12, 13, 18]);
   assert.deepEqual(OPENROUTER_DECISION_MODELS.map((m) => [m.id, m.weeklyTokens]), EXPECTED);
-  assert.equal(new Set(OPENROUTER_DECISION_MODELS.map((m) => m.id)).size, 18);
+  assert.equal(new Set(OPENROUTER_DECISION_MODELS.map((m) => m.id)).size, 12);
   for (let i = 0; i < OPENROUTER_DECISION_MODELS.length; i++) {
     const model = OPENROUTER_DECISION_MODELS[i];
     assert.ok(model.name && model.canonicalSlug);
@@ -111,19 +105,18 @@ test("router offers only catalog IDs, even when excluded models are registered w
     { provider: "openrouter", id: "unknown/new-decision" },
   ], auth: { openrouter: "missing" } });
   const router = entries.filter((entry) => entry.group === "openrouter-catalog");
-  assert.equal(router.length, 23);
+  assert.equal(router.length, 16);
   assert.deepEqual(router.filter((entry) => entry.selection.backend === "openrouter").map((entry) => selectionId(entry.selection)), EXPECTED.map(([id]) => id));
-  assert.deepEqual(router.filter((entry) => entry.selection.backend === "pi").map((entry) => selectionId(entry.selection)), ["typesafe/jev-1.13", "typesafe/jev-1.14", "perplexity/pplx-decider-v1.3:free", "openai/gpt-6-luna-decisions", "microsoft/microsoft-decision-1.1"]);
-  assert.equal(new Set(router.map((entry) => selectionId(entry.selection))).size, 18);
-  assert.match(router.find((entry) => selectionId(entry.selection) === "microsoft/microsoft-decision-1.1")?.note ?? "", /^#15 ·/);
+  assert.deepEqual(router.filter((entry) => entry.selection.backend === "pi").map((entry) => selectionId(entry.selection)), ["typesafe/jev-1.13", "typesafe/jev-1.14", "perplexity/pplx-decider-v1.3:free", "openai/gpt-6-luna-decisions"]);
+  assert.equal(new Set(router.map((entry) => selectionId(entry.selection))).size, 12);
+  assert.match(router.find((entry) => selectionId(entry.selection) === "liquid/d1.1")?.note ?? "", /^#12 ·/);
   for (const entry of router) {
     assert.equal(entry.authStatus, "missing");
     assert.match(entry.note ?? "", /static snapshot 2026-11-24/);
     assert.match(entry.note ?? "", /unofficial OpenRouter rankings/);
     assert.match(entry.note ?? "", /2026-11-17–2026-11-23/);
   }
-  assert.ok(router.some((entry) => entry.selection.backend === "openrouter" && entry.selection.model === "google/gemini-decision-1"));
-  assert.ok(!router.some((entry) => entry.selection.backend === "pi" && entry.selection.id === "google/gemini-decision-1"));
+  for (const removed of ["google/gemini-decision-1", "microsoft/microsoft-decision-1.1", "cloudflare/clef-flash"]) assert.ok(!router.some((entry) => selectionId(entry.selection) === removed));
 });
 
 test("direct backends offer Luna and Gemini without native registrations", () => {
@@ -136,7 +129,7 @@ test("direct backends offer Luna and Gemini without native registrations", () =>
     { backend: "gemini", model: "gemini-decision-1" },
   ]);
   assert.equal(classifiers.length, 1);
-  assert.equal(entries.filter((entry) => entry.group === "openrouter-catalog").length, 18);
+  assert.equal(entries.filter((entry) => entry.group === "openrouter-catalog").length, 12);
 });
 
 test("runtime picker/catalog do not call network or change checked-in ranking", () => {
@@ -144,7 +137,7 @@ test("runtime picker/catalog do not call network or change checked-in ranking", 
   let calls = 0;
   globalThis.fetch = async () => { calls++; throw new Error("Network forbidden"); };
   try {
-    assert.equal(buildPickerEntries({ piClassifiers: [], auth: {} }).filter((e) => e.group === "openrouter-catalog").length, 18);
+    assert.equal(buildPickerEntries({ piClassifiers: [], auth: {} }).filter((e) => e.group === "openrouter-catalog").length, 12);
     assert.equal(getOpenRouterDecisionModel("typesafe/jev-1.14")?.weeklyTokens, "2410606533178");
     assert.equal(calls, 0);
   } finally { globalThis.fetch = original; }

@@ -6,7 +6,7 @@ Native Pi classifiers are listed independently of the chat model; Pi's `/model` 
 
 ## Static OpenRouter snapshot
 
-Retrieved **2026-11-24 UTC**, ranked by prompt + completion tokens during **2026-11-17 through 2026-11-23**. The catalog is the union of the popularity top ten, the top five models by [benchmark accuracy](benchmarks/decision-benchmark-report.md) (three repeats on three prompts), and the variants that were already allowed, so existing saved selections keep working. Ranks are positions among all concrete decision models in the leaderboard:
+Retrieved **2026-11-24 UTC**, ranked by prompt + completion tokens during **2026-11-17 through 2026-11-23**. The catalog is exactly the union of the popularity top ten and the top five models by [benchmark accuracy](benchmarks/decision-benchmark-report.md) (three repeats on three prompts); every other OpenRouter model was removed, and a saved selection outside the list produces a settings error until a new model is picked. Ranks are positions among all concrete decision models in the leaderboard:
 
 | Rank | Model |
 | ---: | --- |
@@ -19,23 +19,17 @@ Retrieved **2026-11-24 UTC**, ranked by prompt + completion tokens during **2026
 | 7 | `openai/gpt-6-luna-decisions` |
 | 9 | `liquid/d1.2-ultra` |
 | 10 | `nace-ai/drex-max` |
-| 11 | `google/gemini-decision-1` |
 | 12 | `liquid/d1.1` |
 | 13 | `nace-ai/drex-v1.5` |
-| 14 | `cloudflare/clef-flash` |
-| 15 | `microsoft/microsoft-decision-1.1` |
-| 17 | `liquid/d1.2` |
 | 18 | `perplexity/pplx-decider-flash-v1.2` |
-| 19 | `cloudflare/clef` |
-| 29 | `cloudflare/clef-omni` |
 
-Not listed: `respan/span-01-lite` (rank 8). Respan models require a message-array `state`, so every request this extension sends fails with HTTP 400. Ranks 8 and above are not backfilled. The 5th accuracy slot was an exact tie between `cloudflare/clef-flash` and `perplexity/pplx-decider-flash-v1.2` (72.2%); the lower-variance model was added, and Clef Flash was already allowed. Luna and Gemini Decision 1 remain available in the picker even when a particular OpenRouter account cannot route them. Availability varies by account and workload (see the [latest live score checks](../.agents/research/openrouter-top20-accuracy-2026-11-24.md)).
+Not listed: `respan/span-01-lite` (rank 8). Respan models require a message-array `state`, so every request this extension sends fails with HTTP 400. Ranks 8 and above are not backfilled. The 5th accuracy slot was an exact tie between `cloudflare/clef-flash` and `perplexity/pplx-decider-flash-v1.2` (72.2%); the lower-variance model was kept. Gemini Decision 1 is no longer offered through OpenRouter (rank 11); the Google direct backend is unchanged. Availability varies by account and workload (see the [latest live score checks](../.agents/research/openrouter-top20-accuracy-2026-11-24.md)).
 
 Source: [OpenRouter rankings](https://openrouter.ai/rankings), catalog joined with an **unofficial frontend ranking endpoint**, CC BY 4.0. Exact counts and provenance are in `src/catalog/openrouter-models.ts`. This is a dated popularity snapshot of public routed traffic, not a live availability guarantee. **No runtime popularity-ranking, model-discovery, or catalog-cache requests occur.** Update the list via a reviewed code change; persisted models outside the current list produce an explicit settings error.
 
 ## Credentials and backends
 
-Choose the route that matches your access: **Luna** can use OpenRouter (`openai/gpt-6-luna-decisions`) or OpenAI direct (`gpt-6-luna`); **Gemini Decision 1** can use OpenRouter (`google/gemini-decision-1`) or Google direct (`gemini-decision-1`). The routes use different endpoints and keys. Selecting one never falls back to another provider, and a configured key is not proof of model entitlement.
+Choose the route that matches your access: **Luna** can use OpenRouter (`openai/gpt-6-luna-decisions`) or OpenAI direct (`gpt-6-luna`); **Gemini Decision 1** is available through Google direct (`gemini-decision-1`) only; it is no longer in the OpenRouter catalog. Luna's routes use different endpoints and keys. Selecting one never falls back to another provider, and a configured key is not proof of model entitlement.
 
 | Backend | Operation | Credentials |
 |---|---|---|

@@ -195,7 +195,6 @@ test("all direct and native provider choices require available keys, are atomic 
     ["openai direct gpt-6-luna", { backend: "openai", model: "gpt-6-luna" }],
     ["gemini direct gemini-decision-1", { backend: "gemini", model: "gemini-decision-1" }],
     ["openrouter direct openai/gpt-6-luna-decisions", { backend: "openrouter", model: "openai/gpt-6-luna-decisions" }],
-    ["openrouter direct google/gemini-decision-1", { backend: "openrouter", model: "google/gemini-decision-1" }],
     ["openrouter direct typesafe/jev-1.14", { backend: "openrouter", model: "typesafe/jev-1.14" }],
     ["Pi custom/local", { backend: "pi", provider: "custom", id: "local" }],
   ] as const) {
