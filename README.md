@@ -1,4 +1,4 @@
-# pi-context-decisions
+# <img src="https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/assets/icon.png" width="44" height="44" align="absmiddle" alt=""> pi-context-decisions
 
 [![npm version](https://img.shields.io/npm/v/pi-context-decisions)](https://www.npmjs.com/package/pi-context-decisions)
 [![npm downloads](https://img.shields.io/npm/dm/pi-context-decisions)](https://www.npmjs.com/package/pi-context-decisions)
