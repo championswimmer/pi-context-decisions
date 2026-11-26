@@ -1,12 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-<defs><radialGradient id="v" cx="50%" cy="50%" r="75%"><stop offset="55%" stop-color="#000" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity=".45"/></radialGradient></defs>
+<defs>
+<radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#6a9fcc" stop-opacity=".18"/><stop offset="1" stop-color="#6a9fcc" stop-opacity="0"/></radialGradient>
+<radialGradient id="v" cx="50%" cy="50%" r="75%"><stop offset=".6" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".45"/></radialGradient>
+</defs>
 <rect width="1200" height="630" fill="#0d1116"/>
-<g stroke="#fff" stroke-opacity=".04" shape-rendering="crispEdges"><path d="M40 0V630M0 40H1200"/><path d="M80 0V630M0 80H1200"/><path d="M120 0V630M0 120H1200"/><path d="M160 0V630M0 160H1200"/><path d="M200 0V630M0 200H1200"/><path d="M240 0V630M0 240H1200"/><path d="M280 0V630M0 280H1200"/><path d="M320 0V630M0 320H1200"/><path d="M360 0V630M0 360H1200"/><path d="M400 0V630M0 400H1200"/><path d="M440 0V630M0 440H1200"/><path d="M480 0V630M0 480H1200"/><path d="M520 0V630M0 520H1200"/><path d="M560 0V630M0 560H1200"/><path d="M600 0V630M0 600H1200"/><path d="M640 0V630M0 640H1200"/><path d="M680 0V630M0 680H1200"/><path d="M720 0V630M0 720H1200"/><path d="M760 0V630M0 760H1200"/><path d="M800 0V630M0 800H1200"/><path d="M840 0V630M0 840H1200"/><path d="M880 0V630M0 880H1200"/><path d="M920 0V630M0 920H1200"/><path d="M960 0V630M0 960H1200"/><path d="M1000 0V630M0 1000H1200"/><path d="M1040 0V630M0 1040H1200"/><path d="M1080 0V630M0 1080H1200"/><path d="M1120 0V630M0 1120H1200"/><path d="M1160 0V630M0 1160H1200"/><path d="M1200 0V630M0 1200H1200"/></g>
+<path d="M40 0V630M0 40H1200M80 0V630M0 80H1200M120 0V630M0 120H1200M160 0V630M0 160H1200M200 0V630M0 200H1200M240 0V630M0 240H1200M280 0V630M0 280H1200M320 0V630M0 320H1200M360 0V630M0 360H1200M400 0V630M0 400H1200M440 0V630M0 440H1200M480 0V630M0 480H1200M520 0V630M0 520H1200M560 0V630M0 560H1200M600 0V630M0 600H1200M640 0V630M680 0V630M720 0V630M760 0V630M800 0V630M840 0V630M880 0V630M920 0V630M960 0V630M1000 0V630M1040 0V630M1080 0V630M1120 0V630M1160 0V630" stroke="#fff" stroke-opacity=".035" shape-rendering="crispEdges"/>
 <rect width="1200" height="630" fill="url(#v)"/>
-<g transform="translate(88 155) scale(0.625)">
-<defs><clipPath id="t"><rect width="512" height="512" rx="88"/></clipPath></defs>
+<rect x="72" y="46" width="14" height="14" fill="#6a9fcc"/>
+<text x="98" y="60" font-family="Departure Mono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#757d89">pi extension</text>
+<path d="M1096 44H1128V76M1128 44" fill="none" stroke="#757d89" stroke-width="2"/>
+<circle cx="222" cy="300" r="260" fill="url(#g)"/>
+<rect x="84" y="162" width="300" height="300" rx="52" fill="#495059" opacity=".55"/>
+<g transform="translate(72 150) scale(0.5859)"><defs><clipPath id="ict"><rect width="512" height="512" rx="88"/></clipPath></defs>
 <rect width="512" height="512" rx="88" fill="#161d27"/>
-<g clip-path="url(#t)" stroke="#fff" stroke-opacity=".04" stroke-width="1" shape-rendering="crispEdges"><path d="M32 0V512M0 32H512"/><path d="M64 0V512M0 64H512"/><path d="M96 0V512M0 96H512"/><path d="M128 0V512M0 128H512"/><path d="M160 0V512M0 160H512"/><path d="M192 0V512M0 192H512"/><path d="M224 0V512M0 224H512"/><path d="M256 0V512M0 256H512"/><path d="M288 0V512M0 288H512"/><path d="M320 0V512M0 320H512"/><path d="M352 0V512M0 352H512"/><path d="M384 0V512M0 384H512"/><path d="M416 0V512M0 416H512"/><path d="M448 0V512M0 448H512"/><path d="M480 0V512M0 480H512"/></g>
+<g clip-path="url(#ict)" stroke="#fff" stroke-opacity=".04" stroke-width="1" shape-rendering="crispEdges"><path d="M32 0V512M0 32H512"/><path d="M64 0V512M0 64H512"/><path d="M96 0V512M0 96H512"/><path d="M128 0V512M0 128H512"/><path d="M160 0V512M0 160H512"/><path d="M192 0V512M0 192H512"/><path d="M224 0V512M0 224H512"/><path d="M256 0V512M0 256H512"/><path d="M288 0V512M0 288H512"/><path d="M320 0V512M0 320H512"/><path d="M352 0V512M0 352H512"/><path d="M384 0V512M0 384H512"/><path d="M416 0V512M0 416H512"/><path d="M448 0V512M0 448H512"/><path d="M480 0V512M0 480H512"/></g>
 <rect x="6" y="6" width="500" height="500" rx="82" fill="none" stroke="#495059" stroke-width="2"/>
 <path d="M28 48V28H48M464 28H484V48M28 464V484H48M484 464V484H464" fill="none" stroke="#757d89" stroke-width="2"/>
 <g id="glyph" shape-rendering="crispEdges">
@@ -20,11 +27,27 @@
 <rect x="304" y="304" width="24" height="24" fill="#F09082"/><rect x="376" y="304" width="24" height="24" fill="#F09082"/><rect x="328" y="328" width="24" height="24" fill="#F09082"/><rect x="352" y="328" width="24" height="24" fill="#F09082"/><rect x="328" y="352" width="24" height="24" fill="#F09082"/><rect x="352" y="352" width="24" height="24" fill="#F09082"/><rect x="304" y="376" width="24" height="24" fill="#F09082"/><rect x="376" y="376" width="24" height="24" fill="#F09082"/>
 </g>
 </g>
-<g font-family="CaskaydiaCove Nerd Font Mono, DejaVu Sans Mono, monospace">
-<text x="470" y="300" font-size="48" font-weight="700" fill="#ebe7e4">pi-context-decisions</text>
-<text x="470" y="400" font-size="28" fill="#9fa4ab">Only the skills your task needs</text>
-<text x="88" y="570" font-size="18" fill="#757d89">pi extension</text></g>
-<rect x="1062" y="265" width="24" height="35" fill="#F1BE58"/>
-<rect x="470" y="332" width="72" height="4" fill="#F1BE58"/>
-<path d="M1076 64H1104V92" fill="none" stroke="#757d89" stroke-width="2"/>
+<text x="430" y="170" font-family="Departure Mono, 'DejaVu Sans Mono', monospace" font-size="50" fill="#ebe7e4">pi-context-decisions</text>
+<rect x="1080" y="130" width="26" height="46" fill="#6a9fcc"/>
+<text x="430" y="212" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="24" fill="#9fa4ab">Advertise only the skills each prompt needs.</text>
+<rect x="430" y="240" width="700" height="276" rx="8" fill="#161d27" stroke="#495059" stroke-width="1.5"/>
+<path d="M430 276H1130V248a8 8 0 0 0-8-8H438a8 8 0 0 0-8 8Z" fill="#212730"/>
+<path d="M430 276H1130" stroke="#495059" stroke-width="1.5"/>
+<circle cx="452" cy="258" r="5" fill="#F09082"/><circle cx="472" cy="258" r="5" fill="#F1BE58"/><circle cx="492" cy="258" r="5" fill="#a3a473"/>
+<text x="1110" y="265" text-anchor="end" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#9fa4ab">/decisions status</text>
+<rect x="450" y="298" width="170" height="130" rx="6" fill="#212730" stroke="#495059" stroke-width="1.5"/>
+<text x="464" y="330" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#6a9fcc">&gt;</text>
+<text x="464" y="358" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#ebe7e4">Review these</text>
+<text x="464" y="384" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#ebe7e4">validation</text>
+<text x="464" y="410" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#ebe7e4">changes</text>
+<path d="M624 363H652M644 355l8 8-8 8" fill="none" stroke="#757d89" stroke-width="2"/>
+<rect x="660" y="318" width="130" height="90" rx="6" fill="#6a9fcc" fill-opacity=".15" stroke="#6a9fcc" stroke-width="2"/>
+<text x="725" y="355" text-anchor="middle" font-family="Departure Mono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#6a9fcc">decision</text>
+<text x="725" y="382" text-anchor="middle" font-family="Departure Mono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#6a9fcc">model</text>
+<path d="M794 363H822M814 355l8 8-8 8" fill="none" stroke="#757d89" stroke-width="2"/>
+<rect x="830" y="300" width="270" height="34" rx="4" fill="#F1BE58" fill-opacity=".14" stroke="#F1BE58" stroke-width="1.5"/><path d="M842 317l6 6 11-14" fill="none" stroke="#F1BE58" stroke-width="3"/><text x="870" y="322" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" font-weight="700" fill="#ebe7e4">code-review</text><rect x="830" y="340" width="270" height="34" rx="4" fill="#F1BE58" fill-opacity=".14" stroke="#F1BE58" stroke-width="1.5"/><path d="M842 357l6 6 11-14" fill="none" stroke="#F1BE58" stroke-width="3"/><text x="870" y="362" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" font-weight="700" fill="#ebe7e4">test-edge-cases</text><rect x="830" y="380" width="270" height="34" rx="4" fill="none" stroke="#495059" stroke-width="1.5" stroke-dasharray="4 3"/><path d="M843 388l14 14M857 388l-14 14" stroke="#F09082" stroke-width="2.5"/><text x="870" y="402" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#757d89">release-notes</text><path d="M870 396H1026" stroke="#9fa4ab" stroke-width="1.5"/><rect x="830" y="420" width="270" height="34" rx="4" fill="none" stroke="#495059" stroke-width="1.5" stroke-dasharray="4 3"/><path d="M843 428l14 14M857 428l-14 14" stroke="#F09082" stroke-width="2.5"/><text x="870" y="442" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#757d89">ui-polish</text><path d="M870 436H978" stroke="#9fa4ab" stroke-width="1.5"/>
+<text x="450" y="500" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#9fa4ab">4 candidates <tspan fill="#757d89">-&gt;</tspan> <tspan fill="#F1BE58">2 advertised</tspan></text>
+<text x="72" y="588" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#6a9fcc">$</text>
+<text x="96" y="588" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="20" fill="#9fa4ab">pi install npm:pi-context-decisions</text>
+<text x="1128" y="588" text-anchor="end" font-family="CommitMono, 'DejaVu Sans Mono', monospace" font-size="19" fill="#757d89">github.com/championswimmer/pi-context-decisions</text>
 </svg>
