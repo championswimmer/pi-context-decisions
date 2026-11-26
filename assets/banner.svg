@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0F1020"/><stop offset="1" stop-color="#1B1A44"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#3B2FA8"/></linearGradient></defs>
+<rect width="1200" height="630" fill="url(#bg)"/>
+<circle cx="260" cy="315" r="260" fill="#6366F1" opacity=".12"/>
+<g transform="translate(100 115)"><rect width="400" height="400" rx="88" fill="url(#g)"/>
+<g transform="translate(200 200) scale(.67) translate(-256 -280)"><g stroke-linejoin="round" stroke-linecap="round">
+<circle cx="168" cy="112" r="20" fill="#C7D2FE" opacity=".75"/><circle cx="256" cy="112" r="20" fill="#FFFFFF"/><circle cx="344" cy="112" r="20" fill="#C7D2FE" opacity=".75"/>
+<path d="M126 176H386L290 292V372L222 398V292Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="24"/>
+<circle cx="256" cy="448" r="22" fill="#67E8F9"/></g></g></g>
+<text x="570" y="320" font-family="Inter, Helvetica, Arial, sans-serif" font-weight="700" font-size="58" fill="#FFFFFF">pi-context-decisions</text>
+<text x="572" y="378" font-family="Inter, Helvetica, Arial, sans-serif" font-size="30" fill="#C7D2FE">Only the skills your task needs.</text>
+<rect x="572" y="410" width="80" height="5" rx="2.5" fill="#67E8F9"/>
+</svg>

@@ -55,7 +55,8 @@
   "pi": {
     "extensions": [
       "./dist/extension.js"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/assets/banner.png"
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
