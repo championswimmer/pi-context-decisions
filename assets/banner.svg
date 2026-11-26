@@ -3,30 +3,28 @@
 <rect width="1200" height="630" fill="#0d1116"/>
 <g stroke="#fff" stroke-opacity=".04" shape-rendering="crispEdges"><path d="M40 0V630M0 40H1200"/><path d="M80 0V630M0 80H1200"/><path d="M120 0V630M0 120H1200"/><path d="M160 0V630M0 160H1200"/><path d="M200 0V630M0 200H1200"/><path d="M240 0V630M0 240H1200"/><path d="M280 0V630M0 280H1200"/><path d="M320 0V630M0 320H1200"/><path d="M360 0V630M0 360H1200"/><path d="M400 0V630M0 400H1200"/><path d="M440 0V630M0 440H1200"/><path d="M480 0V630M0 480H1200"/><path d="M520 0V630M0 520H1200"/><path d="M560 0V630M0 560H1200"/><path d="M600 0V630M0 600H1200"/><path d="M640 0V630M0 640H1200"/><path d="M680 0V630M0 680H1200"/><path d="M720 0V630M0 720H1200"/><path d="M760 0V630M0 760H1200"/><path d="M800 0V630M0 800H1200"/><path d="M840 0V630M0 840H1200"/><path d="M880 0V630M0 880H1200"/><path d="M920 0V630M0 920H1200"/><path d="M960 0V630M0 960H1200"/><path d="M1000 0V630M0 1000H1200"/><path d="M1040 0V630M0 1040H1200"/><path d="M1080 0V630M0 1080H1200"/><path d="M1120 0V630M0 1120H1200"/><path d="M1160 0V630M0 1160H1200"/><path d="M1200 0V630M0 1200H1200"/></g>
 <rect width="1200" height="630" fill="url(#v)"/>
-<g transform="translate(96 175) scale(0.546875)"><defs><clipPath id="t2"><rect width="512" height="512" rx="88"/></clipPath></defs>
+<g transform="translate(88 155) scale(0.625)">
+<defs><clipPath id="t"><rect width="512" height="512" rx="88"/></clipPath></defs>
 <rect width="512" height="512" rx="88" fill="#161d27"/>
-<g clip-path="url(#t2)" stroke="#fff" stroke-opacity=".04" stroke-width="1" shape-rendering="crispEdges"><path d="M32 0V512M0 32H512"/><path d="M64 0V512M0 64H512"/><path d="M96 0V512M0 96H512"/><path d="M128 0V512M0 128H512"/><path d="M160 0V512M0 160H512"/><path d="M192 0V512M0 192H512"/><path d="M224 0V512M0 224H512"/><path d="M256 0V512M0 256H512"/><path d="M288 0V512M0 288H512"/><path d="M320 0V512M0 320H512"/><path d="M352 0V512M0 352H512"/><path d="M384 0V512M0 384H512"/><path d="M416 0V512M0 416H512"/><path d="M448 0V512M0 448H512"/><path d="M480 0V512M0 480H512"/></g>
+<g clip-path="url(#t)" stroke="#fff" stroke-opacity=".04" stroke-width="1" shape-rendering="crispEdges"><path d="M32 0V512M0 32H512"/><path d="M64 0V512M0 64H512"/><path d="M96 0V512M0 96H512"/><path d="M128 0V512M0 128H512"/><path d="M160 0V512M0 160H512"/><path d="M192 0V512M0 192H512"/><path d="M224 0V512M0 224H512"/><path d="M256 0V512M0 256H512"/><path d="M288 0V512M0 288H512"/><path d="M320 0V512M0 320H512"/><path d="M352 0V512M0 352H512"/><path d="M384 0V512M0 384H512"/><path d="M416 0V512M0 416H512"/><path d="M448 0V512M0 448H512"/><path d="M480 0V512M0 480H512"/></g>
 <rect x="6" y="6" width="500" height="500" rx="82" fill="none" stroke="#495059" stroke-width="2"/>
 <path d="M28 48V28H48M464 28H484V48M28 464V484H48M484 464V484H464" fill="none" stroke="#757d89" stroke-width="2"/>
-<g shape-rendering="crispEdges">
-<rect x="128" y="224" width="64" height="64" fill="#6a9fcc"/>
-<rect x="192" y="240" width="32" height="32" fill="#6a9fcc"/>
-<rect x="224" y="160" width="32" height="192" fill="#6a9fcc"/>
-<rect x="256" y="160" width="64" height="32" fill="#F1BE58"/>
-<rect x="256" y="320" width="64" height="32" fill="#F1BE58"/>
-<rect x="256" y="240" width="32" height="32" fill="#495059"/>
-<rect x="304" y="240" width="16" height="32" fill="#495059"/>
-<rect x="320" y="144" width="64" height="64" fill="#F1BE58"/>
-<rect x="320" y="224" width="64" height="64" fill="#495059"/>
-<rect x="324.0" y="228.0" width="56.0" height="56.0" fill="#252f3d"/>
-<rect x="336" y="248.0" width="32" height="16" fill="#F09082"/>
-<rect x="320" y="304" width="64" height="64" fill="#F1BE58"/>
-</g></g>
+<g id="glyph" shape-rendering="crispEdges">
+<rect x="88" y="184" width="120" height="144" fill="#6a9fcc"/>
+<rect x="208" y="244" width="24" height="24" fill="#757d89"/>
+<rect x="232" y="148" width="24" height="216" fill="#757d89"/>
+<rect x="256" y="148" width="24" height="24" fill="#757d89"/>
+<rect x="256" y="340" width="24" height="24" fill="#757d89"/>
+<rect x="280" y="88" width="144" height="144" fill="#F1BE58"/>
+<rect x="280" y="280" width="144" height="144" fill="#495059"/>
+<rect x="304" y="304" width="24" height="24" fill="#F09082"/><rect x="376" y="304" width="24" height="24" fill="#F09082"/><rect x="328" y="328" width="24" height="24" fill="#F09082"/><rect x="352" y="328" width="24" height="24" fill="#F09082"/><rect x="328" y="352" width="24" height="24" fill="#F09082"/><rect x="352" y="352" width="24" height="24" fill="#F09082"/><rect x="304" y="376" width="24" height="24" fill="#F09082"/><rect x="376" y="376" width="24" height="24" fill="#F09082"/>
+</g>
+</g>
 <g font-family="CaskaydiaCove Nerd Font Mono, DejaVu Sans Mono, monospace">
-<text x="430" y="320" font-size="52" font-weight="700" fill="#ebe7e4">pi-context-decisions</text>
-<text x="430" y="438" font-size="28" fill="#9fa4ab">Only the skills your task needs</text>
-<text x="96" y="570" font-size="18" fill="#757d89">pi extension</text></g>
-<rect x="1060" y="282" width="28" height="48" fill="#6a9fcc"/>
-<rect x="430" y="362" width="72" height="4" fill="#6a9fcc"/>
-<path d="M1076 64H1104V92" fill="none" stroke="#757d89" stroke-width="2" transform="translate(0 0)"/>
+<text x="470" y="300" font-size="48" font-weight="700" fill="#ebe7e4">pi-context-decisions</text>
+<text x="470" y="400" font-size="28" fill="#9fa4ab">Only the skills your task needs</text>
+<text x="88" y="570" font-size="18" fill="#757d89">pi extension</text></g>
+<rect x="1062" y="265" width="24" height="35" fill="#F1BE58"/>
+<rect x="470" y="332" width="72" height="4" fill="#F1BE58"/>
+<path d="M1076 64H1104V92" fill="none" stroke="#757d89" stroke-width="2"/>
 </svg>
