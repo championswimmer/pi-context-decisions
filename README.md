@@ -1,4 +1,4 @@
-# <img src="https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/assets/icon.png" width="44" height="44" align="absmiddle" alt=""> pi-context-decisions
+![pi-context-decisions](https://raw.githubusercontent.com/championswimmer/pi-context-decisions/main/assets/banner.png)
 
 [![npm version](https://img.shields.io/npm/v/pi-context-decisions)](https://www.npmjs.com/package/pi-context-decisions)
 [![npm downloads](https://img.shields.io/npm/dm/pi-context-decisions)](https://www.npmjs.com/package/pi-context-decisions)
@@ -9,31 +9,15 @@ This extension uses a decision model to pick skill descriptions for Pi to see. A
 
 It can also filter external tools, MCP servers and extension tool groups. That is a separate feature, **off by default**.
 
-## Check out my other Pi extensions
-
-- [![pi-cache-graph](https://img.shields.io/badge/📊_pi--cache--graph-orange?style=flat-square)](https://github.com/championswimmer/pi-cache-graph) — Real-time prompt cache hit rates and token metrics.
-- [![pi-checklist](https://img.shields.io/badge/✅_pi--checklist-teal?style=flat-square)](https://github.com/championswimmer/pi-checklist) — Session task checklist with dependencies and a TUI renderer.
-- [![pi-context-decisions](https://img.shields.io/badge/🧠_pi--context--decisions-indigo?style=flat-square)](https://github.com/championswimmer/pi-context-decisions) — Selects relevant skills and optionally filters tools for each task.
-- [![pi-context-prune](https://img.shields.io/badge/✂️_pi--context--prune-green?style=flat-square)](https://github.com/championswimmer/pi-context-prune) — Prunes verbose tool outputs from context while preserving history.
-- [![pi-context-usage](https://img.shields.io/badge/🪟_pi--context--usage-purple?style=flat-square)](https://github.com/championswimmer/pi-context-usage) — Dot-grid visualization of context window token usage.
-- [![pi-gauge](https://img.shields.io/badge/⚡_pi--gauge-yellow?style=flat-square)](https://github.com/championswimmer/pi-gauge) — Live tokens/sec and TTFT in the status bar.
-- [![pi-subagent-manager](https://img.shields.io/badge/🤖_pi--subagent--manager-blue?style=flat-square)](https://github.com/championswimmer/pi-subagent-manager) — Delegate work to parallel subagents and monitor their progress.
-
-## When is it useful?
-
-- **You have lots of skills.** For a task such as “Review these validation changes,” it can advertise relevant review skills instead of unrelated release or UI skills.
-- **Your work changes during a session.** Move from reviewing code to preparing a release, and relevant release skills can be added without dropping the earlier ones.
-- **You have many tools or MCP servers.** Enable tool filtering to make relevant external tools available as needed, while keeping essentials always allowed.
-
-If you only have a few skills, you may not need it: by default, fewer than eight automatic skills are left unfiltered. Decision calls add latency and may incur provider charges.
-
-## Install and set up
-
-Requires **Node 22.18+** and **Pi 1.1.0 APIs**.
+## Install
 
 ```bash
 pi install npm:pi-context-decisions
 ```
+
+### Requirements and setup
+
+Requires **Node 22.18+** and **Pi 1.1.0 APIs**.
 
 Keep this package first or near the start of your configured extensions. In Pi:
 
@@ -47,7 +31,15 @@ Keep this package first or near the start of your configured extensions. In Pi:
 
 Use **Tab** to switch settings tabs, **Enter** to select, **Space** to toggle, and **Esc** to go back or close.
 
-## Use it
+## Why use it
+
+- **You have lots of skills.** For a task such as “Review these validation changes,” it can advertise relevant review skills instead of unrelated release or UI skills.
+- **Your work changes during a session.** Move from reviewing code to preparing a release, and relevant release skills can be added without dropping the earlier ones.
+- **You have many tools or MCP servers.** Enable tool filtering to make relevant external tools available as needed, while keeping essentials always allowed.
+
+If you only have a few skills, you may not need it: by default, fewer than eight automatic skills are left unfiltered. Decision calls add latency and may incur provider charges.
+
+## How to use
 
 Ask Pi to work normally, for example:
 
@@ -169,3 +161,13 @@ Skills show advertised/total; tools show available/external total (`g` for group
 - [Changelog](CHANGELOG.md)
 
 [MIT license](LICENSE).
+
+## Check out my other Pi extensions
+
+- [![pi-cache-graph](https://img.shields.io/badge/📊_pi--cache--graph-orange?style=flat-square)](https://github.com/championswimmer/pi-cache-graph) — Real-time prompt cache hit rates and token metrics.
+- [![pi-checklist](https://img.shields.io/badge/✅_pi--checklist-teal?style=flat-square)](https://github.com/championswimmer/pi-checklist) — Session task checklist with dependencies and a TUI renderer.
+- [![pi-context-decisions](https://img.shields.io/badge/🧠_pi--context--decisions-indigo?style=flat-square)](https://github.com/championswimmer/pi-context-decisions) — Selects relevant skills and optionally filters tools for each task.
+- [![pi-context-prune](https://img.shields.io/badge/✂️_pi--context--prune-green?style=flat-square)](https://github.com/championswimmer/pi-context-prune) — Prunes verbose tool outputs from context while preserving history.
+- [![pi-context-usage](https://img.shields.io/badge/🪟_pi--context--usage-purple?style=flat-square)](https://github.com/championswimmer/pi-context-usage) — Dot-grid visualization of context window token usage.
+- [![pi-gauge](https://img.shields.io/badge/⚡_pi--gauge-yellow?style=flat-square)](https://github.com/championswimmer/pi-gauge) — Live tokens/sec and TTFT in the status bar.
+- [![pi-subagent-manager](https://img.shields.io/badge/🤖_pi--subagent--manager-blue?style=flat-square)](https://github.com/championswimmer/pi-subagent-manager) — Delegate work to parallel subagents and monitor their progress.
